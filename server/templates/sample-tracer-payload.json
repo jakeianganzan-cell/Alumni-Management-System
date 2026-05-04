@@ -1,0 +1,20 @@
+{
+  "fullName": "Juan Dela Cruz",
+  "permanentAddress": "Cagayan de Oro City",
+  "email": "juan@example.com",
+  "telephoneNumber": "0881234567",
+  "mobileNumber": "09171234567",
+  "civilStatus": "Single",
+  "sex": "Male",
+  "province": "Misamis Oriental",
+  "degree": "BTLED",
+  "specialization": "Software Development",
+  "collegeOrUniversity": "USTP",
+  "yearGraduated": "2024",
+  "presentlyEmployed": "Yes",
+  "presentEmploymentStatus": "Regular or Permanent",
+  "presentOccupation": "Software Engineer",
+  "companyBusinessLine": "Information Technology skills",
+  "placeOfWork": "Local",
+  "curriculumSuggestions": "More industry projects"
+}

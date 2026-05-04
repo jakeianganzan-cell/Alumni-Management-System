@@ -1,0 +1,1 @@
+// Re-export everything from the primary EventContext.tsx (contains full implementation)\nexport { EventProvider, useEvents } from './EventContext';\nexport type { Event, Comment } from './EventContext';
