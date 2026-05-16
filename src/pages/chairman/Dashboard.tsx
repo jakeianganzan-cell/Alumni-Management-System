@@ -98,7 +98,7 @@ export default function ChairmanDashboard() {
             <p className="mt-1 text-sm text-white/75">All figures below are loaded from the MySQL-backed alumni and tracer records.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { label: "Total Alumni", value: data.summary.totalAlumni, icon: Users, color: "bg-navy text-white" },
               { label: "Employed", value: data.summary.employedCount, icon: UserCheck, color: "bg-emerald-500 text-white" },

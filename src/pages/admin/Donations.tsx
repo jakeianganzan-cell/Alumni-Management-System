@@ -24,6 +24,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
+import { downloadBrandedCsv, type ReportColumn } from "@/lib/reportExport";
 
 type DonationStatus = "Pending Review" | "Approved" | "Rejected";
 
@@ -59,6 +61,15 @@ interface DonationSettings {
   personal_office: string;
 }
 
+interface DonationSummary {
+  approvedTotal: number;
+  approvedCount: number;
+  pendingCount: number;
+  rejectedCount: number;
+  donorCount: number;
+  totalDonations: number;
+}
+
 const EMPTY_SETTINGS: DonationSettings = {
   gcash_name: "",
   gcash_number: "",
@@ -66,6 +77,15 @@ const EMPTY_SETTINGS: DonationSettings = {
   personal_personnel: "",
   personal_contact: "",
   personal_office: "",
+};
+
+const EMPTY_SUMMARY: DonationSummary = {
+  approvedTotal: 0,
+  approvedCount: 0,
+  pendingCount: 0,
+  rejectedCount: 0,
+  donorCount: 0,
+  totalDonations: 0,
 };
 
 const statusTone: Record<DonationStatus, string> = {
@@ -80,6 +100,7 @@ const methodTone: Record<string, string> = {
 };
 
 export default function AdminDonations() {
+  const { profile, user } = useAuth();
   const [search, setSearch] = useState("");
   const [donations, setDonations] = useState<Donation[]>([]);
   const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
@@ -90,11 +111,12 @@ export default function AdminDonations() {
   const [actionNote, setActionNote] = useState("");
   const [submittingAction, setSubmittingAction] = useState<"" | "approve" | "reject" | "request-info">("");
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
+  const [summary, setSummary] = useState<DonationSummary>(EMPTY_SUMMARY);
   const [savingSettings, setSavingSettings] = useState(false);
   const qrInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void Promise.all([fetchDonations(), fetchSettings()]);
+    void Promise.all([fetchDonations(), fetchDonationSummary(), fetchSettings()]);
   }, []);
 
   const fetchDonations = async () => {
@@ -104,12 +126,32 @@ export default function AdminDonations() {
         headers: getAuthHeaders(),
       });
       const data = await readApiResponse<Donation[]>(res);
-      setDonations(data);
+      setDonations(data.map((donation) => ({ ...donation, amount: Number(donation.amount || 0) })));
     } catch (error) {
       console.error(error);
       toast.error("Failed to load donations");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDonationSummary = async () => {
+    try {
+      const res = await fetch(`${API_URL}/donations/summary`, {
+        headers: getAuthHeaders(),
+      });
+      const data = await readApiResponse<Partial<DonationSummary>>(res);
+      setSummary({
+        approvedTotal: Number(data.approvedTotal || 0),
+        approvedCount: Number(data.approvedCount || 0),
+        pendingCount: Number(data.pendingCount || 0),
+        rejectedCount: Number(data.rejectedCount || 0),
+        donorCount: Number(data.donorCount || 0),
+        totalDonations: Number(data.totalDonations || 0),
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to load donation totals");
     }
   };
 
@@ -191,8 +233,10 @@ export default function AdminDonations() {
         body: JSON.stringify({ status, reviewNotes: actionNote }),
       });
       const payload = await readApiResponse<{ donation: Donation }>(response);
-      setDonations((current) => current.map((item) => (item.id === selectedDonation.id ? { ...item, ...payload.donation } : item)));
-      setSelectedDonation((current) => (current ? { ...current, ...payload.donation } : current));
+      const updatedDonation = { ...payload.donation, amount: Number(payload.donation.amount || 0) };
+      setDonations((current) => current.map((item) => (item.id === selectedDonation.id ? { ...item, ...updatedDonation } : item)));
+      setSelectedDonation((current) => (current ? { ...current, ...updatedDonation } : current));
+      await fetchDonationSummary();
       toast.success(status === "Approved" ? "Donation approved" : "Donation rejected");
     } catch (error) {
       console.error(error);
@@ -224,6 +268,7 @@ export default function AdminDonations() {
           item.id === selectedDonation.id ? { ...item, review_notes: actionNote, status: "Pending Review" } : item,
         ),
       );
+      await fetchDonationSummary();
     } catch (error) {
       console.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to request more info");
@@ -240,31 +285,47 @@ export default function AdminDonations() {
       (donation.profile.student_id || "").toLowerCase().includes(search.toLowerCase()),
   );
 
-  const totalApproved = donations.filter((donation) => donation.status === "Approved").reduce((total, donation) => total + donation.amount, 0);
-  const pendingCount = donations.filter((donation) => donation.status === "Pending Review").length;
-  const rejectedCount = donations.filter((donation) => donation.status === "Rejected").length;
+  const totalApproved = summary.approvedTotal;
+  const pendingCount = summary.pendingCount;
+  const rejectedCount = summary.rejectedCount;
+  const donorCount = summary.donorCount;
 
   const exportCSV = () => {
-    const headers = ["ID", "Donor", "Student ID", "Method", "Amount", "Date", "Purpose", "Status"];
-    const rows = filteredDonations.map((donation) => [
-      donation.id,
-      donation.profile.name,
-      donation.profile.student_id ?? "",
-      donation.method,
-      donation.amount,
-      donation.created_at ?? "",
-      donation.purpose ?? "",
-      donation.status,
-    ]);
+    type DonationCsvRow = Record<string, string | number>;
+    const columns: Array<ReportColumn<DonationCsvRow>> = [
+      { key: "id", label: "ID" },
+      { key: "donor", label: "Donor" },
+      { key: "studentId", label: "Student ID" },
+      { key: "method", label: "Method" },
+      { key: "amount", label: "Amount" },
+      { key: "date", label: "Date" },
+      { key: "purpose", label: "Purpose" },
+      { key: "status", label: "Status" },
+    ];
+    const rows = filteredDonations.map((donation) => ({
+      id: donation.id,
+      donor: donation.profile.name,
+      studentId: donation.profile.student_id ?? "",
+      method: donation.method,
+      amount: donation.amount,
+      date: donation.created_at ?? "",
+      purpose: donation.purpose ?? "",
+      status: donation.status,
+    }));
 
-    const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "donations.csv";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadBrandedCsv({
+      title: "Donation Monitoring Report",
+      filename: "donations",
+      columns,
+      rows,
+      preparedBy: profile?.name || user?.email || "System Administrator",
+      summary: [
+        { label: "Displayed Records", value: filteredDonations.length },
+        { label: "Displayed Amount", value: `PHP ${filteredDonations.reduce((total, donation) => total + Number(donation.amount || 0), 0).toLocaleString()}` },
+        { label: "Approved Total", value: `PHP ${totalApproved.toLocaleString()}` },
+        { label: "Pending Review", value: pendingCount },
+      ],
+    });
   };
 
   return (
@@ -274,7 +335,7 @@ export default function AdminDonations() {
           <SummaryCard label="Total Approved" value={`PHP ${totalApproved.toLocaleString()}`} toneClassName="bg-navy text-white" icon={<Heart className="h-4 w-4" />} />
           <SummaryCard label="Pending Review" value={String(pendingCount)} toneClassName="bg-white text-navy-dark" icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
           <SummaryCard label="Rejected" value={String(rejectedCount)} toneClassName="bg-white text-navy-dark" icon={<XCircle className="h-4 w-4 text-rose-600" />} />
-          <SummaryCard label="Total Donors" value={String(new Set(donations.map((donation) => donation.user_id)).size)} toneClassName="bg-white text-navy-dark" icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
+          <SummaryCard label="Total Donors" value={String(donorCount)} toneClassName="bg-white text-navy-dark" icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
         </div>
 
         <Card className="border-slate-200 bg-white shadow-sm">
@@ -282,7 +343,6 @@ export default function AdminDonations() {
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <CardTitle className="text-lg text-navy-dark">Donation Review Queue</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Admins must open View Details before confirming a donation. Approve, reject, or request more info inside the review panel only.</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -348,25 +408,25 @@ export default function AdminDonations() {
                   ) : (
                     filteredDonations.map((donation) => (
                       <tr key={donation.id} className="hover:bg-slate-50/70">
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5" data-label="Donor">
                           <div>
                             <p className="font-semibold text-navy-dark">{donation.profile.name}</p>
                             <p className="mt-1 text-xs text-muted-foreground">{donation.profile.email || "No email"}</p>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-muted-foreground">{donation.profile.student_id || "Not set"}</td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Student ID">{donation.profile.student_id || "Not set"}</td>
+                        <td className="px-4 py-3.5" data-label="Method">
                           <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", methodTone[donation.method] || "bg-slate-100 text-slate-700")}>
                             {donation.method}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5 font-semibold text-navy-dark">PHP {donation.amount.toLocaleString()}</td>
-                        <td className="px-4 py-3.5 text-muted-foreground">{donation.created_at ? new Date(donation.created_at).toLocaleString() : "Not set"}</td>
-                        <td className="px-4 py-3.5 text-muted-foreground">{donation.purpose || "General donation"}</td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5 font-semibold text-navy-dark" data-label="Amount">PHP {donation.amount.toLocaleString()}</td>
+                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Date Submitted">{donation.created_at ? new Date(donation.created_at).toLocaleString() : "Not set"}</td>
+                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Purpose">{donation.purpose || "General donation"}</td>
+                        <td className="px-4 py-3.5" data-label="Status">
                           <Badge className={statusTone[donation.status]}>{donation.status}</Badge>
                         </td>
-                        <td className="px-4 py-3.5">
+                        <td className="px-4 py-3.5" data-label="Action">
                           <Button type="button" variant="outline" size="sm" onClick={() => openDonationDetail(donation.id)}>
                             <Eye className="mr-2 h-3.5 w-3.5" />
                             View Details
@@ -398,7 +458,7 @@ export default function AdminDonations() {
                     {selectedDonation.method}
                   </Badge>
                 </div>
-                <DialogTitle className="text-2xl text-navy-dark">{selectedDonation.profile.name}</DialogTitle>
+                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedDonation.profile.name}</DialogTitle>
                 <DialogDescription>Review all donor details here before confirming approval or rejection.</DialogDescription>
               </DialogHeader>
 
@@ -499,7 +559,7 @@ export default function AdminDonations() {
       <Dialog open={showSettings} onOpenChange={(open) => !savingSettings && setShowSettings(open)}>
         <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="text-2xl text-navy-dark">Donation Payment Settings</DialogTitle>
+            <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">Donation Payment Settings</DialogTitle>
             <DialogDescription>Keep the payment instructions clean, visible, and easy for donors to follow.</DialogDescription>
           </DialogHeader>
 
@@ -592,7 +652,7 @@ function SummaryCard({
         <p className="text-sm font-semibold">{label}</p>
         <div>{icon}</div>
       </div>
-      <p className="mt-4 text-2xl font-bold">{value}</p>
+      <p className="mt-4 text-xl font-bold sm:text-2xl">{value}</p>
     </div>
   );
 }

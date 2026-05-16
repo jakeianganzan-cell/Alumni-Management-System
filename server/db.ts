@@ -4,11 +4,81 @@ import type { Event, RSVP, Comment, Metrics, EngagementOverview } from './types/
 
 type DbParam = string | number | boolean | Date | Buffer | null;
 
+interface MaxAllowedPacketRow extends RowDataPacket {
+  maxAllowedPacket: number | string;
+}
+
+const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
+const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || 'root';
+const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'ustp_alumni';
+const DEFAULT_MAX_ALLOWED_PACKET = 64 * 1024 * 1024;
+
+const parseBooleanEnv = (value: string | undefined) =>
+  ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
+
+const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_ENABLED =
+  parseBooleanEnv(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED) ||
+  Boolean(DB_SSL_CA);
+const DB_SSL_REJECT_UNAUTHORIZED = process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false";
+
+const getSslConfig = () => {
+  if (!DB_SSL_ENABLED) return undefined;
+
+  return {
+    rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED,
+    ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+  };
+};
+
+const parsePacketLimit = (value: string | undefined) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_ALLOWED_PACKET;
+};
+
+const MYSQL_MAX_ALLOWED_PACKET = parsePacketLimit(
+  process.env.MYSQL_MAX_ALLOWED_PACKET || process.env.DB_MAX_ALLOWED_PACKET,
+);
+
+const ensureMysqlPacketLimit = async () => {
+  let connection: Awaited<ReturnType<typeof mysql.createConnection>> | null = null;
+
+  try {
+    connection = await mysql.createConnection({
+      host: DB_HOST,
+      port: DB_PORT,
+      user: DB_USER,
+      password: DB_PASSWORD,
+      ssl: getSslConfig(),
+    });
+
+    const [rows] = await connection.query<MaxAllowedPacketRow[]>(
+      'SELECT @@global.max_allowed_packet AS maxAllowedPacket',
+    );
+    const currentLimit = Number(rows[0]?.maxAllowedPacket || 0);
+
+    if (currentLimit < MYSQL_MAX_ALLOWED_PACKET) {
+      await connection.query(`SET GLOBAL max_allowed_packet = ${MYSQL_MAX_ALLOWED_PACKET}`);
+      console.log(`MySQL max_allowed_packet increased to ${MYSQL_MAX_ALLOWED_PACKET} bytes`);
+    }
+  } catch (error) {
+    console.warn('Unable to verify or increase MySQL max_allowed_packet:', error);
+  } finally {
+    await connection?.end();
+  }
+};
+
+await ensureMysqlPacketLimit();
+
 const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: '',
-  database: 'ustp_alumni',
+  host: DB_HOST,
+  port: DB_PORT,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  database: DB_NAME,
+  ssl: getSslConfig(),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0

@@ -18,7 +18,6 @@ import AdminAchievements from "./pages/admin/Achievements";
 import AdminAnnouncements from "./pages/admin/Announcements";
 import AlumniAnnouncements from "./pages/alumni/Announcements";
 import AdminDonations from "./pages/admin/Donations";
-import AdminReports from "./pages/admin/Reports";
 import AdminNotifications from "./pages/admin/Notifications";
 import AdminOfficers from "./pages/admin/Officers";
 import AdminAccount from "./pages/admin/Account";
@@ -109,7 +108,7 @@ function AppRoutes() {
       <Route path="/admin/surveys" element={<Navigate to="/admin/announcements" replace />} />
       <Route path="/admin/donations" element={<AdminRoute module="donations"><AdminDonations /></AdminRoute>} />
       <Route path="/admin/events" element={<Navigate to="/admin/announcements" replace />} />
-      <Route path="/admin/reports" element={<AdminRoute module="reports"><AdminReports /></AdminRoute>} />
+      <Route path="/admin/reports" element={<AdminRoute module="reports"><Navigate to="/admin/account?section=reports" replace /></AdminRoute>} />
       <Route path="/admin/notifications" element={<AdminRoute module="notifications"><AdminNotifications /></AdminRoute>} />
       <Route path="/admin/officers" element={<AdminRoute module="officers"><AdminOfficers /></AdminRoute>} />
       <Route path="/admin/account" element={<AdminRoute module="dashboard"><AdminAccount /></AdminRoute>} />

@@ -1,10 +1,11 @@
 import nodemailer from "nodemailer";
-import { TransactionalEmailsClient } from "@getbrevo/brevo/transactionalEmails";
+import { sendAlumniCredentialsEmail, sendTransactionalEmail } from "../services/emailService";
 
 interface EmailParams {
     to: string;
     name: string;
     alumniId: string;
+    temporaryPassword?: string;
 }
 
 interface GenericEmailParams {
@@ -89,29 +90,7 @@ const sendViaBrevo = async ({ to, subject, html, text }: GenericEmailParams) => 
         throw new Error("Email service is not configured. Set SMTP_* or BREVO_* environment variables.");
     }
 
-    const emailAPI = new TransactionalEmailsClient({
-        apiKey: process.env.BREVO_API_KEY as string,
-    });
-
-    const recipients = Array.isArray(to)
-        ? to.map((email) => ({ email }))
-        : [{ email: to }];
-
-    const response = await emailAPI.sendTransacEmail({
-        sender: {
-            name: process.env.BREVO_SENDER_NAME || "Salay Community College",
-            email: process.env.BREVO_SENDER_EMAIL as string,
-        },
-        to: recipients,
-        subject,
-        htmlContent: html,
-        textContent: text,
-    });
-
-    return {
-        success: true,
-        messageId: response.messageId || "brevo-accepted",
-    };
+    return sendTransactionalEmail({ to, subject, html, text });
 };
 
 export const sendMail = async ({ to, subject, html, text }: GenericEmailParams) => {
@@ -144,31 +123,12 @@ export const sendMail = async ({ to, subject, html, text }: GenericEmailParams) 
     }
 };
 
-const sendEmail = async ({ to, name, alumniId }: EmailParams) => {
-    const loginUrl = process.env.APP_LOGIN_URL || "http://localhost:8080/login";
-
-    return sendMail({
+const sendEmail = async ({ to, name, alumniId, temporaryPassword }: EmailParams) => {
+    return sendAlumniCredentialsEmail({
         to,
-        subject: "Alumni Account Created",
-        text:
-            `Hello ${name},\n\n` +
-            "Your alumni account has been created successfully.\n\n" +
-            `Email: ${to}\n` +
-            `Alumni ID / Default Password: ${alumniId}\n` +
-            `Sign in here: ${loginUrl}\n\n` +
-            "Please log in and update your credentials as soon as possible.",
-        html: `
-            <h2>Hello ${name},</h2>
-            <p>Your alumni account has been created successfully.</p>
-            <p><strong>Login Details:</strong></p>
-            <ul>
-                <li>Email: ${to}</li>
-                <li>Alumni ID / Default Password: ${alumniId}</li>
-            </ul>
-            <p>You can sign in here: <a href="${loginUrl}">${loginUrl}</a></p>
-            <p>Please log in and update your credentials as soon as possible.</p>
-            <p>Welcome to the alumni community.</p>
-        `
+        name,
+        alumniId,
+        temporaryPassword: temporaryPassword || alumniId
     });
 };
 

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { AdminPageIntro, AdminStatCard, AdminStatsGrid } from "@/components/admin/AdminPageIntro";
-import { API_URL, getAuthHeaders, resolveAssetUrl } from "@/lib/api";
+import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Award, CalendarClock, CheckCircle2, Eye, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 type AchievementStatus = "pending" | "approved" | "rejected" | "archived";
+const PAGE_SIZE = 10;
 
 interface AchievementRecord {
   id: number;
@@ -29,6 +30,7 @@ export default function AdminAchievements() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
+  const [currentPage, setCurrentPage] = useState(1);
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
 
@@ -39,11 +41,7 @@ export default function AdminAchievements() {
         headers: getAuthHeaders(),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to load achievements");
-      }
-
-      setItems(await res.json());
+      setItems(await readApiResponse<AchievementRecord[]>(res));
     } catch (error) {
       console.error(error);
       toast.error("Failed to load achievements");
@@ -79,6 +77,21 @@ export default function AdminAchievements() {
     [items],
   );
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, tab]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [currentPage, filtered, totalPages]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
   const featuredItem = filtered[0] ?? items.find((item) => item.status === tab) ?? null;
 
   const updateAchievement = async (item: AchievementRecord, changes: Partial<AchievementRecord>) => {
@@ -99,9 +112,7 @@ export default function AdminAchievements() {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to update achievement");
-      }
+      await readApiResponse(res);
 
       await loadAchievements();
     } catch (error) {
@@ -143,9 +154,7 @@ export default function AdminAchievements() {
         headers: getAuthHeaders(),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to delete achievement");
-      }
+      await readApiResponse(res);
 
       toast.success("Achievement deleted");
       await loadAchievements();
@@ -161,7 +170,6 @@ export default function AdminAchievements() {
         <AdminPageIntro
           eyebrow="Achievement Review"
           title="Achievement submissions"
-          description="Review pending records, approve alumni milestones, and decide which approved achievements stay featured."
         />
 
         <AdminStatsGrid>
@@ -291,21 +299,21 @@ export default function AdminAchievements() {
                         </td>
                       </tr>
                     ) : (
-                      filtered.map((item) => (
+                      paginated.map((item) => (
                         <tr key={item.id}>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5" data-label="Alumni">
                             <p className="text-sm font-semibold text-navy-dark">{item.name}</p>
                             <p className="mt-1 text-xs text-muted-foreground">
                               {item.batch || "No batch"} | {item.course || "No course"}
                             </p>
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5" data-label="Achievement">
                             <p className="text-sm font-semibold text-navy-dark">{item.title}</p>
                             <p className="mt-1 text-xs text-muted-foreground">{item.organization || "No organization"}</p>
                           </td>
-                          <td className={tableCellClassName}>{item.category}</td>
-                          <td className={tableCellClassName}>{new Date(item.date).toLocaleDateString()}</td>
-                          <td className="px-4 py-3.5">
+                          <td className={tableCellClassName} data-label="Category">{item.category}</td>
+                          <td className={tableCellClassName} data-label="Date">{new Date(item.date).toLocaleDateString()}</td>
+                          <td className="px-4 py-3.5" data-label="Featured">
                             <button
                               onClick={() => toggleFeatured(item)}
                               disabled={item.status !== "approved"}
@@ -319,8 +327,8 @@ export default function AdminAchievements() {
                               <Star className={`h-4 w-4 ${item.featured ? "fill-current" : ""}`} />
                             </button>
                           </td>
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-1">
+                          <td className="px-4 py-3.5" data-label="Actions">
+                            <div className="flex flex-wrap items-center gap-1">
                               <IconButton label="View" onClick={() => setSelected(item)} icon={<Eye className="h-3.5 w-3.5" />} />
                               {item.status === "pending" && (
                                 <>
@@ -338,6 +346,13 @@ export default function AdminAchievements() {
                 </table>
               </div>
             </div>
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filtered.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </section>
 
@@ -401,6 +416,52 @@ export default function AdminAchievements() {
         )}
       </div>
     </AdminLayout>
+  );
+}
+
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const end = Math.min(currentPage * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <p>
+        Showing {start}-{end} of {totalItems}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          className="rounded-lg border border-border px-3 py-2 font-medium transition hover:border-navy hover:text-navy disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <span className="rounded-lg border border-border px-3 py-2 font-medium text-navy-dark">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          className="rounded-lg border border-border px-3 py-2 font-medium transition hover:border-navy hover:text-navy disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -4,6 +4,8 @@ USE ustp_alumni;
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS user_settings;
 DROP TABLE IF EXISTS survey_answers;
+DROP TABLE IF EXISTS survey_responses;
+DROP TABLE IF EXISTS survey_options;
 DROP TABLE IF EXISTS survey_questions;
 DROP TABLE IF EXISTS surveys;
 DROP TABLE IF EXISTS reactions;
@@ -15,10 +17,17 @@ DROP TABLE IF EXISTS officer_school_year;
 DROP TABLE IF EXISTS achievements;
 DROP TABLE IF EXISTS job_applications;
 DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS email_logs;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS donation_settings;
 DROP TABLE IF EXISTS tracer_audit_logs;
 DROP TABLE IF EXISTS tracer_reports;
+DROP TABLE IF EXISTS tracer_feedback;
+DROP TABLE IF EXISTS tracer_training_data;
+DROP TABLE IF EXISTS tracer_employment_data;
+DROP TABLE IF EXISTS tracer_educational_background;
+DROP TABLE IF EXISTS tracer_personal_info;
+DROP TABLE IF EXISTS graduate_tracer_forms;
 DROP TABLE IF EXISTS tracer_referrals;
 DROP TABLE IF EXISTS tracer_trainings;
 DROP TABLE IF EXISTS tracer_professional_exams;
@@ -28,7 +37,11 @@ DROP TABLE IF EXISTS tracer_form;
 DROP TABLE IF EXISTS graduate_tracer;
 DROP TABLE IF EXISTS tracer_responses;
 DROP TABLE IF EXISTS event_comments;
+DROP TABLE IF EXISTS event_interests;
+DROP TABLE IF EXISTS event_rsvps;
 DROP TABLE IF EXISTS event_registrations;
+DROP TABLE IF EXISTS announcement_comment_replies;
+DROP TABLE IF EXISTS announcement_comments;
 DROP TABLE IF EXISTS donations;
 DROP TABLE IF EXISTS announcements;
 DROP TABLE IF EXISTS events;
@@ -44,6 +57,9 @@ CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(36) PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    email_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+    email_sent_at DATETIME NULL,
+    email_error TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -114,6 +130,8 @@ CREATE TABLE IF NOT EXISTS imported_alumni_records (
     contact_number VARCHAR(50) DEFAULT NULL,
     generated_alumni_id VARCHAR(50) DEFAULT NULL,
     status VARCHAR(50) DEFAULT 'imported',
+    email_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+    email_error TEXT NULL,
     imported_by VARCHAR(36) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_imported_alumni_batch (import_batch_id),
@@ -144,6 +162,11 @@ CREATE TABLE IF NOT EXISTS announcements (
     capacity INT DEFAULT 0,
     views INT DEFAULT 0,
     success_score INT DEFAULT 0,
+    interest_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    start_datetime DATETIME NULL,
+    end_datetime DATETIME NULL,
+    auto_archive_at DATETIME NULL,
+    archived_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
@@ -159,6 +182,143 @@ CREATE TABLE IF NOT EXISTS event_registrations (
     FOREIGN KEY (event_id) REFERENCES announcements(id) ON DELETE CASCADE,
     FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE KEY uq_event_registration_event_user (event_id, alumni_id)
+);
+
+CREATE TABLE IF NOT EXISTS event_interests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    event_id INT NOT NULL,
+    alumni_id VARCHAR(36) NOT NULL,
+    status ENUM('Interested', 'Verified', 'Cancelled') NOT NULL DEFAULT 'Interested',
+    verified_by VARCHAR(36) DEFAULT NULL,
+    verified_at DATETIME NULL,
+    cancelled_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_event_interests_event_alumni (event_id, alumni_id),
+    FOREIGN KEY (event_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_event_interests_event (event_id, status),
+    INDEX idx_event_interests_alumni (alumni_id)
+);
+
+CREATE TABLE IF NOT EXISTS announcement_interests (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    announcement_id INT NOT NULL,
+    alumni_id VARCHAR(36) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'interested',
+    interested_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_announcement_interest_alumni (announcement_id, alumni_id),
+    INDEX idx_announcement_interests_announcement (announcement_id, status),
+    INDEX idx_announcement_interests_alumni (alumni_id),
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS event_rsvps (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    event_id INT NOT NULL,
+    alumni_id VARCHAR(36) NOT NULL,
+    response_status ENUM('Going','Interested','Not Going') NOT NULL,
+    attendance_status ENUM('Pending','Attended','Absent') DEFAULT 'Pending',
+    verification_status ENUM('Pending','Verified','Not Verified') DEFAULT 'Pending',
+    checked_in_at DATETIME NULL,
+    engagement_awarded TINYINT(1) DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_event_alumni (event_id, alumni_id),
+    FOREIGN KEY (event_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS announcement_comments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    announcement_id INT NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    content TEXT NOT NULL,
+    status ENUM('visible', 'hidden') NOT NULL DEFAULT 'visible',
+    moderated_by VARCHAR(36) DEFAULT NULL,
+    moderated_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (moderated_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_announcement_comments_announcement (announcement_id, status, created_at),
+    INDEX idx_announcement_comments_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS announcement_comment_replies (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    comment_id INT NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    content TEXT NOT NULL,
+    status ENUM('visible', 'hidden') NOT NULL DEFAULT 'visible',
+    moderated_by VARCHAR(36) DEFAULT NULL,
+    moderated_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (comment_id) REFERENCES announcement_comments(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (moderated_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_announcement_comment_replies_comment (comment_id, status, created_at),
+    INDEX idx_announcement_comment_replies_user (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS dashboard_slides (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    caption TEXT,
+    media_type VARCHAR(30) NOT NULL DEFAULT 'image',
+    image_url LONGTEXT NOT NULL,
+    link_url TEXT,
+    is_highlighted TINYINT(1) NOT NULL DEFAULT 0,
+    display_order INT NOT NULL DEFAULT 0,
+    status VARCHAR(30) NOT NULL DEFAULT 'active',
+    created_by VARCHAR(36) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_dashboard_slides_visible (status, is_highlighted, display_order)
+);
+
+CREATE TABLE IF NOT EXISTS alumni_login_events (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_alumni_login_events_user (user_id),
+    INDEX idx_alumni_login_events_logged_at (logged_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS engagement_points (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    source_type VARCHAR(50) NOT NULL,
+    source_id INT NOT NULL,
+    points INT NOT NULL,
+    reason VARCHAR(255) NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_engagement_source (user_id, source_type, source_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS engagement_metrics (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    alumni_id VARCHAR(36) NOT NULL,
+    event_points INT NOT NULL DEFAULT 0,
+    survey_points INT NOT NULL DEFAULT 0,
+    achievement_points INT NOT NULL DEFAULT 0,
+    freedom_wall_points INT NOT NULL DEFAULT 0,
+    reaction_points INT NOT NULL DEFAULT 0,
+    comment_points INT NOT NULL DEFAULT 0,
+    total_score INT NOT NULL DEFAULT 0,
+    engagement_level VARCHAR(50) NOT NULL DEFAULT 'Emerging',
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_engagement_metrics_alumni (alumni_id),
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS event_comments (
@@ -305,6 +465,63 @@ CREATE TABLE IF NOT EXISTS tracer_audit_logs (
     FOREIGN KEY (tracer_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS graduate_tracer_forms (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    tracer_form_id INT NULL,
+    alumni_id VARCHAR(36) NOT NULL,
+    form_status VARCHAR(50) NOT NULL DEFAULT 'Draft',
+    submitted_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_graduate_tracer_forms_alumni (alumni_id),
+    INDEX idx_graduate_tracer_forms_status (form_status),
+    INDEX idx_graduate_tracer_forms_submitted (submitted_at),
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (tracer_form_id) REFERENCES tracer_form(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS tracer_personal_info (
+    form_id INT PRIMARY KEY,
+    full_name VARCHAR(255) NULL,
+    email VARCHAR(255) NULL,
+    contact_number VARCHAR(100) NULL,
+    payload_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tracer_educational_background (
+    form_id INT PRIMARY KEY,
+    payload_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tracer_employment_data (
+    form_id INT PRIMARY KEY,
+    employment_status VARCHAR(100) NULL,
+    job_title VARCHAR(255) NULL,
+    company VARCHAR(255) NULL,
+    payload_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tracer_training_data (
+    form_id INT PRIMARY KEY,
+    payload_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tracer_feedback (
+    form_id INT PRIMARY KEY,
+    comments TEXT NULL,
+    payload_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS tracer_responses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL,
@@ -445,8 +662,13 @@ CREATE TABLE IF NOT EXISTS surveys (
     status ENUM('draft', 'published', 'closed', 'archived') DEFAULT 'draft',
     target_audience ENUM('all_alumni', 'registered_attendees', 'event_attendees', 'selected_batch') DEFAULT 'all_alumni',
     is_anonymous TINYINT(1) DEFAULT 0,
+    allow_multiple_responses TINYINT(1) NOT NULL DEFAULT 0,
     opens_at DATETIME DEFAULT NULL,
     closes_at DATETIME DEFAULT NULL,
+    start_datetime DATETIME NULL,
+    end_datetime DATETIME NULL,
+    auto_archive_at DATETIME NULL,
+    archived_at DATETIME NULL,
     created_by VARCHAR(36) DEFAULT NULL,
     updated_by VARCHAR(36) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -476,8 +698,33 @@ CREATE TABLE IF NOT EXISTS survey_questions (
     INDEX idx_survey_questions_survey (survey_id, question_order)
 );
 
+CREATE TABLE IF NOT EXISTS survey_options (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    question_id INT NOT NULL,
+    option_label VARCHAR(255) NOT NULL,
+    option_value VARCHAR(255) DEFAULT NULL,
+    option_order INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (question_id) REFERENCES survey_questions(id) ON DELETE CASCADE,
+    INDEX idx_survey_options_question (question_id, option_order)
+);
+
+CREATE TABLE IF NOT EXISTS survey_responses (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    survey_id INT NOT NULL,
+    respondent_id VARCHAR(36) DEFAULT NULL,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+    FOREIGN KEY (respondent_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_survey_responses_survey (survey_id, submitted_at),
+    INDEX idx_survey_responses_respondent (respondent_id)
+);
+
 CREATE TABLE IF NOT EXISTS survey_answers (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    response_id INT DEFAULT NULL,
     survey_id INT NOT NULL,
     question_id INT NOT NULL,
     respondent_id VARCHAR(36) DEFAULT NULL,
@@ -487,6 +734,8 @@ CREATE TABLE IF NOT EXISTS survey_answers (
     answer_json JSON DEFAULT NULL,
     rating_value DECIMAL(5,2) DEFAULT NULL,
     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE,
     FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
     FOREIGN KEY (question_id) REFERENCES survey_questions(id) ON DELETE CASCADE,
     FOREIGN KEY (respondent_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -519,6 +768,27 @@ CREATE TABLE IF NOT EXISTS notifications (
     sent_at DATETIME NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_by VARCHAR(36) DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_logs (
+    id VARCHAR(36) PRIMARY KEY,
+    alumni_id VARCHAR(36) NOT NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    email_purpose VARCHAR(100) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'pending',
+    error_message TEXT NULL,
+    sent_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(36) NULL,
+    provider_message_id VARCHAR(255) NULL,
+    INDEX idx_email_logs_alumni (alumni_id),
+    INDEX idx_email_logs_purpose (email_purpose),
+    INDEX idx_email_logs_created (created_at),
+    INDEX idx_email_logs_duplicate_guard (alumni_id, email_purpose, created_at),
+    FOREIGN KEY (alumni_id) REFERENCES profiles(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS user_notifications (

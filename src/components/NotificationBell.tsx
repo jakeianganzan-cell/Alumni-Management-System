@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { API_URL, getAuthHeaders } from "@/lib/api";
+import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 
@@ -33,21 +33,18 @@ export default function NotificationBell() {
         headers: getAuthHeaders(),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to load notifications");
-      }
-
-      return res.json();
+      return readApiResponse<UserNotificationResponse>(res);
     },
     refetchInterval: 30000,
   });
 
   const readMutation = useMutation({
     mutationFn: async (notificationId: string) => {
-      await fetch(`${API_URL}/user-notifications/${notificationId}/read`, {
+      const res = await fetch(`${API_URL}/user-notifications/${notificationId}/read`, {
         method: "PATCH",
         headers: getAuthHeaders(),
       });
+      await readApiResponse(res);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user-notifications"] });
@@ -56,10 +53,11 @@ export default function NotificationBell() {
 
   const readAllMutation = useMutation({
     mutationFn: async () => {
-      await fetch(`${API_URL}/user-notifications/read-all`, {
+      const res = await fetch(`${API_URL}/user-notifications/read-all`, {
         method: "POST",
         headers: getAuthHeaders(),
       });
+      await readApiResponse(res);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user-notifications"] });
@@ -83,8 +81,8 @@ export default function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button className="relative rounded-lg p-2 transition-colors hover:bg-white/10" type="button">
-          <Bell className="h-5 w-5 text-white/80" />
+        <button className="relative rounded-lg p-2 text-white transition-colors hover:bg-white/15" type="button">
+          <Bell className="h-5 w-5 text-white" />
           {unreadCount > 0 && (
             <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
               {unreadCount > 9 ? "9+" : unreadCount}
@@ -92,7 +90,7 @@ export default function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[360px] p-0" align="end">
+      <PopoverContent className="w-[min(360px,calc(100vw-1.5rem))] p-0" align="end">
         <div className="border-b border-border px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -134,7 +132,7 @@ export default function NotificationBell() {
                     <p className="text-sm font-semibold text-foreground">{notification.title}</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">{notification.message}</p>
                     <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                      {notification.category} • {new Date(notification.createdAt).toLocaleString()}
+                      {notification.category} | {new Date(notification.createdAt).toLocaleString()}
                     </p>
                   </div>
                   {!notification.isRead && <span className="mt-1 h-2.5 w-2.5 rounded-full bg-rose-500" />}

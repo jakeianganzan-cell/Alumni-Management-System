@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Download, Eye, FileSpreadsheet, FileText, Filter, Loader2, RefreshCw, Search } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
 
 interface TracerPayload {
   fullName?: string;
@@ -86,19 +87,9 @@ function blobDownload(blob: Blob, fileName: string) {
   URL.revokeObjectURL(objectUrl);
 }
 
-function openBlobPreview(blob: Blob) {
-  const objectUrl = URL.createObjectURL(blob);
-  const previewWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
-
-  if (!previewWindow) {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.target = "_blank";
-    anchor.rel = "noopener noreferrer";
-    anchor.click();
-  }
-
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+function getFileNameFromDisposition(disposition: string | null, fallback: string) {
+  const match = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  return match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : fallback;
 }
 
 export default function AdminGraduateTracer() {
@@ -113,6 +104,7 @@ export default function AdminGraduateTracer() {
   const [employmentStatus, setEmploymentStatus] = useState("All Status");
   const [dateSubmitted, setDateSubmitted] = useState("");
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const fetchRows = useCallback(async (page = pagination.page) => {
     try {
@@ -128,9 +120,10 @@ export default function AdminGraduateTracer() {
       if (employmentStatus !== "All Status") params.set("employmentStatus", employmentStatus);
       if (dateSubmitted) params.set("dateSubmitted", dateSubmitted);
 
-      const response = await fetch(`${API_URL}/tracer/admin/records?${params.toString()}`, { headers: getAuthHeaders() });
+      const response = await fetch(`${API_URL}/admin/tracer?${params.toString()}`, { headers: getAuthHeaders() });
       const payload = await readApiResponse<{ rows: TracerRow[]; pagination: PaginationMeta }>(response);
       setRows(payload.rows ?? []);
+      setSelectedIds(new Set());
       setPagination(payload.pagination ?? { page: 1, pageSize: 10, total: 0, totalPages: 1 });
     } catch (error) {
       console.error(error);
@@ -189,7 +182,7 @@ export default function AdminGraduateTracer() {
       }
 
       const blob = await response.blob();
-      blobDownload(blob, fileName);
+      blobDownload(blob, getFileNameFromDisposition(response.headers.get("content-disposition"), fileName));
     } catch (error) {
       console.error(error);
     } finally {
@@ -198,6 +191,8 @@ export default function AdminGraduateTracer() {
   };
 
   const runPdfPreview = async (url: string, key: string) => {
+    const previewWindow = openPdfPreviewWindow("Graduate Tracer PDF Preview");
+
     try {
       setDownloading(key);
       const response = await fetch(url, { headers: getAuthHeaders() });
@@ -206,13 +201,62 @@ export default function AdminGraduateTracer() {
       }
 
       const blob = await response.blob();
-      openBlobPreview(blob);
+      const fileName = getFileNameFromDisposition(response.headers.get("content-disposition"), "graduate-tracer-preview.pdf");
+      showPdfPreview(previewWindow, blob, fileName, "Graduate Tracer PDF Preview");
+    } catch (error) {
+      console.error(error);
+      showPdfPreviewError(
+        previewWindow,
+        error instanceof Error ? error.message : "Failed to open tracer preview.",
+        "Graduate Tracer PDF Preview",
+      );
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  const buildCurrentFilters = () => ({
+    search: search.trim(),
+    course: course === "All Courses" ? "" : course,
+    batch: batch === "All Batches" ? "" : batch,
+    employmentStatus: employmentStatus === "All Status" ? "" : employmentStatus,
+    dateSubmitted,
+  });
+
+  const runBulkPdfDownload = async () => {
+    try {
+      setDownloading("bulk-pdf");
+      const response = await fetch(`${API_URL}/admin/tracer/bulk-download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          alumniIds: selectedIds.size > 0 ? Array.from(selectedIds) : undefined,
+          filters: selectedIds.size === 0 ? buildCurrentFilters() : undefined,
+        }),
+      });
+      if (!response.ok) {
+        await readApiResponse(response);
+      }
+
+      const blob = await response.blob();
+      blobDownload(blob, getFileNameFromDisposition(response.headers.get("content-disposition"), "graduate-tracer-selected-pdfs.zip"));
     } catch (error) {
       console.error(error);
     } finally {
       setDownloading(null);
     }
   };
+
+  const toggleSelected = (userId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const allCurrentRowsSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.user_id));
 
   const topEmployment = analytics?.charts.employmentStatus.slice(0, 4) ?? [];
   const topCompetencies = analytics?.charts.usefulCompetencies.slice(0, 5) ?? [];
@@ -223,6 +267,98 @@ export default function AdminGraduateTracer() {
     : loading
         ? "Loading tracer submissions..."
         : null;
+
+  const analyticsSnapshotSection = (
+    <div className="mt-5 grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-navy-dark">Tracer Analytics Snapshot</p>
+            <p className="text-xs text-muted-foreground">Live counts from completed tracer submissions</p>
+          </div>
+          <button
+            onClick={() => void fetchAnalytics()}
+            disabled={loadingAnalytics}
+            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loadingAnalytics ? <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 inline h-3.5 w-3.5" />}
+            {loadingAnalytics ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Employment Status</p>
+            <div className="mt-3 space-y-2 text-sm">
+              {topEmployment.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
+              {topEmployment.map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <span>{item.label}</span>
+                  <span className="font-semibold text-navy-dark">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Top Useful Competencies</p>
+            <div className="mt-3 space-y-2 text-sm">
+              {topCompetencies.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
+              {topCompetencies.map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <span>{item.label}</span>
+                  <span className="font-semibold text-navy-dark">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Unemployment Rate</p>
+            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.unemploymentRate}%` : "..."}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Self-employed Rate</p>
+            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.selfEmploymentRate}%` : "..."}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Avg. First-job Wait</p>
+            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.averageWaitingMonths} mo` : "..."}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
+        <p className="text-sm font-semibold text-navy-dark">Report Exports</p>
+        <p className="mt-1 text-xs text-muted-foreground">Download tracer analytics for defense presentations, institutional review, and CHED-ready reporting.</p>
+        <div className="mt-4 grid gap-2">
+          <button
+            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=csv`, `graduate-tracer-report.csv`, "report-csv")}
+            disabled={downloading !== null}
+            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="text-sm font-medium text-slate-700">{downloading === "report-csv" ? "Preparing CSV export..." : "CSV Summary Export"}</span>
+            {downloading === "report-csv" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <Download className="h-4 w-4 text-slate-500" />}
+          </button>
+          <button
+            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
+            disabled={downloading !== null}
+            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="text-sm font-medium text-slate-700">{downloading === "report-excel" ? "Preparing Excel export..." : "Excel Workbook Export"}</span>
+            {downloading === "report-excel" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileSpreadsheet className="h-4 w-4 text-slate-500" />}
+          </button>
+          <button
+            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
+            disabled={downloading !== null}
+            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="text-sm font-medium text-slate-700">{downloading === "report-pdf" ? "Preparing printable report..." : "Printable PDF Report"}</span>
+            {downloading === "report-pdf" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileText className="h-4 w-4 text-slate-500" />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <AdminLayout
@@ -238,100 +374,10 @@ export default function AdminGraduateTracer() {
         ].map((stat) => (
           <div key={stat.label} className="rounded-2xl border border-border bg-card p-4 shadow-card">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{stat.label}</p>
-            <p className="mt-2 text-3xl font-bold text-navy-dark">{loadingAnalytics ? "..." : stat.value ?? 0}</p>
+            <p className="mt-2 text-2xl font-bold text-navy-dark sm:text-3xl">{loadingAnalytics ? "..." : stat.value ?? 0}</p>
             <p className="mt-1 text-xs text-muted-foreground">{stat.sub}</p>
           </div>
         ))}
-      </div>
-
-      <div className="mt-5 grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-navy-dark">Tracer Analytics Snapshot</p>
-              <p className="text-xs text-muted-foreground">Live counts from completed tracer submissions</p>
-            </div>
-            <button
-              onClick={() => void fetchAnalytics()}
-              disabled={loadingAnalytics}
-              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loadingAnalytics ? <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 inline h-3.5 w-3.5" />}
-              {loadingAnalytics ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Employment Status</p>
-              <div className="mt-3 space-y-2 text-sm">
-                {topEmployment.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
-                {topEmployment.map((item) => (
-                  <div key={item.label} className="flex items-center justify-between">
-                    <span>{item.label}</span>
-                    <span className="font-semibold text-navy-dark">{item.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Top Useful Competencies</p>
-              <div className="mt-3 space-y-2 text-sm">
-                {topCompetencies.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
-                {topCompetencies.map((item) => (
-                  <div key={item.label} className="flex items-center justify-between">
-                    <span>{item.label}</span>
-                    <span className="font-semibold text-navy-dark">{item.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Unemployment Rate</p>
-              <p className="mt-2 text-2xl font-bold text-navy-dark">{analytics ? `${analytics.totals.unemploymentRate}%` : "..."}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Self-employed Rate</p>
-              <p className="mt-2 text-2xl font-bold text-navy-dark">{analytics ? `${analytics.totals.selfEmploymentRate}%` : "..."}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Avg. First-job Wait</p>
-              <p className="mt-2 text-2xl font-bold text-navy-dark">{analytics ? `${analytics.totals.averageWaitingMonths} mo` : "..."}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
-          <p className="text-sm font-semibold text-navy-dark">Report Exports</p>
-          <p className="mt-1 text-xs text-muted-foreground">Download tracer analytics for defense presentations, institutional review, and CHED-ready reporting.</p>
-          <div className="mt-4 grid gap-2">
-            <button
-              onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=csv`, `graduate-tracer-report.csv`, "report-csv")}
-              disabled={downloading !== null}
-              className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <span className="text-sm font-medium text-slate-700">{downloading === "report-csv" ? "Preparing CSV export..." : "CSV Summary Export"}</span>
-              {downloading === "report-csv" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <Download className="h-4 w-4 text-slate-500" />}
-            </button>
-            <button
-              onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
-              disabled={downloading !== null}
-              className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <span className="text-sm font-medium text-slate-700">{downloading === "report-excel" ? "Preparing Excel export..." : "Excel Workbook Export"}</span>
-              {downloading === "report-excel" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileSpreadsheet className="h-4 w-4 text-slate-500" />}
-            </button>
-            <button
-              onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
-              disabled={downloading !== null}
-              className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <span className="text-sm font-medium text-slate-700">{downloading === "report-pdf" ? "Preparing printable report..." : "Printable PDF Report"}</span>
-              {downloading === "report-pdf" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileText className="h-4 w-4 text-slate-500" />}
-            </button>
-          </div>
-        </div>
       </div>
 
       <div className="mt-5 rounded-2xl border border-border bg-card shadow-card">
@@ -385,11 +431,15 @@ export default function AdminGraduateTracer() {
               </button>
             </div>
             <button
-              onClick={() => void runFileDownload(`${API_URL}/tracer/admin/export/all?format=pdf`, "graduate-tracer-forms.zip", "bulk-pdf")}
+              onClick={() => void runBulkPdfDownload()}
               disabled={downloading !== null}
               className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-navy hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {downloading === "bulk-pdf" ? "Preparing all PDFs..." : "Download All PDFs"}
+              {downloading === "bulk-pdf"
+                ? "Preparing PDFs..."
+                : selectedIds.size > 0
+                  ? `Download Selected PDFs (${selectedIds.size})`
+                  : "Download Filtered PDFs"}
             </button>
           </div>
         </div>
@@ -398,6 +448,22 @@ export default function AdminGraduateTracer() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40 text-left">
+                <th className="px-4 py-3 font-semibold text-navy">
+                  <input
+                    type="checkbox"
+                    checked={allCurrentRowsSelected}
+                    onChange={() => {
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (allCurrentRowsSelected) rows.forEach((row) => next.delete(row.user_id));
+                        else rows.forEach((row) => next.add(row.user_id));
+                        return next;
+                      });
+                    }}
+                    aria-label="Select all visible tracer rows"
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                </th>
                 <th className="px-4 py-3 font-semibold text-navy">Alumni</th>
                 <th className="px-4 py-3 font-semibold text-navy">Program</th>
                 <th className="px-4 py-3 font-semibold text-navy">Employment</th>
@@ -409,11 +475,11 @@ export default function AdminGraduateTracer() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">Loading tracer submissions...</td>
+                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading tracer submissions...</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No tracer records matched the selected filters.</td>
+                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No tracer records matched the selected filters.</td>
                 </tr>
               ) : (
                 rows.map((row) => {
@@ -422,31 +488,40 @@ export default function AdminGraduateTracer() {
                   const formStatus = row.submission_status || "completed";
                   return (
                     <tr key={row.id} className="border-b border-border hover:bg-muted/20">
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" data-label="Select">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(row.user_id)}
+                          onChange={() => toggleSelected(row.user_id)}
+                          aria-label={`Select ${row.name || payload.fullName || "alumni"} tracer PDF`}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      </td>
+                      <td className="px-4 py-3" data-label="Alumni">
                         <p className="font-semibold text-navy-dark">{row.name || payload.fullName || "Unknown Alumni"}</p>
                         <p className="text-xs text-muted-foreground">{row.student_id || "No alumni ID"} • {payload.email || "-"}</p>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
+                      <td className="px-4 py-3 text-muted-foreground" data-label="Program">
                         <p>{row.course || payload.educationalAttainments?.[0]?.degreeSpecialization || "-"}</p>
                         <p className="text-xs text-muted-foreground">Batch {row.batch || payload.educationalAttainments?.[0]?.yearGraduated || "-"}</p>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" data-label="Employment">
                         <span className={`rounded-full px-2 py-1 text-xs font-medium ${employmentColors[displayEmployment] || "bg-slate-100 text-slate-700"}`}>
                           {displayEmployment}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
+                      <td className="px-4 py-3 text-muted-foreground" data-label="Submission">
                         {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : "-"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" data-label="Status">
                         <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusColors[formStatus] || "bg-slate-100 text-slate-700"}`}>
                           {formStatus}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" data-label="Actions">
                         <div className="flex flex-wrap gap-2">
                           <button
-                            onClick={() => void runPdfPreview(`${API_URL}/admin/tracer/${row.id}/pdf/preview`, `preview-${row.id}`)}
+                            onClick={() => void runPdfPreview(`${API_URL}/admin/tracer/${row.user_id}/pdf/preview`, `preview-${row.id}`)}
                             disabled={downloading !== null}
                             className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                             title="Preview PDF"
@@ -454,22 +529,12 @@ export default function AdminGraduateTracer() {
                             {downloading === `preview-${row.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                           </button>
                           <button
-                            onClick={() => void runFileDownload(`${API_URL}/admin/tracer/${row.id}/pdf`, `${row.name || "tracer"}.pdf`, `pdf-${row.id}`)}
+                            onClick={() => void runFileDownload(`${API_URL}/admin/tracer/${row.user_id}/pdf/download`, `${row.name || "tracer"}.pdf`, `pdf-${row.id}`)}
                             disabled={downloading !== null}
                             className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {downloading === `pdf-${row.id}` ? "Preparing PDF..." : "Download PDF"}
                           </button>
-                          <button
-                            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/export/${row.user_id}?format=docx`, `${row.name || "tracer"}.docx`, `docx-${row.user_id}`)}
-                            disabled={downloading !== null}
-                            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {downloading === `docx-${row.user_id}` ? "Preparing DOCX..." : "DOCX"}
-                          </button>
-                          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
-                            Editable
-                          </span>
                         </div>
                       </td>
                     </tr>
@@ -502,6 +567,8 @@ export default function AdminGraduateTracer() {
           </div>
         </div>
       </div>
+
+      {analyticsSnapshotSection}
     </AdminLayout>
   );
 }

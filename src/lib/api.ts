@@ -1,12 +1,19 @@
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
+const trimApiSuffix = (value: string) => value.replace(/\/api$/i, "");
 
 const getDefaultApiBaseUrl = () => {
-  if (typeof window === "undefined") return "http://localhost:3001";
+  if (typeof window === "undefined") return "http://localhost:5000";
 
   const { protocol, hostname } = window.location;
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+
+  if (!isLocalHost) {
+    return window.location.origin;
+  }
+
   const safeProtocol = protocol === "https:" ? "https:" : "http:";
 
-  return `${safeProtocol}//${hostname}:3001`;
+  return `${safeProtocol}//${hostname}:5000`;
 };
 
 const rawBaseUrl =
@@ -14,7 +21,7 @@ const rawBaseUrl =
   import.meta.env.VITE_API_URL ||
   getDefaultApiBaseUrl();
 
-export const API_BASE_URL = trimTrailingSlash(rawBaseUrl);
+export const API_BASE_URL = trimApiSuffix(trimTrailingSlash(rawBaseUrl));
 export const API_URL = `${API_BASE_URL}/api`;
 
 export const AUTH_TOKEN_KEY = "auth_token";
@@ -80,6 +87,48 @@ export const getAuthHeaders = (headers: HeadersInit = {}) => {
     ...headers,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+};
+
+const getSameOriginApiFallbackUrl = (input: string) => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const requestUrl = new URL(input, window.location.href);
+    const apiBaseUrl = new URL(API_BASE_URL, window.location.href);
+
+    if (requestUrl.origin !== apiBaseUrl.origin || !requestUrl.pathname.startsWith("/api")) {
+      return null;
+    }
+
+    const fallbackUrl = `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`;
+    return new URL(fallbackUrl, window.location.href).href === requestUrl.href ? null : fallbackUrl;
+  } catch {
+    return null;
+  }
+};
+
+const buildApiConnectionError = (error: unknown, input: string, fallbackUrl?: string | null) => {
+  const detail = error instanceof Error && error.message ? error.message : "network request failed";
+  const retryDetail = fallbackUrl ? ` Tried direct API and ${fallbackUrl}.` : "";
+  return new Error(`Cannot connect to the API server.${retryDetail} Make sure the backend is running locally on port 5000 or set VITE_API_URL to the deployed backend URL. (${detail})`);
+};
+
+export const fetchApi = async (input: string, init?: RequestInit) => {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const fallbackUrl = getSameOriginApiFallbackUrl(input);
+
+    if (fallbackUrl) {
+      try {
+        return await fetch(fallbackUrl, init);
+      } catch (fallbackError) {
+        throw buildApiConnectionError(fallbackError, input, fallbackUrl);
+      }
+    }
+
+    throw buildApiConnectionError(error, input);
+  }
 };
 
 export class ApiError extends Error {

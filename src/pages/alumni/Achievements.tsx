@@ -1,15 +1,11 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Calendar,
-  CheckCircle2,
-  Clock3,
   FileImage,
   Loader2,
   MessageCircle,
@@ -93,9 +89,12 @@ const EMPTY_REACTIONS: ReactionCounts = {
 };
 
 export default function AlumniAchievements() {
-  const { profile } = useAuth();
   const [achievements, setAchievements] = useState<AchievementRecord[]>([]);
   const [comments, setComments] = useState<Record<number, AchievementComment[]>>({});
+  const [commentsOpen, setCommentsOpen] = useState<Record<number, boolean>>({});
+  const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
+  const [loadingComments, setLoadingComments] = useState<Record<number, boolean>>({});
+  const [submittingComment, setSubmittingComment] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -131,6 +130,7 @@ export default function AlumniAchievements() {
 
   const loadComments = async (achievementId: number) => {
     try {
+      setLoadingComments((current) => ({ ...current, [achievementId]: true }));
       const response = await fetch(`${API_URL}/achievements/${achievementId}/comments`, {
         headers: getAuthHeaders(),
       });
@@ -139,6 +139,8 @@ export default function AlumniAchievements() {
     } catch (error) {
       console.error(error);
       toast.error("Failed to load achievement comments");
+    } finally {
+      setLoadingComments((current) => ({ ...current, [achievementId]: false }));
     }
   };
 
@@ -167,16 +169,6 @@ export default function AlumniAchievements() {
     () => achievements.filter((achievement) => achievement.status === "approved"),
     [achievements],
   );
-
-  const mySubmissions = useMemo(() => {
-    return achievements.filter((achievement) => achievement.alumniId === profile?.id);
-  }, [achievements, profile?.id]);
-
-  const stats = [
-    { label: "Approved", value: approvedAchievements.length },
-    { label: "My submissions", value: mySubmissions.length },
-    { label: "Pending review", value: mySubmissions.filter((achievement) => achievement.status === "pending").length },
-  ];
 
   const submitAchievement = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -270,6 +262,36 @@ export default function AlumniAchievements() {
     }
   };
 
+  const toggleComments = async (achievementId: number) => {
+    const willOpen = !commentsOpen[achievementId];
+    setCommentsOpen((current) => ({ ...current, [achievementId]: willOpen }));
+    if (willOpen && !comments[achievementId]) {
+      await loadComments(achievementId);
+    }
+  };
+
+  const submitFeedComment = async (achievementId: number) => {
+    const content = commentInputs[achievementId]?.trim();
+    if (!content) return;
+
+    try {
+      setSubmittingComment((current) => ({ ...current, [achievementId]: true }));
+      const response = await fetch(`${API_URL}/achievements/${achievementId}/comments`, {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ content }),
+      });
+      await readApiResponse(response);
+      setCommentInputs((current) => ({ ...current, [achievementId]: "" }));
+      await Promise.all([loadComments(achievementId), loadAchievements()]);
+    } catch (error) {
+      console.error(error);
+      toast.error("Could not add comment");
+    } finally {
+      setSubmittingComment((current) => ({ ...current, [achievementId]: false }));
+    }
+  };
+
   const openAchievementForm = () => {
     setShowForm(true);
     window.setTimeout(() => {
@@ -280,27 +302,8 @@ export default function AlumniAchievements() {
   return (
     <AlumniLayout title="Achievements" subtitle="Celebrate alumni milestones with real reactions and live discussion">
       <div className="space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Achievement Center</p>
-              <h2 className="text-xl font-semibold text-navy-dark">Verified alumni milestones and community recognition</h2>
-              <p className="text-sm text-muted-foreground">Submit your accomplishments, react with emojis, and join the conversation around approved achievements.</p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            {stats.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{item.label}</p>
-                <p className="mt-1 text-lg font-semibold text-navy-dark">{item.value}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
         {showForm && (
-          <section ref={formRef} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section ref={formRef} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-4">
               <h2 className="text-base font-semibold text-navy-dark">Submit achievement</h2>
               <p className="text-sm text-muted-foreground">Use clear details and one proof image so the admin team can review it quickly.</p>
@@ -337,15 +340,15 @@ export default function AlumniAchievements() {
               </Field>
 
               <Field label="Proof image">
-                <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-muted-foreground transition hover:border-navy">
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-muted-foreground transition hover:border-navy">
                   <FileImage className="h-5 w-5" />
                   <span>{form.proofImage ? "Image ready" : "Choose image"}</span>
                   <input type="file" accept="image/*" className="hidden" onChange={onProofChange} />
                 </label>
-                {form.proofImage && <img src={form.proofImage} alt="Proof preview" className="mt-3 h-40 w-full rounded-2xl border border-slate-200 object-cover" />}
+                {form.proofImage && <img src={form.proofImage} alt="Proof preview" className="mt-3 h-40 w-40 rounded-xl border border-slate-200 object-cover sm:h-48 sm:w-48" />}
               </Field>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-col-reverse gap-3 sm:flex-row">
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }}>
                   Cancel
                 </Button>
@@ -367,8 +370,8 @@ export default function AlumniAchievements() {
           </section>
         )}
 
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex justify-center">
+          <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-4">
               <h2 className="text-base font-semibold text-navy-dark">Approved achievements</h2>
               <p className="text-sm text-muted-foreground">React, comment, and open any achievement to follow the discussion in real time.</p>
@@ -378,91 +381,147 @@ export default function AlumniAchievements() {
               {loading ? (
                 <div className="text-sm text-muted-foreground">Loading achievements...</div>
               ) : approvedAchievements.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-sm text-muted-foreground">
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-muted-foreground">
                   No approved achievements yet.
                 </div>
               ) : (
-                approvedAchievements.map((achievement) => (
-                  <article key={achievement.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <button type="button" onClick={() => setSelected(achievement)} className="w-full text-left">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-semibold text-navy-dark">{achievement.title}</h3>
-                            <span className="rounded-full bg-gold/10 px-2.5 py-1 text-[11px] font-semibold text-navy-dark">{achievement.category}</span>
-                          </div>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {achievement.name} | {achievement.organization || "No organization"}
-                          </p>
+                approvedAchievements.map((achievement) => {
+                  const proofImageUrl = resolveAssetUrl(achievement.proofImage) || achievement.proofImage;
+                  const achievementComments = comments[achievement.id] || [];
+                  const isCommentsOpen = commentsOpen[achievement.id] ?? false;
+
+                  return (
+                    <article key={achievement.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 transition hover:border-navy/30">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-sm font-semibold text-white">
+                          {achievement.name[0] || "A"}
                         </div>
-                        <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <Calendar className="h-3.5 w-3.5" />
-                          {formatDate(achievement.date)}
-                        </p>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm font-semibold text-navy-dark">{achievement.name}</h3>
+                            <Badge variant="outline">{achievement.category}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {[achievement.course, achievement.batch ? `Batch ${achievement.batch}` : null, achievement.organization, formatDate(achievement.date)]
+                              .filter(Boolean)
+                              .join(" | ")}
+                          </p>
+
+                          <button type="button" onClick={() => setSelected(achievement)} className="mt-3 block w-full text-left">
+                            <p className="text-sm font-semibold leading-6 text-foreground">{achievement.title}</p>
+                            <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-foreground">
+                              {achievement.description || "No description provided."}
+                            </p>
+
+                            {proofImageUrl && (
+                              <img
+                                src={proofImageUrl}
+                                alt={achievement.title}
+                                className="mt-3 h-40 w-40 rounded-xl border border-slate-200 object-cover sm:h-48 sm:w-48"
+                              />
+                            )}
+                          </button>
+
+                          <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                            <span>{achievement.reactionCounts.heart} hearts</span>
+                            <button
+                              type="button"
+                              onClick={() => void toggleComments(achievement.id)}
+                              className="inline-flex items-center gap-1 transition hover:text-navy"
+                            >
+                              <MessageCircle className="h-3.5 w-3.5" />
+                              {achievement.commentCount} comments
+                            </button>
+                          </div>
+
+                          <div className="mt-3 flex">
+                            <button
+                              type="button"
+                              onClick={() => void reactToAchievement(achievement.id, "heart")}
+                              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                                achievement.currentUserReaction === "heart"
+                                  ? "border-rose-500 bg-rose-500 text-white shadow-sm"
+                                  : "border-rose-100 bg-white text-rose-600 hover:border-rose-300 hover:bg-rose-50"
+                              }`}
+                              disabled={reactingTo === achievement.id}
+                            >
+                              <span className="text-base leading-none">{"\u2764\uFE0F"}</span>
+                              Heart {achievement.reactionCounts.heart}
+                            </button>
+                          </div>
+
+                          {isCommentsOpen && (
+                            <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                              {loadingComments[achievement.id] ? (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Loading comments...
+                                </div>
+                              ) : achievementComments.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">No comments yet.</p>
+                              ) : (
+                                <div className="space-y-3">
+                                  {achievementComments.map((comment) => {
+                                    const commentPhoto = resolveAssetUrl(comment.authorPhoto);
+                                    return (
+                                      <div key={comment.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-start gap-3">
+                                          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-xs font-semibold text-white">
+                                            {commentPhoto ? (
+                                              <img src={commentPhoto} alt={comment.authorName} className="h-full w-full object-cover" />
+                                            ) : (
+                                              comment.authorName[0]
+                                            )}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="text-sm font-semibold text-navy-dark">{comment.authorName}</p>
+                                              <span className="text-xs text-muted-foreground">
+                                                {[comment.authorCourse, comment.authorBatch ? `Batch ${comment.authorBatch}` : null, new Date(comment.createdAt).toLocaleString()]
+                                                  .filter(Boolean)
+                                                  .join(" | ")}
+                                              </span>
+                                            </div>
+                                            <p className="mt-1 text-sm leading-6 text-foreground">{comment.content}</p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              <div className="mt-4 flex gap-2">
+                                <Input
+                                  value={commentInputs[achievement.id] || ""}
+                                  onChange={(event) =>
+                                    setCommentInputs((current) => ({ ...current, [achievement.id]: event.target.value }))
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void submitFeedComment(achievement.id);
+                                    }
+                                  }}
+                                  placeholder="Write a comment..."
+                                  className="border-slate-300 bg-white"
+                                />
+                                <Button
+                                  type="button"
+                                  onClick={() => void submitFeedComment(achievement.id)}
+                                  disabled={submittingComment[achievement.id] || !commentInputs[achievement.id]?.trim()}
+                                >
+                                  {submittingComment[achievement.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="mt-3 line-clamp-3 text-sm leading-6 text-muted-foreground">{achievement.description || "No description provided."}</p>
-                    </button>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void reactToAchievement(achievement.id, "heart")}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                          achievement.currentUserReaction === "heart"
-                            ? "border-rose-500 bg-rose-500 text-white shadow-sm"
-                            : "border-rose-100 bg-white text-rose-600 hover:border-rose-300 hover:bg-rose-50"
-                        }`}
-                        disabled={reactingTo === achievement.id}
-                      >
-                        <span className="text-base leading-none">{"\u2764\uFE0F"}</span>
-                        {achievement.reactionCounts.heart}
-                      </button>
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <MessageCircle className="h-3.5 w-3.5" />
-                        {achievement.commentCount} comment{achievement.commentCount === 1 ? "" : "s"}
-                      </span>
-                      <button type="button" onClick={() => setSelected(achievement)} className="font-medium text-navy">
-                        Open discussion
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-navy-dark">My submissions</h2>
-              <p className="text-sm text-muted-foreground">Track approval status and any rejection feedback here.</p>
-            </div>
-
-            <div className="space-y-3">
-              {mySubmissions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-center text-sm text-muted-foreground">
-                  No submissions yet.
-                </div>
-              ) : (
-                mySubmissions.map((achievement) => (
-                  <div key={achievement.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-semibold text-navy-dark">{achievement.title}</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">{achievement.category}</p>
-                      </div>
-                      <StatusBadge status={achievement.status} />
-                    </div>
-                    <p className="mt-3 text-sm leading-6 text-muted-foreground">{achievement.description || "No description provided."}</p>
-                    {achievement.rejectionReason && (
-                      <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        Reason: {achievement.rejectionReason}
-                      </div>
-                    )}
-                  </div>
-                ))
+                    </article>
+                  );
+                })
               )}
             </div>
           </section>
@@ -472,7 +531,7 @@ export default function AlumniAchievements() {
       <button
         type="button"
         onClick={openAchievementForm}
-        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(91,18,36,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
+        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
       >
         <Plus className="h-4 w-4" />
         Achievement
@@ -480,36 +539,39 @@ export default function AlumniAchievements() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}>
-          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-4 shadow-2xl sm:p-5" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold text-navy-dark">{selected.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {selected.name} | {selected.organization || "No organization"}
-                </p>
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-sm font-semibold text-white">
+                  {selected.name[0] || "A"}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-navy-dark">{selected.name}</h2>
+                    <Badge variant="outline">{selected.category}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {[selected.course, selected.batch ? `Batch ${selected.batch}` : null, selected.organization, formatDate(selected.date)]
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </p>
+                </div>
               </div>
               <button onClick={() => setSelected(null)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-slate-100">
                 <XCircle className="h-4 w-4" />
               </button>
             </div>
 
-            {selected.proofImage && (
-              <img src={resolveAssetUrl(selected.proofImage) || selected.proofImage} alt={selected.title} className="mt-4 h-64 w-full rounded-3xl border border-slate-200 object-cover" />
-            )}
-
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <MetaCard label="Category" value={selected.category} />
-              <MetaCard label="Date" value={formatDate(selected.date)} />
-              <MetaCard label="Batch" value={selected.batch || "Not set"} />
-              <MetaCard label="Course" value={selected.course || "Not set"} />
+            <div className="mt-4">
+              <p className="text-base font-semibold leading-6 text-foreground">{selected.title}</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground">{selected.description || "No description provided."}</p>
             </div>
 
-            <section className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Description</p>
-              <p className="mt-2 text-sm leading-7 text-foreground">{selected.description || "No description provided."}</p>
-            </section>
+            {selected.proofImage && (
+              <img src={resolveAssetUrl(selected.proofImage) || selected.proofImage} alt={selected.title} className="mx-auto mt-4 aspect-square w-full max-w-sm rounded-xl border border-slate-200 object-cover" />
+            )}
 
-            <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5">
+            <section className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -527,7 +589,7 @@ export default function AlumniAchievements() {
               </div>
             </section>
 
-            <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-5">
+            <section className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-navy-dark">Comments</h3>
@@ -538,24 +600,37 @@ export default function AlumniAchievements() {
 
               <div className="mt-4 space-y-3">
                 {(comments[selected.id] || []).length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center text-sm text-muted-foreground">
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-muted-foreground">
                     No comments yet.
                   </div>
                 ) : (
-                  (comments[selected.id] || []).map((comment) => (
-                    <div key={comment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-navy-dark">{comment.authorName}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {comment.authorCourse || "Alumni"} {comment.authorBatch ? `| Batch ${comment.authorBatch}` : ""}
-                          </p>
+                  (comments[selected.id] || []).map((comment) => {
+                    const commentPhoto = resolveAssetUrl(comment.authorPhoto);
+                    return (
+                    <div key={comment.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-xs font-semibold text-white">
+                          {commentPhoto ? (
+                            <img src={commentPhoto} alt={comment.authorName} className="h-full w-full object-cover" />
+                          ) : (
+                            comment.authorName[0] || "A"
+                          )}
                         </div>
-                        <p className="text-xs text-muted-foreground">{new Date(comment.createdAt).toLocaleString()}</p>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-navy-dark">{comment.authorName}</p>
+                            <span className="text-xs text-muted-foreground">
+                              {[comment.authorCourse, comment.authorBatch ? `Batch ${comment.authorBatch}` : null, new Date(comment.createdAt).toLocaleString()]
+                                .filter(Boolean)
+                                .join(" | ")}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-sm leading-6 text-foreground">{comment.content}</p>
+                        </div>
                       </div>
-                      <p className="mt-3 text-sm leading-6 text-foreground">{comment.content}</p>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
@@ -582,42 +657,6 @@ function Field({ label, required, children }: { label: string; required?: boolea
       </span>
       {children}
     </label>
-  );
-}
-
-function StatusBadge({ status }: { status: AchievementStatus }) {
-  if (status === "approved") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        Approved
-      </span>
-    );
-  }
-
-  if (status === "rejected") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
-        <XCircle className="h-3.5 w-3.5" />
-        Rejected
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
-      <Clock3 className="h-3.5 w-3.5" />
-      Pending
-    </span>
-  );
-}
-
-function MetaCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-2 text-sm text-foreground">{value}</p>
-    </div>
   );
 }
 

@@ -2,12 +2,16 @@ import fs from "fs/promises";
 import { randomUUID } from "crypto";
 import os from "os";
 import path from "path";
-import { spawn } from "child_process";
 import type { Response } from "express";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import db from "../db";
 import type { AuthenticatedRequest } from "../types/auth";
-import { generateTracerPdfBuffer } from "../utils/tracerPdf";
+import {
+  createStoredZipBuffer,
+  generateTracerDocxBuffer,
+  generateTracerPdfBuffer,
+  generateTracerPortablePdfBuffer,
+} from "../utils/tracerPdf";
 
 interface TracerSummaryRow extends RowDataPacket {
   id: number;
@@ -56,9 +60,6 @@ interface SimpleCountRow extends RowDataPacket {
   totalAlumni?: number;
 }
 
-const TEMPLATE_PATH = path.resolve(process.cwd(), "templates", "CHED-Graduate-Tracer-Study.docx");
-const FILL_SCRIPT_PATH = path.resolve(process.cwd(), "scripts", "fill-tracer-template.ps1");
-const ZIP_SCRIPT_PATH = path.resolve(process.cwd(), "scripts", "zip-directory.ps1");
 const SCHOOL_NAME = "University of Science and Technology of Southern Philippines";
 const STALE_TRACER_NOTIFICATION_TITLE = "Graduate tracer update needed";
 const STALE_TRACER_NOTIFICATION_CATEGORY = "tracer";
@@ -92,27 +93,6 @@ const slugify = (value: string) =>
     .replace(/\s+/g, "_");
 
 const jsonResponseError = (res: Response, status: number, error: string) => res.status(status).json({ error });
-
-const runPowerShell = (scriptPath: string, args: string[]) =>
-  new Promise<void>((resolve, reject) => {
-    const child = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, ...args], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
-    });
-  });
 
 const tableExists = async (tableName: string) => {
   const rows = await db.query<RowDataPacket>("SHOW TABLES LIKE ?", [tableName]);
@@ -176,10 +156,32 @@ const formatFileDate = (value = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
-const buildTracerFileName = (name: string, submittedAt?: string | null, extension = "pdf") => {
-  const basis = submittedAt ? new Date(submittedAt) : new Date();
-  const stamp = `${basis.getFullYear()}`;
-  return `TracerForm_${stamp}_${slugify(name || "Alumni")}.${extension}`;
+const getPayloadBatchYear = (payload: Record<string, unknown>) =>
+  cleanText((Array.isArray(payload.educationalAttainments) ? (payload.educationalAttainments[0] as Record<string, unknown>)?.yearGraduated : "") || "");
+
+const getTracerBatchYear = (row: Omit<Partial<TracerSummaryRow>, "ched_payload"> & { ched_payload?: string | Record<string, unknown> | null }) => {
+  const payload = safeParseJson<Record<string, unknown>>(row.ched_payload, {});
+  return cleanText(row.batch) || getPayloadBatchYear(payload) || "N_A";
+};
+
+const splitNameForFile = (name: string) => {
+  const normalized = cleanText(name).replace(/\s+/g, " ");
+  if (!normalized) return { lastName: "Alumni", firstName: "Tracer" };
+
+  if (normalized.includes(",")) {
+    const [lastName, rest] = normalized.split(",", 2);
+    const [firstName] = rest.trim().split(/\s+/);
+    return { lastName: lastName || "Alumni", firstName: firstName || "Tracer" };
+  }
+
+  const parts = normalized.split(/\s+/);
+  if (parts.length === 1) return { lastName: parts[0], firstName: "Tracer" };
+  return { lastName: parts[parts.length - 1], firstName: parts[0] };
+};
+
+const buildTracerFileName = (name: string, batchYear?: string | null, extension = "pdf") => {
+  const { lastName, firstName } = splitNameForFile(name || "Alumni");
+  return `GTS_${slugify(lastName || "Alumni")}_${slugify(firstName || "Tracer")}_${slugify(batchYear || "N_A")}.${extension}`;
 };
 
 const isTruthy = (value: unknown) => value === true || value === 1 || value === "1";
@@ -418,6 +420,75 @@ const ensureTracerSchema = async () => {
     )
   `);
 
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS graduate_tracer_forms (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      tracer_form_id INT NULL,
+      alumni_id VARCHAR(36) NOT NULL,
+      form_status VARCHAR(50) NOT NULL DEFAULT 'Draft',
+      submitted_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_graduate_tracer_forms_alumni (alumni_id),
+      INDEX idx_graduate_tracer_forms_status (form_status),
+      INDEX idx_graduate_tracer_forms_submitted (submitted_at),
+      FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (tracer_form_id) REFERENCES tracer_form(id) ON DELETE SET NULL
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tracer_personal_info (
+      form_id INT PRIMARY KEY,
+      full_name VARCHAR(255) NULL,
+      email VARCHAR(255) NULL,
+      contact_number VARCHAR(100) NULL,
+      payload_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tracer_educational_background (
+      form_id INT PRIMARY KEY,
+      payload_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tracer_employment_data (
+      form_id INT PRIMARY KEY,
+      employment_status VARCHAR(100) NULL,
+      job_title VARCHAR(255) NULL,
+      company VARCHAR(255) NULL,
+      payload_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tracer_training_data (
+      form_id INT PRIMARY KEY,
+      payload_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS tracer_feedback (
+      form_id INT PRIMARY KEY,
+      comments TEXT NULL,
+      payload_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (form_id) REFERENCES graduate_tracer_forms(id) ON DELETE CASCADE
+    )
+  `);
+
   const hasGraduateTracer = await tableExists("graduate_tracer");
   if (hasGraduateTracer) {
     await db.execute(`
@@ -496,17 +567,31 @@ const getSubmissionById = async (id: string) => {
   return rows[0] || null;
 };
 
+const getSubmissionByLookup = async (lookup: string) => {
+  const normalized = cleanText(lookup);
+  if (!normalized) return null;
+
+  if (/^\d+$/.test(normalized)) {
+    return getSubmissionById(normalized);
+  }
+
+  const byUserId = await getSubmissionByUserId(normalized);
+  if (byUserId) return byUserId;
+
+  return getSubmissionById(normalized);
+};
+
 const getDraftByUserId = async (userId: string) => {
   await ensureTracerSchema();
   const rows = await db.query<TracerDraftRow>("SELECT * FROM tracer_drafts WHERE user_id = ? LIMIT 1", [userId]);
   return rows[0] || null;
 };
 
-const writeAuditLog = async (actorUserId: string | null, tracerUserId: string, action: string, details: Record<string, unknown>) => {
+const writeAuditLog = async (actorUserId: string | null, tracerUserId: string | null, action: string, details: Record<string, unknown>) => {
   await ensureTracerSchema();
   await db.execute(
     "INSERT INTO tracer_audit_logs (actor_user_id, tracer_user_id, action, details_json) VALUES (?, ?, ?, ?)",
-    [actorUserId, tracerUserId, action, JSON.stringify(details)],
+    [actorUserId, cleanNullableText(tracerUserId), action, JSON.stringify(details)],
   );
 };
 
@@ -587,42 +672,119 @@ const syncChildRows = async (conn: PoolConnection, tracerFormId: number, payload
   }
 };
 
-const buildExportPayload = (row: TracerSummaryRow) => {
-  const payload = safeParseJson<Record<string, unknown>>(row.ched_payload, {});
-  const education = Array.isArray(payload.educationalAttainments) ? payload.educationalAttainments : [];
-  const exams = Array.isArray(payload.professionalExams) ? payload.professionalExams : [];
-  const firstEducation = (education[0] as Record<string, unknown>) || {};
-  const firstExam = (exams[0] as Record<string, unknown>) || {};
+const syncNamedTracerTables = async (
+  userId: string,
+  payload: Record<string, unknown>,
+  formStatus: "Draft" | "Submitted",
+  tracerFormId?: number | null,
+) => {
+  await ensureTracerSchema();
+  const summary = buildTracerPayloadSummary(payload);
+  const submittedAt = formStatus === "Submitted" ? new Date() : null;
 
-  return {
-    ...payload,
-    fullName: cleanText(payload.fullName) || cleanText(row.name),
-    permanentAddress: cleanText(payload.permanentAddress),
-    email: cleanText(payload.email) || cleanText(row.email),
-    telephoneNumber: cleanText(payload.telephoneNumber),
-    mobileNumber: cleanText(payload.mobileNumber),
-    province: cleanText(payload.province),
-    degree: cleanText(firstEducation.degreeSpecialization) || cleanText(row.course),
-    specialization: "",
-    collegeOrUniversity: cleanText(firstEducation.school) || SCHOOL_NAME,
-    yearGraduated: cleanText(firstEducation.yearGraduated) || cleanText(row.batch),
-    honorsOrAwards: cleanText(firstEducation.honorsAwards),
-    professionalExamination: cleanText(firstExam.examName),
-    professionalExaminationDate: cleanText(firstExam.dateTaken),
-    professionalExaminationRating: cleanText(firstExam.rating),
-    reasonsForAdvanceStudies: cleanText(payload.advanceStudyReason) ? [cleanText(payload.advanceStudyReason)] : [],
-    reasonsForAdvanceStudiesOther: cleanText(payload.advanceStudyReasonOther),
-    presentlyEmployed:
-      cleanText(payload.presentlyEmployed) === "Employed"
-        ? "Yes"
-        : cleanText(payload.presentlyEmployed) === "Not Employed"
-          ? "No"
-          : cleanText(payload.presentlyEmployed),
-    companyBusinessLine: cleanText(payload.industry),
-    placeOfWork: cleanText(payload.workLocation),
-    generatedAt: formatFileDate(),
-    schoolName: SCHOOL_NAME,
+  await db.execute(
+    `INSERT INTO graduate_tracer_forms (tracer_form_id, alumni_id, form_status, submitted_at)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       tracer_form_id = COALESCE(VALUES(tracer_form_id), tracer_form_id),
+       form_status = VALUES(form_status),
+       submitted_at = CASE WHEN VALUES(submitted_at) IS NULL THEN submitted_at ELSE VALUES(submitted_at) END,
+       updated_at = CURRENT_TIMESTAMP`,
+    [tracerFormId || null, userId, formStatus, submittedAt],
+  );
+
+  const formRows = await db.query<RowDataPacket>("SELECT id FROM graduate_tracer_forms WHERE alumni_id = ? LIMIT 1", [userId]);
+  const formId = Number(formRows[0]?.id || 0);
+  if (!formId) return;
+
+  const personalPayload = {
+    fullName: payload.fullName,
+    permanentAddress: payload.permanentAddress,
+    email: payload.email,
+    telephoneNumber: payload.telephoneNumber,
+    mobileNumber: payload.mobileNumber,
+    civilStatus: payload.civilStatus,
+    sex: payload.sex,
+    birthdayMonth: payload.birthdayMonth,
+    birthdayDay: payload.birthdayDay,
+    birthdayYear: payload.birthdayYear,
+    regionOfOrigin: payload.regionOfOrigin,
+    province: payload.province,
+    residenceType: payload.residenceType,
   };
+  const educationPayload = {
+    educationalAttainments: Array.isArray(payload.educationalAttainments) ? payload.educationalAttainments : [],
+    professionalExams: Array.isArray(payload.professionalExams) ? payload.professionalExams : [],
+    reasonsForCourse: payload.reasonsForCourse,
+    reasonsForCourseOther: payload.reasonsForCourseOther,
+  };
+  const trainingPayload = {
+    trainings: Array.isArray(payload.trainings) ? payload.trainings : [],
+    advanceStudyReason: payload.advanceStudyReason,
+    advanceStudyReasonOther: payload.advanceStudyReasonOther,
+  };
+  const employmentPayload = {
+    presentlyEmployed: payload.presentlyEmployed,
+    presentEmploymentStatus: payload.presentEmploymentStatus,
+    presentOccupation: payload.presentOccupation,
+    companyNameAddress: payload.companyNameAddress,
+    industry: payload.industry,
+    workLocation: payload.workLocation,
+    firstJobAfterCollege: payload.firstJobAfterCollege,
+    firstJobRelatedToCourse: payload.firstJobRelatedToCourse,
+    timeToLandFirstJob: payload.timeToLandFirstJob,
+    jobLevelFirstJob: payload.jobLevelFirstJob,
+    jobLevelCurrentJob: payload.jobLevelCurrentJob,
+    initialGrossMonthlyEarning: payload.initialGrossMonthlyEarning,
+    curriculumRelevantToFirstJob: payload.curriculumRelevantToFirstJob,
+    unemploymentReasons: payload.unemploymentReasons,
+    usefulCompetencies: payload.usefulCompetencies,
+  };
+  const feedbackPayload = {
+    curriculumSuggestions: payload.curriculumSuggestions,
+    referrals: Array.isArray(payload.referrals) ? payload.referrals : [],
+  };
+
+  await db.execute(
+    `INSERT INTO tracer_personal_info (form_id, full_name, email, contact_number, payload_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), email = VALUES(email), contact_number = VALUES(contact_number), payload_json = VALUES(payload_json)`,
+    [
+      formId,
+      cleanNullableText(payload.fullName),
+      cleanNullableText(payload.email),
+      cleanNullableText(payload.mobileNumber) || cleanNullableText(payload.telephoneNumber),
+      JSON.stringify(personalPayload),
+    ],
+  );
+
+  await db.execute(
+    `INSERT INTO tracer_educational_background (form_id, payload_json)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE payload_json = VALUES(payload_json)`,
+    [formId, JSON.stringify(educationPayload)],
+  );
+
+  await db.execute(
+    `INSERT INTO tracer_employment_data (form_id, employment_status, job_title, company, payload_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE employment_status = VALUES(employment_status), job_title = VALUES(job_title), company = VALUES(company), payload_json = VALUES(payload_json)`,
+    [formId, summary.employment_status, summary.job_title, summary.company, JSON.stringify(employmentPayload)],
+  );
+
+  await db.execute(
+    `INSERT INTO tracer_training_data (form_id, payload_json)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE payload_json = VALUES(payload_json)`,
+    [formId, JSON.stringify(trainingPayload)],
+  );
+
+  await db.execute(
+    `INSERT INTO tracer_feedback (form_id, comments, payload_json)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE comments = VALUES(comments), payload_json = VALUES(payload_json)`,
+    [formId, summary.comments, JSON.stringify(feedbackPayload)],
+  );
 };
 
 const toPdfRecord = (row: TracerSummaryRow) => ({
@@ -637,20 +799,27 @@ const sendPdfResponse = (res: Response, fileName: string, pdfBuffer: Buffer, dis
   res.send(pdfBuffer);
 };
 
+const buildDownloadPdfBuffer = async (row: TracerSummaryRow) => {
+  try {
+    return await generateTracerPdfBuffer(toPdfRecord(row));
+  } catch (error) {
+    console.warn("PDF DOWNLOAD FALLBACK:", getErrorMessage(error));
+    return generateTracerPortablePdfBuffer(toPdfRecord(row));
+  }
+};
+
 const exportOneTracerRecord = async (row: TracerSummaryRow, format: "pdf" | "docx") => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "tracer-export-"));
-  const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", row.submitted_at, format);
+  const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", getTracerBatchYear(row), format);
   const outputPath = path.join(tempDir, fileName);
 
   if (format === "pdf") {
-    const pdfBuffer = await generateTracerPdfBuffer(toPdfRecord(row));
+    const pdfBuffer = await buildDownloadPdfBuffer(row);
     await fs.writeFile(outputPath, pdfBuffer);
     return { tempDir, fileName, outputPath };
   }
 
-  const payloadPath = path.join(tempDir, "payload.json");
-  await fs.writeFile(payloadPath, JSON.stringify(buildExportPayload(row), null, 2), "utf8");
-  await runPowerShell(FILL_SCRIPT_PATH, ["-TemplatePath", TEMPLATE_PATH, "-PayloadPath", payloadPath, "-OutputPath", outputPath, "-Format", format]);
+  await fs.writeFile(outputPath, generateTracerDocxBuffer(toPdfRecord(row)));
 
   return { tempDir, fileName, outputPath };
 };
@@ -951,6 +1120,7 @@ export const saveTracerDraft = async (req: AuthenticatedRequest, res: Response) 
       [req.user.id, JSON.stringify(payload)],
     );
 
+    await syncNamedTracerTables(req.user.id, payload, "Draft", null);
     await writeAuditLog(req.user.id, req.user.id, "save_draft", { hasPayload: Object.keys(payload).length > 0 });
     const draft = await getDraftByUserId(req.user.id);
     res.json({ success: true, draft: draft ? { ...draft, ched_payload: safeParseJson(draft.ched_payload, {}) } : null });
@@ -1033,6 +1203,7 @@ export const submitTracer = async (req: AuthenticatedRequest, res: Response) => 
     await syncChildRows(conn, tracerFormId, payload);
     await conn.execute("DELETE FROM tracer_drafts WHERE user_id = ?", [req.user.id]);
     await conn.commit();
+    await syncNamedTracerTables(req.user.id, payload, "Submitted", tracerFormId);
     await clearStaleTracerNotifications(req.user.id);
 
     await writeAuditLog(req.user.id, req.user.id, existing ? "update_tracer" : "submit_tracer", {
@@ -1044,7 +1215,7 @@ export const submitTracer = async (req: AuthenticatedRequest, res: Response) => 
     res.json({
       success: true,
       submission: submission ? { ...submission, ched_payload: safeParseJson(submission.ched_payload, {}) } : null,
-      fileName: buildTracerFileName(cleanText(submission?.name) || cleanText(payload.fullName) || "Alumni", submission?.submitted_at, "pdf"),
+      fileName: buildTracerFileName(cleanText(submission?.name) || cleanText(payload.fullName) || "Alumni", getTracerBatchYear({ ...(submission || {}), ched_payload: payload }), "pdf"),
     });
   } catch (error: unknown) {
     await conn.rollback();
@@ -1084,8 +1255,8 @@ export const previewMyTracerRecord = async (req: AuthenticatedRequest, res: Resp
       return jsonResponseError(res, 404, "No submitted tracer form found for this account.");
     }
 
-    const pdfBuffer = await generateTracerPdfBuffer(toPdfRecord(row));
-    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", row.submitted_at, "pdf");
+    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", getTracerBatchYear(row), "pdf");
+    const pdfBuffer = await buildDownloadPdfBuffer(row);
     await db.execute("UPDATE tracer_form SET pdf_generated_at = CURRENT_TIMESTAMP WHERE user_id = ?", [req.user.id]).catch(() => undefined);
     await writeAuditLog(req.user.id, req.user.id, "preview_pdf", { scope: "self" });
     sendPdfResponse(res, fileName, pdfBuffer, "inline");
@@ -1110,6 +1281,21 @@ export const listTracerRecords = async (req: AuthenticatedRequest, res: Response
     res.json({ rows, pagination });
   } catch (error: unknown) {
     console.error("LIST TRACER RECORDS ERROR:", error);
+    jsonResponseError(res, 500, getErrorMessage(error));
+  }
+};
+
+export const getAdminTracerRecord = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const lookup = cleanText(req.params.alumniId ?? req.params.id);
+    const row = await getSubmissionByLookup(lookup);
+    if (!row) {
+      return jsonResponseError(res, 404, "Tracer record not found.");
+    }
+
+    res.json({ ...row, ched_payload: safeParseJson(row.ched_payload, {}) });
+  } catch (error: unknown) {
+    console.error("GET ADMIN TRACER RECORD ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1173,19 +1359,19 @@ export const exportTracerPdfByRecordId = async (req: AuthenticatedRequest, res: 
   try {
     if (!req.user?.id) return res.sendStatus(401);
 
-    const tracerId = cleanText(req.params.id);
+    const tracerId = cleanText(req.params.alumniId ?? req.params.id);
     if (!tracerId) {
       return jsonResponseError(res, 400, "Tracer record ID is required.");
     }
 
-    const row = await getSubmissionById(tracerId);
+    const row = await getSubmissionByLookup(tracerId);
     if (!row) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
-    const pdfBuffer = await generateTracerPdfBuffer(toPdfRecord(row));
-    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", row.submitted_at, "pdf");
-    await db.execute("UPDATE tracer_form SET pdf_generated_at = CURRENT_TIMESTAMP WHERE id = ?", [tracerId]).catch(() => undefined);
+    const pdfBuffer = await buildDownloadPdfBuffer(row);
+    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", getTracerBatchYear(row), "pdf");
+    await db.execute("UPDATE tracer_form SET pdf_generated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.id]).catch(() => undefined);
     await writeAuditLog(req.user.id, row.user_id, "admin_download_pdf_by_record_id", { tracerId });
 
     sendPdfResponse(res, fileName, pdfBuffer, "attachment");
@@ -1199,19 +1385,19 @@ export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res:
   try {
     if (!req.user?.id) return res.sendStatus(401);
 
-    const tracerId = cleanText(req.params.id);
+    const tracerId = cleanText(req.params.alumniId ?? req.params.id);
     if (!tracerId) {
       return jsonResponseError(res, 400, "Tracer record ID is required.");
     }
 
-    const row = await getSubmissionById(tracerId);
+    const row = await getSubmissionByLookup(tracerId);
     if (!row) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
-    const pdfBuffer = await generateTracerPdfBuffer(toPdfRecord(row));
-    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", row.submitted_at, "pdf");
-    await db.execute("UPDATE tracer_form SET pdf_generated_at = CURRENT_TIMESTAMP WHERE id = ?", [tracerId]).catch(() => undefined);
+    const fileName = buildTracerFileName(cleanText(row.name) || "Alumni", getTracerBatchYear(row), "pdf");
+    const pdfBuffer = await buildDownloadPdfBuffer(row);
+    await db.execute("UPDATE tracer_form SET pdf_generated_at = CURRENT_TIMESTAMP WHERE id = ?", [row.id]).catch(() => undefined);
     await writeAuditLog(req.user.id, row.user_id, "admin_preview_pdf_by_record_id", { tracerId });
     sendPdfResponse(res, fileName, pdfBuffer, "inline");
   } catch (error: unknown) {
@@ -1220,9 +1406,75 @@ export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res:
   }
 };
 
-export const exportTracerArchive = async (req: AuthenticatedRequest, res: Response) => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "tracer-batch-"));
+export const bulkDownloadTracerPdfs = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user?.id) return res.sendStatus(401);
 
+    const requestedIds = Array.isArray(req.body?.alumniIds)
+      ? req.body.alumniIds
+      : Array.isArray(req.body?.recordIds)
+        ? req.body.recordIds
+        : Array.isArray(req.body?.ids)
+          ? req.body.ids
+          : [];
+
+    let rows: TracerSummaryRow[] = [];
+
+    if (requestedIds.length > 0) {
+      const seen = new Set<string>();
+      for (const rawId of requestedIds) {
+        const lookup = cleanText(rawId);
+        if (!lookup || seen.has(lookup)) continue;
+        seen.add(lookup);
+        const row = await getSubmissionByLookup(lookup);
+        if (row) rows.push(row);
+      }
+    } else {
+      const filters = req.body?.filters && typeof req.body.filters === "object" ? req.body.filters : req.query;
+      const result = await getAdminTracerRows({
+        search: typeof filters.search === "string" ? filters.search : "",
+        course: typeof filters.course === "string" ? filters.course : "",
+        batch: typeof filters.batch === "string" ? filters.batch : "",
+        employmentStatus: typeof filters.employmentStatus === "string" ? filters.employmentStatus : "",
+        dateSubmitted: typeof filters.dateSubmitted === "string" ? filters.dateSubmitted : "",
+        page: 1,
+        pageSize: 500,
+      });
+      rows = result.rows as TracerSummaryRow[];
+    }
+
+    if (rows.length === 0) {
+      return jsonResponseError(res, 404, "No tracer records matched the selected alumni.");
+    }
+
+    const archiveFiles: Array<{ name: string; data: Buffer }> = [];
+    const usedFileNames = new Set<string>();
+
+    for (const row of rows) {
+      const baseFileName = buildTracerFileName(cleanText(row.name) || row.user_id, getTracerBatchYear(row), "pdf");
+      let fileName = baseFileName;
+      let suffix = 2;
+      while (usedFileNames.has(fileName)) {
+        fileName = baseFileName.replace(".pdf", `_${suffix}.pdf`);
+        suffix += 1;
+      }
+      usedFileNames.add(fileName);
+      archiveFiles.push({ name: fileName, data: await buildDownloadPdfBuffer(row) });
+    }
+
+    const zipBuffer = createStoredZipBuffer(archiveFiles);
+    await writeAuditLog(req.user.id, "", "admin_bulk_download_pdf", { records: rows.length });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-selected-pdfs.zip"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(zipBuffer);
+  } catch (error: unknown) {
+    console.error("BULK DOWNLOAD TRACER PDF ERROR:", error);
+    jsonResponseError(res, 500, getErrorMessage(error));
+  }
+};
+
+export const exportTracerArchive = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
 
@@ -1241,26 +1493,32 @@ export const exportTracerArchive = async (req: AuthenticatedRequest, res: Respon
       return jsonResponseError(res, 404, "No tracer records matched the selected filters.");
     }
 
+    const archiveFiles: Array<{ name: string; data: Buffer }> = [];
+    const usedFileNames = new Set<string>();
+
     for (const row of rows) {
       const rawRow = row as TracerSummaryRow;
-      const fileName = buildTracerFileName(cleanText(rawRow.name) || rawRow.user_id, rawRow.submitted_at, format);
-      const outputPath = path.join(tempDir, fileName);
-
-      if (format === "pdf") {
-        const pdfBuffer = await generateTracerPdfBuffer(toPdfRecord(rawRow));
-        await fs.writeFile(outputPath, pdfBuffer);
-        continue;
+      const baseFileName = buildTracerFileName(cleanText(rawRow.name) || rawRow.user_id, getTracerBatchYear(rawRow), format);
+      let fileName = baseFileName;
+      let suffix = 2;
+      while (usedFileNames.has(fileName)) {
+        fileName = baseFileName.replace(`.${format}`, `_${suffix}.${format}`);
+        suffix += 1;
       }
+      usedFileNames.add(fileName);
 
-      const payloadPath = path.join(tempDir, `${rawRow.user_id}.json`);
-      await fs.writeFile(payloadPath, JSON.stringify(buildExportPayload(rawRow), null, 2), "utf8");
-      await runPowerShell(FILL_SCRIPT_PATH, ["-TemplatePath", TEMPLATE_PATH, "-PayloadPath", payloadPath, "-OutputPath", outputPath, "-Format", format]);
+      archiveFiles.push({
+        name: fileName,
+        data: format === "pdf" ? await buildDownloadPdfBuffer(rawRow) : generateTracerDocxBuffer(toPdfRecord(rawRow)),
+      });
     }
 
-    const zipPath = path.join(tempDir, `tracer-batch-${format}.zip`);
-    await runPowerShell(ZIP_SCRIPT_PATH, ["-SourcePath", tempDir, "-ZipPath", zipPath]);
+    const zipBuffer = createStoredZipBuffer(archiveFiles);
     await writeAuditLog(req.user.id, "", `admin_batch_download_${format}`, { records: rows.length });
-    res.download(zipPath, `graduate-tracer-forms-${format}.zip`);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-forms-${format}.zip"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(zipBuffer);
   } catch (error: unknown) {
     console.error("EXPORT TRACER ARCHIVE ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));

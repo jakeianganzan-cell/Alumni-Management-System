@@ -1,4 +1,31 @@
 import mysql from "mysql2/promise";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDirPath = path.dirname(currentFilePath);
+
+dotenv.config({ path: path.resolve(currentDirPath, "../.env") });
+dotenv.config({ path: path.resolve(currentDirPath, ".env"), override: true });
+
+const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
+const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
+const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || "root";
+const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
+const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || "ustp_alumni";
+const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_ENABLED =
+  ["1", "true", "yes", "require", "required"].includes(
+    String(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED || "").trim().toLowerCase(),
+  ) || Boolean(DB_SSL_CA);
+
+const ssl = DB_SSL_ENABLED
+  ? {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
+      ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+    }
+  : undefined;
 
 const statements = [
   "DROP TABLE IF EXISTS job_applications",
@@ -47,10 +74,12 @@ const statements = [
 ];
 
 const pool = mysql.createPool({
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "ustp_alumni",
+  host: DB_HOST,
+  port: DB_PORT,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  database: DB_NAME,
+  ssl,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

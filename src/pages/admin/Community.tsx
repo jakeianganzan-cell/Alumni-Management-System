@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AdminPageIntro, AdminStatCard, AdminStatsGrid } from "@/components/admin/AdminPageIntro";
-import { AlertTriangle, MessageCircle, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
+import { AdminPageIntro } from "@/components/admin/AdminPageIntro";
+import { AlertTriangle, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -19,10 +19,13 @@ interface Post {
   status: string;
 }
 
+const PAGE_SIZE = 10;
+
 export default function AdminCommunity() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showFlagged, setShowFlagged] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   const loadPosts = async () => {
@@ -55,7 +58,20 @@ export default function AdminCommunity() {
     });
   }, [posts, searchQuery, showFlagged]);
 
-  const focusPost = filteredPosts[0] ?? posts[0] ?? null;
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, showFlagged]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredPosts.length / PAGE_SIZE));
+  const paginatedPosts = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredPosts.slice(start, start + PAGE_SIZE);
+  }, [currentPage, filteredPosts, totalPages]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const deletePost = async (id: number) => {
     if (confirm("Are you sure you want to delete this post?")) {
@@ -105,96 +121,15 @@ export default function AdminCommunity() {
     }
   };
 
-  const stats = [
-    { label: "Posts", value: posts.length, note: "Visible records", icon: <MessageSquare className="h-4 w-4 text-blue-700" />, tone: "bg-blue-100" },
-    { label: "Comments", value: posts.reduce((total, post) => total + post.comments, 0), note: "Total discussion volume", icon: <MessageCircle className="h-4 w-4 text-violet-700" />, tone: "bg-violet-100" },
-    { label: "Pinned", value: posts.filter((post) => post.isPinned).length, note: "Highlighted wall posts", icon: <Pin className="h-4 w-4 text-amber-700" />, tone: "bg-amber-100" },
-    { label: "Flagged", value: posts.filter((post) => post.isFlagged).length, note: "Need moderation attention", icon: <AlertTriangle className="h-4 w-4 text-rose-700" />, tone: "bg-rose-100" },
-  ];
-
   return (
     <AdminLayout title="Freedom Wall" subtitle="Moderate alumni posts with a clearer and more polished review layout">
       <div className="space-y-6">
         <AdminPageIntro
           eyebrow="Community Moderation"
           title="Freedom Wall posts"
-          description="Search community posts, review flagged content, and manage pinned discussions from a simpler moderation view."
         />
 
-        <AdminStatsGrid>
-          {stats.map((item) => (
-            <AdminStatCard
-              key={item.label}
-              label={item.label}
-              value={item.value}
-              description={item.note}
-              icon={item.icon}
-              toneClassName={item.tone}
-            />
-          ))}
-        </AdminStatsGrid>
-
-        <section className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
-          <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Focus post</p>
-                <h2 className="mt-1 text-base font-semibold text-navy-dark">
-                  {focusPost ? focusPost.author : "No post selected"}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {focusPost ? `Batch ${focusPost.authorBatch} | ${focusPost.category}` : "No community posts are loaded right now."}
-                </p>
-              </div>
-              {focusPost && (
-                <div className="flex flex-wrap gap-2">
-                  <StatusPill tone={getPostStatusTone(focusPost.status)} label={formatPostStatus(focusPost.status)} />
-                  {focusPost.isPinned && <StatusPill tone="bg-amber-100 text-amber-700" label="Pinned" />}
-                  {focusPost.isFlagged && <StatusPill tone="bg-rose-100 text-rose-700" label="Flagged" />}
-                </div>
-              )}
-            </div>
-
-            {focusPost ? (
-              <div className="mt-4 space-y-4">
-                <div className="rounded-2xl border border-border bg-muted/15 p-4">
-                  <p className="text-sm leading-6 text-foreground">{focusPost.content}</p>
-                </div>
-                <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-                  <InlineInfo label={`${focusPost.likes} likes`} />
-                  <InlineInfo label={`${focusPost.comments} comments`} />
-                  <InlineInfo label={focusPost.timestamp} />
-                  <InlineInfo label={focusPost.category} />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => void togglePin(focusPost)}
-                    className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
-                      focusPost.isPinned
-                        ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                        : "border border-border hover:border-navy/40 hover:text-navy"
-                    }`}
-                    type="button"
-                  >
-                    {focusPost.isPinned ? "Unpin post" : "Pin post"}
-                  </button>
-                  {focusPost.isFlagged && (
-                    <button onClick={() => void unflagPost(focusPost.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-emerald-700" type="button">
-                      Clear flag
-                    </button>
-                  )}
-                  <button onClick={() => void deletePost(focusPost.id)} className="rounded-xl border border-border px-3 py-2 text-sm font-medium text-rose-700 transition hover:border-rose-200 hover:bg-rose-50" type="button">
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 rounded-2xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-                No Freedom Wall posts found.
-              </div>
-            )}
-          </div>
-
+        <section>
           <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="relative w-full max-w-md">
@@ -249,33 +184,33 @@ export default function AdminCommunity() {
                         </td>
                       </tr>
                     ) : (
-                      filteredPosts.map((post) => (
+                      paginatedPosts.map((post) => (
                         <tr key={post.id}>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5" data-label="Author">
                             <p className="text-sm font-semibold text-navy-dark">{post.author}</p>
                             <p className="mt-1 text-xs text-muted-foreground">Batch {post.authorBatch}</p>
                           </td>
-                          <td className="px-4 py-3.5">
-                            <p className="max-w-md truncate text-sm text-muted-foreground">{post.content}</p>
+                          <td className="px-4 py-3.5" data-label="Content">
+                            <p className="max-w-md whitespace-normal text-sm text-muted-foreground md:truncate">{post.content}</p>
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5" data-label="Category">
                             <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[11px] font-medium text-blue-700">
                               {post.category}
                             </span>
                           </td>
-                          <td className={tableCellClassName}>
+                          <td className={tableCellClassName} data-label="Engagement">
                             {post.likes} likes | {post.comments} comments
                           </td>
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5" data-label="Status">
                             <div className="flex flex-wrap gap-2">
                               <StatusPill tone={getPostStatusTone(post.status)} label={formatPostStatus(post.status)} />
                               {post.isPinned && <StatusPill tone="bg-amber-100 text-amber-700" label="Pinned" />}
                               {post.isFlagged && <StatusPill tone="bg-rose-100 text-rose-700" label="Flagged" />}
                             </div>
                           </td>
-                          <td className={tableCellClassName}>{post.timestamp}</td>
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-1">
+                          <td className={tableCellClassName} data-label="Time">{post.timestamp}</td>
+                          <td className="px-4 py-3.5" data-label="Actions">
+                            <div className="flex flex-wrap items-center gap-1">
                               <IconButton
                                 label={post.isPinned ? "Unpin" : "Pin"}
                                 onClick={() => void togglePin(post)}
@@ -302,10 +237,63 @@ export default function AdminCommunity() {
                 </table>
               </div>
             </div>
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filteredPosts.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </section>
       </div>
     </AdminLayout>
+  );
+}
+
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalItems,
+  pageSize,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const end = Math.min(currentPage * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <p>
+        Showing {start}-{end} of {totalItems}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          className="rounded-lg border border-border px-3 py-2 font-medium transition hover:border-navy hover:text-navy disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <span className="rounded-lg border border-border px-3 py-2 font-medium text-navy-dark">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          className="rounded-lg border border-border px-3 py-2 font-medium transition hover:border-navy hover:text-navy disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -322,10 +310,6 @@ function getPostStatusTone(status: string) {
   if (status === "hidden") return "bg-slate-100 text-slate-700";
   if (status === "deleted") return "bg-zinc-200 text-zinc-700";
   return "bg-emerald-100 text-emerald-700";
-}
-
-function InlineInfo({ label }: { label: string }) {
-  return <div className="rounded-xl border border-border bg-muted/25 px-3 py-2">{label}</div>;
 }
 
 function IconButton({ label, onClick, icon }: { label: string; onClick: () => void; icon: React.ReactNode }) {

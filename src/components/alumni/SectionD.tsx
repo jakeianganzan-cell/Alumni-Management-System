@@ -225,11 +225,11 @@ export default function SectionD({ form, errors, setField, toggleArrayValue, add
                     <tbody>
                       {options.jobLevels.filter(Boolean).map((option) => (
                         <tr key={option} className="border-t border-slate-200">
-                          <td className="px-4 py-3">{option}</td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3" data-label="Job Level">{option}</td>
+                          <td className="px-4 py-3" data-label="30.1 First Job">
                             <input type="radio" name="jobLevelFirstJob" checked={form.jobLevelFirstJob === option} onChange={() => setField("jobLevelFirstJob", option)} className="h-4 w-4" />
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3" data-label="30.2 Current or Present Job">
                             <input type="radio" name="jobLevelCurrentJob" checked={form.jobLevelCurrentJob === option} onChange={() => setField("jobLevelCurrentJob", option)} className="h-4 w-4" />
                           </td>
                         </tr>

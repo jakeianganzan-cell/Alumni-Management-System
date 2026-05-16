@@ -36,7 +36,6 @@ const ALL_NAV_ITEMS = [
   { icon: Calendar, label: "Announcements", path: "/admin/announcements", module: "events" },
   { icon: Heart, label: "Donations", path: "/admin/donations", module: "donations" },
   { icon: Mail, label: "Mailing", path: "/admin/notifications", module: "notifications" },
-  { icon: ClipboardList, label: "Reports", path: "/admin/reports", module: "reports" },
 ] as const;
 
 function isOfficerRole(role: AppRole | null): role is OfficerRole {
@@ -48,7 +47,7 @@ function getMobileBottomTabs(role: AppRole | null) {
     { icon: LayoutDashboard, label: "Home", path: "/admin", module: "dashboard" },
     { icon: Users, label: "Alumni", path: "/admin/alumni", module: "alumni" },
     { icon: Calendar, label: "News", path: "/admin/announcements", module: "events" },
-    { icon: ClipboardList, label: "More", path: "/admin/reports", module: "reports" },
+    { icon: ClipboardList, label: "Reports", path: "/admin/account?section=reports", module: "reports" },
   ];
   if (!isOfficerRole(role)) return [];
   return tabs.filter((tab) => canAccessNavItem(role, tab.module, tab.path));
@@ -75,11 +74,13 @@ const ROLE_LABELS: Partial<Record<AppRole, string>> = {
 };
 
 function isActivePath(currentPath: string, itemPath: string) {
-  if (itemPath === "/admin") {
+  const normalizedItemPath = itemPath.split("?")[0];
+
+  if (normalizedItemPath === "/admin") {
     return currentPath === "/admin";
   }
 
-  return currentPath === itemPath || currentPath.startsWith(`${itemPath}/`);
+  return currentPath === normalizedItemPath || currentPath.startsWith(`${normalizedItemPath}/`);
 }
 
 export default function AdminLayout({
@@ -111,23 +112,23 @@ export default function AdminLayout({
   const roleLabel = role ? ROLE_LABELS[role] ?? role : "";
 
   const Sidebar = ({ mobile = false }: { mobile?: boolean }) => (
-    <div
-      className="portal-sidebar flex h-full flex-col border-r border-white/10"
-    >
+    <div className="portal-sidebar flex h-full flex-col border-r border-white/20">
       {mobile && (
         <div className="flex justify-end px-3 pt-3">
-          <button onClick={() => setSidebarOpen(false)} className="text-white/60 hover:text-white">
+          <button onClick={() => setSidebarOpen(false)} className="portal-header-button">
             <X className="h-5 w-5" />
           </button>
         </div>
       )}
 
-      <div className="flex flex-col items-center px-5 pb-5 pt-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <img src={ustpLogo} alt="SaCC" className="h-auto w-32 object-contain" />
+      <div className="flex flex-col items-center px-5 pb-5 pt-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
+        <div className="portal-logo-frame">
+          <img src={ustpLogo} alt="SaCC" />
+        </div>
       </div>
 
-      <div className="px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <p className="text-xs uppercase tracking-[0.14em]" style={{ color: "rgba(255,255,255,0.45)" }}>
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
+        <p className="portal-sidebar-muted">
           Welcome Back!
         </p>
         <p className="truncate text-sm font-bold text-white">{profile?.name}</p>
@@ -139,7 +140,7 @@ export default function AdminLayout({
       </div>
 
       <div className="px-4 pb-1 pt-4">
-        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.35)" }}>
+        <p className="portal-sidebar-section">
           Control Center
         </p>
       </div>
@@ -154,11 +155,7 @@ export default function AdminLayout({
                 navigate(item.path);
                 if (mobile) setSidebarOpen(false);
               }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition-all duration-200"
-              style={{
-                background: active ? "linear-gradient(135deg, hsl(345 65% 30%), hsl(345 55% 38%))" : "transparent",
-                color: active ? "white" : "rgba(255,255,255,0.65)",
-              }}
+              className={`portal-sidebar-item ${active ? "active" : ""}`}
             >
               <item.icon className="h-4 w-4 flex-shrink-0" />
               <span className="truncate">{item.label}</span>
@@ -174,26 +171,26 @@ export default function AdminLayout({
       {!isMobile && <div className="hidden w-64 flex-shrink-0 flex-col shadow-xl lg:flex"><Sidebar /></div>}
 
       {sidebarOpen && (
-        <div className="fixed inset-0 z-50 flex">
+        <div className="fixed inset-0 z-50 flex lg:hidden">
           <div className="fixed inset-0 bg-black/50" onClick={() => setSidebarOpen(false)} />
-          <div className="relative flex w-64 flex-col shadow-2xl">
+          <div className="relative flex w-[19rem] max-w-[88vw] flex-col shadow-2xl sm:max-w-[82vw]">
             <Sidebar mobile />
           </div>
         </div>
       )}
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="portal-layout-body">
         <header
-          className="portal-header flex flex-shrink-0 items-center gap-3 border-b border-white/10 px-4 py-3 shadow-[0_14px_34px_rgba(91,18,36,0.18)]"
+          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-4 py-3 shadow-[0_12px_28px_rgba(58,0,0,0.20)]"
           style={{ color: "white" }}
         >
-          <button onClick={() => setSidebarOpen(true)} className="text-white/80 hover:text-white lg:hidden">
+          <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
             <Menu className={isMobile ? "h-5 w-5" : "h-6 w-6"} />
           </button>
 
           <div className="min-w-0 flex-1">
             <h1 className={`font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-lg"}`}>{title}</h1>
-            {subtitle && !isMobile && <p className="text-xs text-white/70">{subtitle}</p>}
+            {subtitle && !isMobile && <p className="text-xs text-white">{subtitle}</p>}
           </div>
 
           <div className="flex items-center gap-2">
@@ -202,7 +199,7 @@ export default function AdminLayout({
             <div className="relative">
               <button
                 onClick={() => setAccountMenuOpen((open) => !open)}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-white/10"
+                className="portal-account-button"
               >
                 <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-white/20">
                   {profilePhoto ? (
@@ -214,10 +211,10 @@ export default function AdminLayout({
                 {!isMobile && (
                   <>
                     <div>
-                      <p className="text-[10px] leading-none text-white/60">Manage Account</p>
+                      <p className="text-[10px] leading-none text-white">Manage Account</p>
                       <p className="text-xs font-bold uppercase leading-tight text-white">{profile?.name?.split(" ")[0]}</p>
                     </div>
-                    <ChevronDown className={`h-3.5 w-3.5 text-white/60 transition-transform ${accountMenuOpen ? "rotate-180" : ""}`} />
+                    <ChevronDown className={`h-3.5 w-3.5 text-white transition-transform ${accountMenuOpen ? "rotate-180" : ""}`} />
                   </>
                 )}
               </button>
@@ -225,7 +222,7 @@ export default function AdminLayout({
               {accountMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setAccountMenuOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+                  <div className="absolute right-0 top-full z-50 mt-2 w-[min(14rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
                     <div className="border-b border-border bg-muted/40 px-4 py-3">
                       <p className="truncate text-sm font-bold text-navy-dark">{profile?.name}</p>
                       {roleLabel && <p className="text-xs text-muted-foreground">{roleLabel}</p>}
@@ -240,6 +237,17 @@ export default function AdminLayout({
                       >
                         <User className="h-4 w-4 text-muted-foreground" /> My Profile
                       </button>
+                      {isOfficerRole(role) && canAccessModule(role, "reports") && (
+                        <button
+                          onClick={() => {
+                            navigate("/admin/account?section=reports");
+                            setAccountMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
+                        >
+                          <ClipboardList className="h-4 w-4 text-muted-foreground" /> Reports
+                        </button>
+                      )}
                       {isOfficerRole(role) && canAccessModule(role, "officers") && (
                         <button
                           onClick={() => {
@@ -266,12 +274,12 @@ export default function AdminLayout({
           </div>
         </header>
 
-        <main className={`flex-1 overflow-y-auto p-4 ${isMobile ? "pb-20" : "lg:p-6"}`}>{children}</main>
+        <main className={`portal-main ${isMobile ? "pb-20" : ""}`}>{children}</main>
 
         {isMobile && (
           <nav
-            className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t bg-card shadow-lg"
-            style={{ borderColor: "hsl(220,20%,88%)", height: "60px" }}
+            className="fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
+            style={{ borderColor: "hsl(220,20%,88%)", minHeight: "64px" }}
           >
             {mobileTabs.slice(0, 5).map((tab) => {
               const active = isActivePath(location.pathname, tab.path);
@@ -279,11 +287,11 @@ export default function AdminLayout({
                 <button
                   key={tab.path}
                   onClick={() => navigate(tab.path)}
-                  className="flex flex-col items-center gap-0.5 px-3 py-1 transition-colors"
-                  style={{ color: active ? "hsl(345,65%,30%)" : "hsl(0,0%,55%)" }}
+                  className="flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 transition-colors"
+                  style={{ color: active ? "hsl(0,100%,17%)" : "hsl(0,0%,55%)" }}
                 >
                   <tab.icon className="h-5 w-5" />
-                  <span className="text-[10px] font-semibold">{tab.label}</span>
+                  <span className="max-w-full truncate text-[10px] font-semibold">{tab.label}</span>
                 </button>
               );
             })}

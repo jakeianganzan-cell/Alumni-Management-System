@@ -19,8 +19,12 @@ const router = express.Router();
 
 router.get("/", authenticateToken, getMyTracer);
 router.put("/draft", authenticateToken, saveTracerDraft);
+router.post("/save-draft", authenticateToken, saveTracerDraft);
 router.post("/submit", authenticateToken, submitTracer);
 router.post("/", authenticateToken, submitTracer);
+router.get("/my-form", authenticateToken, getMyTracer);
+router.get("/my-pdf/preview", authenticateToken, previewMyTracerRecord);
+router.get("/my-pdf/download", authenticateToken, exportMyTracerRecord);
 router.get("/export/me", authenticateToken, exportMyTracerRecord);
 router.get("/export/me/preview", authenticateToken, previewMyTracerRecord);
 

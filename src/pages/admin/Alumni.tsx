@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { toast } from "sonner";
 import AdminLayout from "@/components/admin/AdminLayout";
 import {
@@ -23,9 +23,12 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { ALL_COURSES_OPTION, COURSE_OPTIONS, SYSTEM_COURSES, formatCourseLabel } from "@/lib/courseCatalog";
+import { useAuth } from "@/hooks/useAuth";
+import { downloadBrandedCsv, type ReportColumn } from "@/lib/reportExport";
 
 const COURSES = [ALL_COURSES_OPTION, ...SYSTEM_COURSES];
 const BATCHES = ["All Batches", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"];
+const ALUMNI_PAGE_SIZE = 10;
 
 interface AlumniRecord {
   id: string;
@@ -52,6 +55,7 @@ interface ImportRow {
   fullName: string;
   graduationYear: string;
   emailAddress: string;
+  program: string;
   contactNumber: string;
   errors: string[];
 }
@@ -62,6 +66,10 @@ interface ImportResponse {
     totalRows: number;
     validRows: number;
     importedRows: number;
+    successfulImports?: number;
+    duplicateEmails?: number;
+    invalidRows?: number;
+    failedEmailSends?: number;
     failedRows: number;
   };
   importedRows: Array<{
@@ -69,9 +77,18 @@ interface ImportResponse {
     alumniId: string;
     emailAddress: string;
     fullName: string;
+    emailSent?: boolean;
+    emailStatus?: string;
   }>;
   failedRows: Array<{
     rowNumber: number;
+    emailAddress: string;
+    fullName: string;
+    reason: string;
+  }>;
+  failedEmailRows?: Array<{
+    rowNumber: number;
+    alumniId: string;
     emailAddress: string;
     fullName: string;
     reason: string;
@@ -87,6 +104,16 @@ const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCas
 const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g, "").trim();
 const normalizeYear = (value: unknown) => String(value || "").trim();
 const normalizeHeader = (value: unknown) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+const normalizeProgram = (value: unknown) => {
+  const text = normalizeText(value);
+  const normalized = text.toUpperCase().replace(/\s+/g, " ");
+  const matchedCourse = COURSE_OPTIONS.find((option) =>
+    option.code.toUpperCase() === normalized ||
+    option.label.toUpperCase().replace(/\s+/g, " ") === normalized
+  );
+
+  return matchedCourse?.code || text;
+};
 
 const IMPORT_HEADER_MAP: Record<string, keyof Omit<ImportRow, "rowNumber" | "errors">> = {
   fullname: "fullName",
@@ -101,6 +128,9 @@ const IMPORT_HEADER_MAP: Record<string, keyof Omit<ImportRow, "rowNumber" | "err
   email: "emailAddress",
   emailaddress: "emailAddress",
   mail: "emailAddress",
+  program: "program",
+  course: "program",
+  degreeprogram: "program",
   contact: "contactNumber",
   contactnumber: "contactNumber",
   mobilenumber: "contactNumber",
@@ -127,8 +157,10 @@ const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: S
       errors.push("Email Address is invalid.");
     }
 
-    if (!row.contactNumber) {
-      errors.push("Contact Number is required.");
+    if (!row.program) {
+      errors.push("Program is required.");
+    } else if (!SYSTEM_COURSES.includes(row.program as typeof SYSTEM_COURSES[number])) {
+      errors.push("Program must match one of the supported school programs.");
     }
 
     if (row.emailAddress) {
@@ -147,52 +179,184 @@ const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: S
   });
 };
 
-const parseImportFile = async (file: File) => {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
+const getCellText = (cell: ExcelJS.Cell) => {
+  const text = normalizeText(cell.text);
 
-  if (!firstSheetName) {
-    throw new Error("The uploaded file does not contain any worksheet.");
+  if (text) {
+    return text;
   }
 
-  const sheet = workbook.Sheets[firstSheetName];
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    defval: "",
-    raw: false,
+  const value = cell.value;
+
+  if (value && typeof value === "object") {
+    if ("text" in value) {
+      return normalizeText(value.text);
+    }
+
+    if ("result" in value) {
+      return normalizeText(value.result);
+    }
+  }
+
+  return normalizeText(value);
+};
+
+const parseCsvLine = (line: string) => {
+  const cells: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === "\"" && inQuotes && nextChar === "\"") {
+      cell += "\"";
+      index += 1;
+    } else if (char === "\"") {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  cells.push(cell);
+  return cells;
+};
+
+const normalizeImportValue = (key: keyof Omit<ImportRow, "rowNumber" | "errors">, value: unknown) => {
+  if (key === "emailAddress") {
+    return normalizeEmail(value);
+  }
+
+  if (key === "contactNumber") {
+    return normalizePhone(value);
+  }
+
+  if (key === "graduationYear") {
+    return normalizeYear(value);
+  }
+
+  if (key === "program") {
+    return normalizeProgram(value);
+  }
+
+  return normalizeText(value);
+};
+
+const worksheetToRows = (worksheet: ExcelJS.Worksheet) => {
+  let headerRowNumber = 0;
+  const headerIndexes = new Map<number, keyof Omit<ImportRow, "rowNumber" | "errors">>();
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (headerRowNumber > 0) {
+      return;
+    }
+
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      const mappedKey = IMPORT_HEADER_MAP[normalizeHeader(getCellText(cell))];
+
+      if (mappedKey) {
+        headerIndexes.set(columnNumber, mappedKey);
+      }
+    });
+
+    if (headerIndexes.size > 0) {
+      headerRowNumber = rowNumber;
+    } else {
+      headerIndexes.clear();
+    }
   });
 
-  const parsedRows = rawRows
-    .map((rawRow, index) => {
-      const mapped: Omit<ImportRow, "errors"> = {
-        rowNumber: index + 2,
-        fullName: "",
-        graduationYear: "",
-        emailAddress: "",
-        contactNumber: "",
-      };
+  if (headerRowNumber === 0) {
+    throw new Error("The import file must include headers: name, email, year, and program.");
+  }
 
-      Object.entries(rawRow).forEach(([key, value]) => {
-        const mappedKey = IMPORT_HEADER_MAP[normalizeHeader(key)];
+  const rows: Omit<ImportRow, "errors">[] = [];
 
-        if (!mappedKey) {
-          return;
-        }
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber <= headerRowNumber) {
+      return;
+    }
 
-        const normalizedValue = mappedKey === "emailAddress"
-          ? normalizeEmail(value)
-          : mappedKey === "contactNumber"
-            ? normalizePhone(value)
-            : mappedKey === "graduationYear"
-              ? normalizeYear(value)
-              : normalizeText(value);
+    const mapped: Omit<ImportRow, "errors"> = {
+      rowNumber,
+      fullName: "",
+      graduationYear: "",
+      emailAddress: "",
+      program: "",
+      contactNumber: "",
+    };
+    let hasValue = false;
 
-        mapped[mappedKey] = normalizedValue;
-      });
+    headerIndexes.forEach((key, columnNumber) => {
+      const value = normalizeImportValue(key, getCellText(row.getCell(columnNumber)));
 
-      return mapped;
-    })
-    .filter((row) => row.fullName || row.graduationYear || row.emailAddress || row.contactNumber);
+      if (value) {
+        hasValue = true;
+      }
+
+      mapped[key] = value;
+    });
+
+    if (hasValue) {
+      rows.push(mapped);
+    }
+  });
+
+  return rows;
+};
+
+const parseImportFile = async (file: File) => {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const buffer = await file.arrayBuffer();
+  let parsedRows: Omit<ImportRow, "errors">[] = [];
+
+  if (extension === "csv") {
+    const text = new TextDecoder().decode(buffer);
+    const lines = text.split(/\r?\n/).filter((line) => line.trim());
+    const headerCells = parseCsvLine(lines[0] || "");
+    const headerIndexes = headerCells.map((header) => IMPORT_HEADER_MAP[normalizeHeader(header)]);
+
+    if (!headerIndexes.some(Boolean)) {
+      throw new Error("The import file must include headers: name, email, year, and program.");
+    }
+
+    parsedRows = lines.slice(1)
+      .map((line, index) => {
+        const cells = parseCsvLine(line);
+        const mapped: Omit<ImportRow, "errors"> = {
+          rowNumber: index + 2,
+          fullName: "",
+          graduationYear: "",
+          emailAddress: "",
+          program: "",
+          contactNumber: "",
+        };
+
+        headerIndexes.forEach((key, columnIndex) => {
+          if (key) {
+            mapped[key] = normalizeImportValue(key, cells[columnIndex] || "");
+          }
+        });
+
+        return mapped;
+      })
+      .filter((row) => row.fullName || row.graduationYear || row.emailAddress || row.program || row.contactNumber);
+  } else {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+    const worksheet = workbook.worksheets[0];
+
+    if (!worksheet) {
+      throw new Error("The uploaded file does not contain any worksheet.");
+    }
+
+    parsedRows = worksheetToRows(worksheet);
+  }
 
   if (parsedRows.length === 0) {
     throw new Error("No alumni rows were found. Check that the file includes the required columns.");
@@ -201,12 +365,8 @@ const parseImportFile = async (file: File) => {
   return parsedRows;
 };
 
-const toCsvCell = (value: string) => {
-  const escaped = value.replace(/"/g, "\"\"");
-  return /[",\n]/.test(value) ? `"${escaped}"` : value;
-};
-
 export default function AdminAlumni() {
+  const { profile, user } = useAuth();
   const [alumni, setAlumni] = useState<AlumniRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -214,6 +374,7 @@ export default function AdminAlumni() {
   const [batch, setBatch] = useState("All Batches");
   const [sortKey, setSortKey] = useState<keyof AlumniRecord>("name");
   const [sortAsc, setSortAsc] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
   const [showAdd, setShowAdd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -225,6 +386,7 @@ export default function AdminAlumni() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; name: string } | null>(null);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [importFileName, setImportFileName] = useState("");
   const [importParsing, setImportParsing] = useState(false);
   const [importSubmitting, setImportSubmitting] = useState(false);
@@ -257,6 +419,24 @@ export default function AdminAlumni() {
         return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       });
   }, [alumni, batch, course, search, sortAsc, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ALUMNI_PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * ALUMNI_PAGE_SIZE;
+  const paginatedAlumni = useMemo(
+    () => filtered.slice(pageStartIndex, pageStartIndex + ALUMNI_PAGE_SIZE),
+    [filtered, pageStartIndex]
+  );
+  const visibleStart = filtered.length === 0 ? 0 : pageStartIndex + 1;
+  const visibleEnd = Math.min(pageStartIndex + paginatedAlumni.length, filtered.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [batch, course, search, sortAsc, sortKey]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const importReadyCount = useMemo(
     () => importRows.filter((row) => row.errors.length === 0).length,
@@ -294,6 +474,7 @@ export default function AdminAlumni() {
 
   const resetImportState = () => {
     setImportRows([]);
+    setImportFile(null);
     setImportFileName("");
     setImportError("");
     setImportResult(null);
@@ -399,19 +580,21 @@ export default function AdminAlumni() {
     try {
       const extension = file.name.split(".").pop()?.toLowerCase();
 
-      if (!extension || !["csv", "xls", "xlsx"].includes(extension)) {
-        throw new Error("Only CSV, XLS, and XLSX files are allowed.");
+      if (!extension || !["csv", "xlsx"].includes(extension)) {
+        throw new Error("Only CSV and XLSX files are allowed.");
       }
 
       const parsedRows = await parseImportFile(file);
       const validatedRows = validateImportRows(parsedRows, existingEmails);
 
       setImportRows(validatedRows);
+      setImportFile(file);
       setImportFileName(file.name);
       toast.success(`Loaded ${validatedRows.length} alumni row${validatedRows.length === 1 ? "" : "s"} for preview`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to read the import file";
       setImportRows([]);
+      setImportFile(null);
       setImportFileName("");
       setImportError(message);
     } finally {
@@ -420,7 +603,7 @@ export default function AdminAlumni() {
   };
 
   const handleImportSubmit = async () => {
-    if (importRows.length === 0) {
+    if (importRows.length === 0 || !importFile) {
       return;
     }
 
@@ -431,17 +614,11 @@ export default function AdminAlumni() {
       const res = await fetch(`${API_URL}/profiles/import`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           ...getAuthHeaders(),
+          "Content-Type": importFile.type || "application/octet-stream",
+          "X-File-Name": importFile.name,
         },
-        body: JSON.stringify({
-          rows: importRows.map((row) => ({
-            fullName: row.fullName,
-            graduationYear: row.graduationYear,
-            emailAddress: row.emailAddress,
-            contactNumber: row.contactNumber,
-          })),
-        }),
+        body: importFile,
       });
 
       const data = await readApiResponse<ImportResponse>(res);
@@ -463,32 +640,41 @@ export default function AdminAlumni() {
   };
 
   const exportCSV = () => {
-    const headers = ["Alumni ID", "Name", "Course", "Batch", "Email", "Contact"];
-    const rows = filtered.map((item) => [
-      item.student_id ?? "",
-      item.name,
-      item.course ?? "",
-      item.batch ?? "",
-      item.email,
-      item.contact_number ?? "",
-    ]);
+    type AlumniCsvRow = Record<string, string | number>;
+    const columns: Array<ReportColumn<AlumniCsvRow>> = [
+      { key: "alumniId", label: "Alumni ID" },
+      { key: "name", label: "Name" },
+      { key: "course", label: "Course" },
+      { key: "batch", label: "Batch" },
+      { key: "email", label: "Email" },
+      { key: "contact", label: "Contact" },
+    ];
+    const rows = filtered.map((item) => ({
+      alumniId: item.student_id ?? "",
+      name: item.name,
+      course: item.course ?? "",
+      batch: item.batch ?? "",
+      email: item.email,
+      contact: item.contact_number ?? "",
+    }));
 
-    const csv = [headers, ...rows]
-      .map((row) => row.map((value) => toCsvCell(String(value))).join(","))
-      .join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "alumni_list.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBrandedCsv({
+      title: "Alumni List Report",
+      filename: "alumni_list",
+      columns,
+      rows,
+      preparedBy: profile?.name || user?.email || "System Administrator",
+      summary: [
+        { label: "Displayed Records", value: filtered.length },
+        { label: "Courses", value: new Set(filtered.map((item) => item.course).filter(Boolean)).size },
+        { label: "Batches", value: new Set(filtered.map((item) => item.batch).filter(Boolean)).size },
+      ],
+    });
   };
 
   return (
     <AdminLayout title="Alumni Management" subtitle="Manage and monitor all registered alumni accounts">
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Total Alumni", value: alumni.length },
           { label: "Courses", value: new Set(alumni.map((item) => item.course).filter(Boolean)).size },
@@ -592,12 +778,12 @@ export default function AdminAlumni() {
                   </td>
                 </tr>
               )}
-              {filtered.map((item, index) => {
+              {paginatedAlumni.map((item, index) => {
                 const imageSrc = normalizeImageSrc(item.photo);
 
                 return (
                   <tr key={item.id} className={`border-b border-border transition-colors hover:bg-muted/30 ${index % 2 !== 0 ? "bg-muted/10" : ""}`}>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" data-label="Photo">
                       {imageSrc ? (
                         <button
                           type="button"
@@ -612,12 +798,12 @@ export default function AdminAlumni() {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{item.student_id ?? "-"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-navy-dark">{item.name}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatCourseLabel(item.course) || "-"}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{item.batch ?? "-"}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{item.email}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{item.contact_number ?? "-"}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground" data-label="Alumni ID">{item.student_id ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-navy-dark" data-label="Name">{item.name}</td>
+                    <td className="px-4 py-3 text-muted-foreground" data-label="Course">{formatCourseLabel(item.course) || "-"}</td>
+                    <td className="px-4 py-3 text-muted-foreground" data-label="Batch">{item.batch ?? "-"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground" data-label="Email">{item.email}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground" data-label="Contact">{item.contact_number ?? "-"}</td>
                   </tr>
                 );
               })}
@@ -625,8 +811,32 @@ export default function AdminAlumni() {
           </table>
         </div>
 
-        <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
-          Showing <strong>{filtered.length}</strong> of <strong>{alumni.length}</strong> alumni
+        <div className="flex flex-col gap-3 border-t border-border px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            Showing <strong>{visibleStart}-{visibleEnd}</strong> of <strong>{filtered.length}</strong> matched alumni
+            <span className="text-muted-foreground/80"> ({alumni.length} total)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={safeCurrentPage === 1}
+              className="rounded-lg border border-border px-3 py-1.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="rounded-lg bg-muted px-3 py-1.5 font-semibold text-navy-dark">
+              Page {safeCurrentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={safeCurrentPage === totalPages}
+              className="rounded-lg border border-border px-3 py-1.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
@@ -636,7 +846,7 @@ export default function AdminAlumni() {
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h3 className="font-display text-lg font-bold text-navy-dark">Add New Alumni</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">Alumni ID will be auto-generated and used as the default password</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Alumni ID and a temporary password will be auto-generated</p>
               </div>
               <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="h-5 w-5" />
@@ -666,7 +876,7 @@ export default function AdminAlumni() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold text-navy">Batch Year *</label>
                   <select
@@ -719,7 +929,7 @@ export default function AdminAlumni() {
               </div>
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-                <strong>Note:</strong> An Alumni ID like `2026-0001` will be auto-generated based on the batch year and will also serve as the default password.
+                <strong>Note:</strong> An Alumni ID like `2026-0001` will be auto-generated based on the batch year. A separate temporary password will be emailed to the alumni.
               </div>
 
               {addError && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{addError}</div>}
@@ -755,7 +965,7 @@ export default function AdminAlumni() {
             </div>
             <h3 className="mb-1 font-display text-lg font-bold text-navy-dark">Alumni Account Created</h3>
             <p className="mb-4 text-sm text-muted-foreground">
-              Share these credentials with <strong className="text-navy">{addedAlumni.name}</strong>:
+              Credentials were emailed to <strong className="text-navy">{addedAlumni.name}</strong>:
             </p>
             <div className="mb-5 space-y-3 rounded-xl bg-muted/50 p-4 text-left">
               <div className="flex items-center justify-between">
@@ -768,7 +978,7 @@ export default function AdminAlumni() {
               <div className="border-t border-border" />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground">Alumni ID (also the login and default password)</p>
+                  <p className="text-xs text-muted-foreground">Alumni ID</p>
                   <p className="font-mono text-sm font-bold text-navy-dark">{showPass ? addedAlumni.alumniId : "••••••••••"}</p>
                 </div>
                 <button onClick={() => setShowPass((value) => !value)} className="text-muted-foreground hover:text-foreground">
@@ -777,7 +987,7 @@ export default function AdminAlumni() {
               </div>
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
-              The alumni can log in using their <strong>Alumni ID</strong> or email with the Alumni ID as the password.
+              The alumni can log in using their email and the temporary password sent through Brevo.
             </p>
             <button onClick={() => setShowConfirm(false)} className="w-full rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light">
               Done
@@ -791,7 +1001,7 @@ export default function AdminAlumni() {
           <DialogHeader>
             <DialogTitle>Import Alumni Records</DialogTitle>
             <DialogDescription>
-              Upload one CSV, XLS, or XLSX file at a time. The system scans it automatically, validates required fields, and shows a preview before import.
+              Upload one CSV or XLSX file at a time. The system scans it automatically, validates required fields, and shows a preview before import.
             </DialogDescription>
           </DialogHeader>
 
@@ -800,7 +1010,7 @@ export default function AdminAlumni() {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-navy-dark">Accepted columns</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Full Name, Graduation Year, Email Address, and Contact Number.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Name, Email, Year, and Program. Contact Number is optional.</p>
                 </div>
                 <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-medium text-white hover:bg-navy-light">
                   <FileSpreadsheet className="h-4 w-4" />
@@ -808,7 +1018,7 @@ export default function AdminAlumni() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,.xls,.xlsx"
+                    accept=".csv,.xlsx"
                     className="hidden"
                     onChange={handleImportFileSelect}
                     disabled={importParsing || importSubmitting}
@@ -881,6 +1091,7 @@ export default function AdminAlumni() {
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Full Name</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Graduation Year</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Email Address</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Program</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Contact Number</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy">Validation</th>
                         </tr>
@@ -892,6 +1103,7 @@ export default function AdminAlumni() {
                             <td className="px-4 py-3 font-medium text-navy-dark">{row.fullName || "-"}</td>
                             <td className="px-4 py-3 text-muted-foreground">{row.graduationYear || "-"}</td>
                             <td className="px-4 py-3 text-muted-foreground">{row.emailAddress || "-"}</td>
+                            <td className="px-4 py-3 text-muted-foreground">{row.program ? formatCourseLabel(row.program) : "-"}</td>
                             <td className="px-4 py-3 text-muted-foreground">{row.contactNumber || "-"}</td>
                             <td className="px-4 py-3">
                               {row.errors.length === 0 ? (
@@ -943,7 +1155,7 @@ export default function AdminAlumni() {
                   <SummaryTile label="Total Rows" value={String(importResult.summary.totalRows)} tone="neutral" />
                   <SummaryTile label="Validated" value={String(importResult.summary.validRows)} tone="neutral" />
                   <SummaryTile label="Imported" value={String(importResult.summary.importedRows)} tone="success" />
-                  <SummaryTile label="Failed" value={String(importResult.summary.failedRows)} tone={importResult.summary.failedRows > 0 ? "danger" : "neutral"} />
+                  <SummaryTile label="Email Failed" value={String(importResult.summary.failedEmailSends || 0)} tone={(importResult.summary.failedEmailSends || 0) > 0 ? "danger" : "neutral"} />
                 </div>
 
                 {importResult.failedRows.length > 0 && (
@@ -953,6 +1165,19 @@ export default function AdminAlumni() {
                       {importResult.failedRows.map((row) => (
                         <p key={`${row.rowNumber}-${row.emailAddress}-${row.reason}`} className="text-sm text-rose-700">
                           Row {row.rowNumber}: {row.fullName || "Unnamed row"} ({row.emailAddress || "no email"}) - {row.reason}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {importResult.failedEmailRows && importResult.failedEmailRows.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-semibold text-amber-700">Accounts created but email failed</p>
+                    <div className="mt-2 space-y-2">
+                      {importResult.failedEmailRows.map((row) => (
+                        <p key={`${row.rowNumber}-${row.emailAddress}-${row.reason}`} className="text-sm text-amber-700">
+                          Row {row.rowNumber}: {row.fullName || "Unnamed row"} ({row.emailAddress}) - {row.reason}
                         </p>
                       ))}
                     </div>

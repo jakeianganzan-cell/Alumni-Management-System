@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
-import { API_URL, getAuthHeaders } from "@/lib/api";
+import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { AlertCircle, Clock, Heart, Loader2, MapPin, QrCode, Smartphone, Upload, User, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -32,6 +32,7 @@ export default function AlumniDonate() {
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [showQrPreview, setShowQrPreview] = useState(false);
+  const [formError, setFormError] = useState("");
   const [form, setForm] = useState({
     fullName: profile?.name ?? "",
     alumniId: profile?.student_id ?? "",
@@ -44,7 +45,19 @@ export default function AlumniDonate() {
     receiptPreview: "",
     personalConfirm: false,
   });
-  const set = (k: string, v: string | File | null | boolean) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: string, v: string | File | null | boolean) => {
+    setFormError("");
+    setForm((f) => ({ ...f, [k]: v }));
+  };
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      fullName: current.fullName || profile?.name || "",
+      alumniId: current.alumniId || profile?.student_id || "",
+      batch: current.batch || profile?.batch || "",
+    }));
+  }, [profile]);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -57,7 +70,7 @@ export default function AlumniDonate() {
           throw new Error("Failed to load donation settings");
         }
 
-        const data = await res.json();
+        const data = await readApiResponse<Partial<DonationSettings>>(res);
         setSettings({
           gcash_name: data?.gcash_name ?? "",
           gcash_number: data?.gcash_number ?? "",
@@ -81,6 +94,16 @@ export default function AlumniDonate() {
     if (!file) {
       return;
     }
+    if (!file.type.startsWith("image/")) {
+      setFormError("Receipt must be an image file.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setFormError("Receipt image must be 5 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -95,24 +118,43 @@ export default function AlumniDonate() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !form.receiptPreview) {
+    const amount = Number(form.amount);
+    if (!user) {
+      setFormError("You must be signed in to submit a donation.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFormError("Enter a valid donation amount.");
+      return;
+    }
+
+    if (method === "GCash" && !form.refNumber.trim()) {
+      setFormError("Enter the GCash reference number.");
+      return;
+    }
+
+    if (!form.receiptPreview) {
+      setFormError("Upload a receipt image before submitting.");
       return;
     }
 
     if (method === "Personal" && !form.personalConfirm) {
+      setFormError("Confirm the walk-in payment instruction before submitting.");
       return;
     }
 
     setSubmitting(true);
+    setFormError("");
     try {
-      await fetch(`${API_URL}/donations`, {
+      const response = await fetch(`${API_URL}/donations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...getAuthHeaders(),
         },
         body: JSON.stringify({
-          amount: parseFloat(form.amount),
+          amount,
           purpose: form.purpose,
           method,
           ref_number: method === "GCash" ? form.refNumber || null : null,
@@ -120,11 +162,13 @@ export default function AlumniDonate() {
           receipt_url: form.receiptPreview,
         }),
       });
+      await readApiResponse(response);
+      setSubmitted(true);
     } catch (err) {
       console.error(err);
+      setFormError(err instanceof Error ? err.message : "Failed to submit donation.");
     } finally {
       setSubmitting(false);
-      setSubmitted(true);
     }
   };
 
@@ -209,7 +253,7 @@ export default function AlumniDonate() {
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-navy text-xs font-bold text-gold">2</span>
               Select Payment Method
             </h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {(["GCash", "Personal"] as const).map((m) => (
                 <button
                   key={m}
@@ -399,6 +443,12 @@ export default function AlumniDonate() {
               </p>
             </div>
           </div>
+
+          {formError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {formError}
+            </div>
+          )}
 
           <button
             type="submit"

@@ -1,6 +1,7 @@
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import ustpLogo from "@/assets/salay.png";
 import { Eye, Target, Zap, Users, FileText, Heart, Bell, BarChart2 } from "lucide-react";
+import OrganizationChart from "@/components/alumni/OrganizationChart";
 
 const FEATURES = [
   {
@@ -53,6 +54,8 @@ export default function AboutUs() {
             </p>
           </div>
         </div>
+
+        <OrganizationChart />
 
         {/* Vision */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
@@ -128,7 +131,7 @@ export default function AboutUs() {
 
         {/* Footer note */}
         <div className="text-center text-muted-foreground text-xs pb-4">
-          SaCC Alumni Portal · Developed for the Salay Community College Alumni Association
+          SaCC Alumni Portal · Developed by Jake Ian Jamero and Team
         </div>
       </div>
     </AlumniLayout>

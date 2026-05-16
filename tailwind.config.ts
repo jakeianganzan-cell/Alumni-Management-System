@@ -51,14 +51,14 @@ export default {
           foreground: "hsl(var(--card-foreground))",
         },
         navy: {
-          DEFAULT: "hsl(0 65% 42%)",
-          dark: "hsl(0 65% 28%)",
-          light: "hsl(0 50% 52%)",
+          DEFAULT: "hsl(var(--navy))",
+          dark: "hsl(var(--navy-dark))",
+          light: "hsl(var(--navy-light))",
         },
         gold: {
-          DEFAULT: "hsl(0 0% 45%)",
-          light: "hsl(0 0% 60%)",
-          dark: "hsl(0 0% 32%)",
+          DEFAULT: "hsl(var(--gold))",
+          light: "hsl(var(--gold-light))",
+          dark: "hsl(var(--gold-dark))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",

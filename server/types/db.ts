@@ -87,7 +87,9 @@ export interface Achievement {
 export interface GraduateTracer {
   id: number;
   alumni_id: string;
-  graduation_year: number;
+  tracer_form_id?: number | null;
+  form_status: 'Draft' | 'Submitted' | string;
+  graduation_year?: number | null;
 
   employment_status?: string | null;
 
@@ -104,7 +106,8 @@ export interface GraduateTracer {
 
   satisfaction_score?: number | null;
 
-  submitted_at: string;
+  submitted_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface Officer {

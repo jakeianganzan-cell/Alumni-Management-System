@@ -7,12 +7,13 @@
 @layer base {
   :root {
     /* SaCC Official Colors - Maroon & Gray */
-    --navy: 345 65% 30%;
-    --navy-dark: 345 65% 20%;
-    --navy-light: 345 50% 40%;
-    --gold: 0 0% 45%;
-    --gold-light: 0 0% 60%;
-    --gold-dark: 0 0% 32%;
+    --navy: 0 100% 17%;
+    --navy-dark: 0 100% 13%;
+    --navy-light: 0 82% 24%;
+    --gold: 0 0% 32%;
+    --gold-light: 0 0% 50%;
+    --gold-dark: 0 0% 20%;
+    --header-background: 0 100% 17%;
 
     /* Semantic tokens */
     --background: 0 0% 97%;
@@ -24,16 +25,16 @@
     --popover: 0 0% 100%;
     --popover-foreground: 0 0% 15%;
 
-    --primary: 345 65% 30%;
+    --primary: 0 100% 17%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 0 0% 45%;
+    --secondary: 0 0% 28%;
     --secondary-foreground: 0 0% 100%;
 
     --muted: 0 0% 94%;
     --muted-foreground: 0 0% 45%;
 
-    --accent: 345 65% 30%;
+    --accent: 0 100% 17%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
@@ -41,22 +42,24 @@
 
     --border: 0 0% 88%;
     --input: 0 0% 88%;
-    --ring: 345 65% 30%;
+    --ring: 0 100% 17%;
     --radius: 1rem;
 
-    --sidebar-background: 0 0% 20%;
+    --sidebar-background: 0 0% 22%;
     --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 345 65% 40%;
+    --sidebar-primary: 0 0% 18%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 0 0% 28%;
     --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 28%;
-    --sidebar-ring: 345 65% 40%;
+    --sidebar-border: 0 0% 34%;
+    --sidebar-ring: 0 0% 100%;
+    --sidebar-hover: 0 0% 30%;
+    --sidebar-active: 0 100% 17%;
 
     /* Gradients */
-    --gradient-navy: linear-gradient(135deg, hsl(0, 0%, 20%), hsl(345, 65%, 30%));
-    --gradient-gold: linear-gradient(135deg, hsl(0, 0%, 32%), hsl(0, 0%, 55%));
-    --gradient-hero: linear-gradient(135deg, hsl(0, 0%, 18%) 0%, hsl(345, 65%, 25%) 50%, hsl(0, 0%, 22%) 100%);
+    --gradient-navy: linear-gradient(135deg, hsl(0 100% 17%), hsl(0 100% 12%));
+    --gradient-gold: linear-gradient(135deg, hsl(0, 0%, 24%), hsl(0, 0%, 42%));
+    --gradient-hero: linear-gradient(135deg, hsl(0 100% 17%) 0%, hsl(0 90% 14%) 55%, hsl(0 0% 22%) 100%);
     --gradient-card: linear-gradient(145deg, hsl(0, 0%, 100%) 0%, hsl(0, 0%, 97%) 100%);
 
     /* Shadows */
@@ -64,7 +67,7 @@
     --shadow-md: 0 14px 32px hsl(0 0% 20% / 0.08), 0 4px 10px hsl(0 0% 20% / 0.06);
     --shadow-lg: 0 22px 60px hsl(0 0% 20% / 0.14), 0 10px 24px hsl(0 0% 20% / 0.08);
     --shadow-gold: 0 4px 20px hsl(0 0% 45% / 0.30);
-    --shadow-navy: 0 8px 32px hsl(345 65% 30% / 0.25);
+    --shadow-navy: 0 8px 32px hsl(0 100% 17% / 0.25);
   }
 }
 
@@ -77,18 +80,20 @@
   body,
   #root {
     min-height: 100%;
+    width: 100%;
   }
 
   body {
     @apply bg-background text-foreground;
     font-family: 'Inter', sans-serif;
     background-image:
-      radial-gradient(circle at top left, hsl(345 60% 92% / 0.55), transparent 34%),
+      radial-gradient(circle at top left, hsl(0 80% 92% / 0.45), transparent 34%),
       radial-gradient(circle at top right, hsl(0 0% 82% / 0.28), transparent 26%),
       linear-gradient(180deg, hsl(0 0% 98%), hsl(0 0% 95%));
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    overflow-x: hidden;
   }
 
   h1,
@@ -104,7 +109,29 @@
   textarea,
   select {
     background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
     opacity: 1;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: hsl(var(--muted-foreground));
+    opacity: 1;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    min-width: 0;
+  }
+
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
   }
 
   ::selection {
@@ -192,26 +219,111 @@
 
   .portal-shell {
     background-image:
-      radial-gradient(circle at top left, hsl(345 58% 90% / 0.78), transparent 24%),
-      radial-gradient(circle at top right, hsl(0 0% 82% / 0.30), transparent 26%),
-      linear-gradient(180deg, hsl(0 0% 99%), hsl(0 0% 94%));
+      radial-gradient(circle at top left, hsl(0 78% 91% / 0.52), transparent 24%),
+      radial-gradient(circle at top right, hsl(0 0% 70% / 0.26), transparent 26%),
+      linear-gradient(180deg, hsl(0 0% 99%), hsl(0 0% 92%));
   }
 
   .portal-sidebar {
-    background:
-      linear-gradient(180deg, hsl(345 58% 18%) 0%, hsl(345 63% 28%) 52%, hsl(0 0% 22%) 100%);
+    background: hsl(var(--sidebar-background));
+    color: hsl(var(--sidebar-foreground));
   }
 
   .portal-header {
-    background:
-      linear-gradient(135deg, hsl(345 65% 27%) 0%, hsl(345 56% 32%) 48%, hsl(0 0% 24%) 100%);
+    background: hsl(var(--header-background));
+    color: hsl(0 0% 100%);
   }
 
   .portal-tag {
     @apply inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em];
-    border-color: hsl(0 0% 100% / 0.12);
-    background-color: hsl(0 0% 100% / 0.09);
-    color: hsl(0 0% 100% / 0.78);
+    border-color: hsl(0 0% 100% / 0.42);
+    background-color: hsl(0 0% 100% / 0.14);
+    color: hsl(0 0% 100%);
+  }
+
+  .portal-logo-frame {
+    @apply relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border p-1.5 shadow-sm;
+    border-color: hsl(0 0% 100% / 0.45);
+    background:
+      radial-gradient(circle at 24% 18%, hsl(0 0% 100% / 0.78), transparent 28%),
+      radial-gradient(circle at 78% 82%, hsl(0 0% 100% / 0.46), transparent 26%),
+      linear-gradient(135deg, hsl(0 0% 96%), hsl(0 0% 83%));
+  }
+
+  .portal-logo-frame::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(72% 42% at 12% 78%, transparent 48%, hsl(0 0% 100% / 0.52) 49% 52%, transparent 53%),
+      radial-gradient(74% 44% at 88% 18%, transparent 50%, hsl(0 0% 100% / 0.42) 51% 54%, transparent 55%),
+      radial-gradient(88% 50% at 46% 118%, hsl(0 0% 68% / 0.48), transparent 62%),
+      radial-gradient(78% 44% at 62% -16%, hsl(0 0% 100% / 0.38), transparent 60%);
+    opacity: 0.95;
+    pointer-events: none;
+  }
+
+  .portal-logo-frame img {
+    @apply relative z-10 h-full w-full object-contain;
+  }
+
+  .portal-layout-body {
+    @apply flex min-w-0 flex-1 flex-col overflow-hidden;
+  }
+
+  .portal-main {
+    @apply min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4;
+  }
+
+  @media (min-width: 1024px) {
+    .portal-main {
+      @apply p-6;
+    }
+  }
+
+  .portal-main > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  @media (max-width: 767px) {
+    .portal-main :where(.overflow-x-auto, .overflow-auto) > table {
+      min-width: 640px;
+    }
+  }
+
+  .portal-header-button {
+    @apply rounded-lg p-2 text-white transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80;
+  }
+
+  .portal-account-button {
+    @apply flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-white transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80;
+  }
+
+  .portal-sidebar-section {
+    @apply text-xs font-bold uppercase tracking-widest text-white;
+  }
+
+  .portal-sidebar-muted {
+    @apply text-xs font-semibold uppercase tracking-[0.14em] text-white;
+  }
+
+  .portal-sidebar-item {
+    @apply flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-white transition-colors duration-200;
+  }
+
+  .portal-sidebar-item:hover {
+    background: hsl(var(--sidebar-hover));
+  }
+
+  .portal-sidebar-item.active {
+    background: hsl(var(--sidebar-active));
+    color: hsl(0 0% 100%);
+    box-shadow: inset 3px 0 0 hsl(0 0% 100% / 0.9);
+  }
+
+  .portal-sidebar-item svg {
+    color: hsl(0 0% 100%);
   }
 
   .section-heading {
@@ -219,21 +331,169 @@
   }
 
   .sidebar-item {
-    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer;
-    color: hsl(0 0% 100% / 0.75);
+    @apply flex cursor-pointer items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200;
   }
 
   .sidebar-item:hover {
-    background-color: hsl(0 0% 28%);
-    color: hsl(0 0% 100%);
+    background-color: hsl(var(--sidebar-hover));
   }
 
   .sidebar-item.active {
-    background-color: hsl(345 65% 30%);
+    background-color: hsl(var(--sidebar-active));
     color: hsl(0 0% 100%);
   }
 
   .sidebar-item.active svg {
     color: hsl(0 0% 100%);
+  }
+
+  @media (max-width: 767px) {
+    html {
+      font-size: 15px;
+    }
+
+    .portal-main {
+      padding: 0.75rem;
+      padding-bottom: 5.25rem;
+    }
+
+    .portal-header {
+      padding: 0.65rem 0.75rem;
+    }
+
+    .portal-logo-frame {
+      height: 4.5rem;
+      width: 4.5rem;
+    }
+
+    .portal-sidebar-item {
+      min-height: 48px;
+      padding: 0.875rem;
+    }
+
+    .portal-account-button,
+    .portal-header-button {
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    .portal-main :where(h1) {
+      font-size: 1.5rem;
+      line-height: 1.2;
+    }
+
+    .portal-main :where(h2) {
+      font-size: 1.25rem;
+      line-height: 1.25;
+    }
+
+    .portal-main :where(h3) {
+      font-size: 1.05rem;
+      line-height: 1.3;
+    }
+
+    .portal-main :where(p, li, span, label, td) {
+      overflow-wrap: anywhere;
+    }
+
+    .portal-main :where(button:not(:disabled), a[href]) {
+      touch-action: manipulation;
+    }
+
+    .portal-main :where(input:not([type="checkbox"]):not([type="radio"]), select) {
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    .portal-main :where(textarea) {
+      font-size: 16px;
+    }
+
+    .portal-main :where(img, video, canvas, iframe, embed, object) {
+      max-width: 100%;
+    }
+
+    .portal-main :where(iframe, embed, object) {
+      width: 100%;
+      max-height: 70dvh;
+    }
+
+    .portal-main :where(.overflow-x-auto, .overflow-auto) {
+      overflow-x: hidden;
+    }
+
+    .portal-main table {
+      display: block;
+      width: 100% !important;
+      min-width: 0 !important;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    .portal-main thead {
+      display: none;
+    }
+
+    .portal-main tbody,
+    .portal-main tfoot {
+      display: block;
+      width: 100%;
+    }
+
+    .portal-main tr {
+      display: block;
+      width: 100%;
+      border: 1px solid hsl(var(--border));
+      border-radius: 1rem;
+      background: hsl(var(--card));
+      overflow: hidden;
+    }
+
+    .portal-main tr + tr {
+      margin-top: 0.75rem;
+    }
+
+    .portal-main td,
+    .portal-main th {
+      display: block;
+      width: 100% !important;
+      padding: 0.75rem 1rem !important;
+      text-align: left;
+      white-space: normal;
+    }
+
+    .portal-main td + td {
+      border-top: 1px solid hsl(var(--border) / 0.65);
+    }
+
+    .portal-main td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .portal-main :where(.rounded-3xl) {
+      border-radius: 1.15rem;
+    }
+
+    .portal-main :where(.shadow-card) {
+      box-shadow: var(--shadow-sm);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .portal-main *,
+    .portal-sidebar *,
+    .portal-header * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

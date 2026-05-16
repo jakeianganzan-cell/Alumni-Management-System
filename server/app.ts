@@ -1,40 +1,103 @@
+import "./env";
 import express from "express";
 import cors from "cors";
+import type { CorsOptions } from "cors";
 import path from "path";
-import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { v4 as uuidv4 } from "uuid";
-import { fileURLToPath } from "url";
+import ExcelJS from "exceljs";
+import { Readable } from "stream";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import db from "./db.ts";
-import sendEmail, { sendMail } from "./utils/sendEmail";
+import { sendAlumniCredentialsEmail, sendTargetedAlumniEmail, type TargetedEmailPurpose } from "./services/emailService";
+import { generatePassword } from "./utils/generatePassword";
 import { authenticateToken } from "./middleware/auth";
 import tracerRoutes from "./routes/tracer.routes";
 import emailRoutes from "./routes/emailRoutes";
 import { AuthenticatedRequest } from "./types/auth";
-import { assertTracerAdminAccess, exportTracerPdfByRecordId, previewTracerPdfByRecordId } from "./controllers/tracer.controller";
+import {
+    assertTracerAdminAccess,
+    bulkDownloadTracerPdfs,
+    exportTracerPdfByRecordId,
+    getAdminTracerRecord,
+    listTracerRecords,
+    previewTracerPdfByRecordId
+} from "./controllers/tracer.controller";
 import { COURSE_LABELS, COURSE_OPTIONS, normalizeCourseCode, SYSTEM_COURSES } from "./courseCatalog";
 
 const app = express();
-const currentFilePath = fileURLToPath(import.meta.url);
-const currentDirPath = path.dirname(currentFilePath);
-dotenv.config({ path: path.resolve(currentDirPath, "../.env") });
-dotenv.config({ path: path.resolve(currentDirPath, ".env"), override: true });
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const ADMIN_EMAIL = "forjakeproject@gmail.com";
 const ADMIN_PASSWORD = "administrator123";
 const ADMIN_NAME = "System Administrator";
 const APP_BASE_URL = process.env.APP_BASE_URL || "";
 
+const parseCsvEnv = (value: string | undefined) =>
+    String(value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+const DEFAULT_LOCAL_FRONTEND_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+];
+
+const configuredCorsOrigins = new Set([
+    ...DEFAULT_LOCAL_FRONTEND_ORIGINS,
+    ...parseCsvEnv(process.env.FRONTEND_URL),
+    ...parseCsvEnv(process.env.CLIENT_ORIGIN),
+    ...parseCsvEnv(process.env.ALLOWED_ORIGINS),
+    ...parseCsvEnv(process.env.APP_BASE_URL)
+]);
+
+const normalizeOrigin = (value: string) => {
+    try {
+        return new URL(value).origin;
+    } catch {
+        return value.replace(/\/+$/, "");
+    }
+};
+
+const allowedCorsOrigins = new Set(Array.from(configuredCorsOrigins).map(normalizeOrigin));
+
+const corsOptions: CorsOptions = {
+    origin(origin, callback) {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+
+        const normalizedOrigin = normalizeOrigin(origin);
+
+        if (process.env.CORS_ALLOW_ALL === "true" || allowedCorsOrigins.has(normalizedOrigin)) {
+            callback(null, true);
+            return;
+        }
+
+        callback(new Error(`CORS blocked origin: ${origin}`));
+    }
+};
+
 type QueryRow = RowDataPacket & Record<string, unknown>;
 type DbParam = string | number | boolean | Date | Buffer | null;
+type DurationComputedStatus = "Upcoming" | "Active" | "Completed" | "Archived";
 
 interface AlumniImportInputRow {
     fullName?: string;
+    name?: string;
     graduationYear?: string;
+    year?: string;
     emailAddress?: string;
+    email?: string;
+    program?: string;
+    course?: string;
     contactNumber?: string;
 }
 
@@ -43,6 +106,7 @@ interface AlumniImportPreparedRow {
     name: string;
     batch: string;
     email: string;
+    course: string;
     contactNumber: string;
 }
 
@@ -51,6 +115,7 @@ interface AlumniImportFailure {
     emailAddress: string;
     fullName: string;
     reason: string;
+    category?: "invalid" | "duplicate" | "database" | "email";
 }
 
 interface PendingDonationRow extends QueryRow {
@@ -66,6 +131,10 @@ interface UpcomingEventRow extends QueryRow {
 interface RegistrationRow extends QueryRow {
     event_id: number | string;
 }
+
+type EventRsvpResponseStatus = "Going" | "Interested" | "Not Going";
+type EventAttendanceStatus = "Pending" | "Attended" | "Absent";
+type EventVerificationStatus = "Pending" | "Verified" | "Not Verified";
 
 interface DonationListRow extends QueryRow {
     id: number;
@@ -93,6 +162,10 @@ interface EventListRow extends QueryRow {
     status: string | null;
     audience_scope?: string | null;
     audience_value?: string | null;
+    start_datetime?: string | Date | null;
+    end_datetime?: string | Date | null;
+    auto_archive_at?: string | Date | null;
+    archived_at?: string | Date | null;
 }
 
 interface UserNotificationRow extends QueryRow {
@@ -112,6 +185,74 @@ interface UserSettingsRow extends QueryRow {
     allow_survey_reminders: number | boolean | null;
     allow_email_notifications: number | boolean | null;
     allow_in_app_notifications: number | boolean | null;
+}
+
+interface MonthlyEngagementRow extends QueryRow {
+    month_key: string;
+    activity_type: string;
+    activity_count: number | string;
+}
+
+interface CourseContributionRow extends QueryRow {
+    course: string | null;
+    alumni_count: number | string;
+    donation_count: number | string;
+    donated_amount: number | string;
+    event_count: number | string;
+    survey_count: number | string;
+    achievement_count: number | string;
+    freedom_wall_count: number | string;
+    comment_count: number | string;
+    contribution_score: number | string;
+}
+
+interface AlumniInsightRow extends QueryRow {
+    alumni_id: string;
+    name: string | null;
+    course: string | null;
+    batch: string | null;
+    login_count: number | string;
+    event_count: number | string;
+    survey_count: number | string;
+    donation_count: number | string;
+    donated_amount: number | string;
+    freedom_wall_count: number | string;
+    comment_count: number | string;
+    reaction_count: number | string;
+    stored_score: number | string;
+    last_login_at: string | Date | null;
+    last_activity_at: string | Date | null;
+}
+
+interface DonationTrendRow extends QueryRow {
+    month_key: string;
+    donation_count: number | string;
+    donated_amount: number | string;
+}
+
+interface HeatmapRow extends QueryRow {
+    day_index: number | string;
+    day_label: string;
+    hour_block: number | string;
+    activity_count: number | string;
+}
+
+interface EmploymentCourseRow extends QueryRow {
+    course: string | null;
+    employed_count: number | string;
+    tracer_count: number | string;
+}
+
+interface AnnouncementInterestSummaryRow extends QueryRow {
+    alumni_id: string;
+    name: string | null;
+    email: string | null;
+    student_id: string | null;
+    course: string | null;
+    batch: string | null;
+    interest_status: string | null;
+    interested_at: string | null;
+    updated_at: string | null;
 }
 
 interface OfficerRow extends QueryRow {
@@ -526,6 +667,1200 @@ const getAnnouncementStatusFallback = (type: string | null | undefined) => {
     return normalizeAnnouncementType(type) === "event" ? "upcoming" : "active";
 };
 
+const MANILA_UTC_OFFSET = "+08:00";
+
+const normalizeDateOnly = (value: unknown) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return formatManilaDate(parsed);
+};
+
+const normalizeTimeOnly = (value: unknown, fallback = "00:00") => {
+    const text = String(value || "").trim();
+    if (!text) return fallback;
+    const match = text.match(/^(\d{2}):(\d{2})(?::(\d{2}))?/);
+    return match ? `${match[1]}:${match[2]}:${match[3] || "00"}` : fallback;
+};
+
+const parseManilaDateTime = (dateValue: unknown, timeValue: unknown, fallbackTime = "00:00") => {
+    const date = normalizeDateOnly(dateValue);
+    if (!date) return null;
+    const time = normalizeTimeOnly(timeValue, fallbackTime);
+    const parsed = new Date(`${date}T${time}${MANILA_UTC_OFFSET}`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const parseDateTimeValue = (value: unknown) => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) {
+        const parsed = new Date(text.includes("+") || text.endsWith("Z") ? text : `${text}${MANILA_UTC_OFFSET}`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(text)) {
+        const parsed = new Date(`${text.replace(" ", "T")}${MANILA_UTC_OFFSET}`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getManilaParts = (date: Date) => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+    }).formatToParts(date);
+    const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return {
+        year: map.year,
+        month: map.month,
+        day: map.day,
+        hour: map.hour === "24" ? "00" : map.hour,
+        minute: map.minute,
+        second: map.second
+    };
+};
+
+const formatManilaDate = (date: Date) => {
+    const parts = getManilaParts(date);
+    return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+const formatManilaTime = (date: Date) => {
+    const parts = getManilaParts(date);
+    return `${parts.hour}:${parts.minute}:${parts.second}`;
+};
+
+const formatSqlDateTime = (date: Date | null) => {
+    if (!date) return null;
+    return `${formatManilaDate(date)} ${formatManilaTime(date)}`;
+};
+
+const formatDisplayManilaDateTime = (date: Date | null) => {
+    if (!date) return "Not set";
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+    }).format(date);
+};
+
+const getDurationWindowFromBody = (body: Record<string, unknown>) => {
+    const legacyDate = body.date;
+    const legacyTime = body.time;
+    const start = parseDateTimeValue(body.start_datetime)
+        || parseManilaDateTime(body.start_date, body.start_time, "00:00")
+        || parseManilaDateTime(legacyDate, legacyTime || "00:00", "00:00");
+    const end = parseDateTimeValue(body.end_datetime)
+        || parseManilaDateTime(body.end_date, body.end_time, "23:59")
+        || parseManilaDateTime(legacyDate, body.end_time || "23:59", "23:59");
+
+    return {
+        start,
+        end,
+        startSql: formatSqlDateTime(start),
+        endSql: formatSqlDateTime(end)
+    };
+};
+
+const getDurationDatesFromRow = (row: Record<string, unknown>) => {
+    const start = parseDateTimeValue(row.start_datetime) || parseManilaDateTime(row.date, row.time || "00:00", "00:00");
+    const end = parseDateTimeValue(row.end_datetime) || parseManilaDateTime(row.date, row.end_time || "23:59", "23:59");
+    const archivedAt = parseDateTimeValue(row.archived_at);
+    return { start, end, archivedAt };
+};
+
+const buildRemainingTime = (target: Date | null, now = new Date()) => {
+    if (!target) return "No end time set";
+    const totalMinutes = Math.max(0, Math.ceil((target.getTime() - now.getTime()) / 60000));
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    const parts = [
+        days ? `${days} day${days === 1 ? "" : "s"}` : "",
+        hours ? `${hours} hour${hours === 1 ? "" : "s"}` : "",
+        minutes || (!days && !hours) ? `${minutes} minute${minutes === 1 ? "" : "s"}` : ""
+    ].filter(Boolean);
+    return `${parts.join(" ")} remaining`;
+};
+
+const computeDurationFields = (row: Record<string, unknown>) => {
+    const now = new Date();
+    const { start, end, archivedAt } = getDurationDatesFromRow(row);
+    let computedStatus: DurationComputedStatus = "Active";
+
+    const storedStatus = normalizeStatus(String(row.status || ""), "").toLowerCase();
+    if (storedStatus === "ended" || storedStatus === "closed" || storedStatus === "completed") {
+        computedStatus = "Completed";
+    }
+
+    if (archivedAt || storedStatus === "archived") {
+        computedStatus = "Archived";
+    } else if (computedStatus !== "Completed" && start && now.getTime() < start.getTime()) {
+        computedStatus = "Upcoming";
+    } else if (end && now.getTime() > end.getTime()) {
+        const archiveAt = new Date(end.getTime() + 7 * 24 * 60 * 60 * 1000);
+        computedStatus = now.getTime() >= archiveAt.getTime() ? "Archived" : "Completed";
+    } else if (computedStatus !== "Completed" && (start || end)) {
+        computedStatus = "Active";
+    }
+
+    const isExpired = computedStatus === "Archived" || computedStatus === "Completed";
+    const remainingTime = computedStatus === "Upcoming"
+        ? `Starts ${formatDisplayManilaDateTime(start)}`
+        : computedStatus === "Archived"
+            ? `Archived after ${formatDisplayManilaDateTime(end)}`
+            : computedStatus === "Completed"
+                ? `Completed ${formatDisplayManilaDateTime(end)}`
+            : buildRemainingTime(end, now);
+
+    return {
+        start_datetime: start ? formatSqlDateTime(start) : null,
+        start_date: start ? formatManilaDate(start) : null,
+        start_time: start ? formatManilaTime(start).slice(0, 5) : null,
+        end_datetime: end ? formatSqlDateTime(end) : null,
+        end_date: end ? formatManilaDate(end) : null,
+        end_time: end ? formatManilaTime(end).slice(0, 5) : null,
+        auto_archive_at: row.auto_archive_at || (end ? formatSqlDateTime(end) : null),
+        archived_at: archivedAt ? formatSqlDateTime(archivedAt) : null,
+        duration_status: computedStatus,
+        computed_status: computedStatus,
+        remaining_time: remainingTime,
+        is_expired: isExpired
+    };
+};
+
+const withDurationFields = <T extends Record<string, unknown>>(row: T) => ({
+    ...row,
+    ...computeDurationFields(row)
+});
+
+const autoArchiveExpiredContent = async () => {
+    const announcementTable = await getAnnouncementTableName();
+    const nowSql = formatSqlDateTime(new Date());
+
+    if (await tableExists(announcementTable)) {
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET status = 'archived',
+                 archived_at = COALESCE(archived_at, ?),
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
+             WHERE end_datetime IS NOT NULL
+               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+               AND archived_at IS NULL
+               AND LOWER(COALESCE(status, '')) <> 'archived'`,
+            [nowSql, nowSql]
+        );
+    }
+
+    if (await tableExists("surveys")) {
+        await db.execute(
+            `UPDATE surveys
+             SET status = 'archived',
+                 archived_at = COALESCE(archived_at, ?),
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
+             WHERE end_datetime IS NOT NULL
+               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+               AND archived_at IS NULL
+               AND LOWER(COALESCE(status, '')) <> 'archived'`,
+            [nowSql, nowSql]
+        );
+    }
+
+    if (await tableExists("events")) {
+        await db.execute(
+            `UPDATE events
+             SET status = 'archived',
+                 archived_at = COALESCE(archived_at, ?),
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
+             WHERE end_datetime IS NOT NULL
+               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+               AND archived_at IS NULL
+               AND LOWER(COALESCE(status, '')) <> 'archived'`,
+            [nowSql, nowSql]
+        );
+    }
+};
+
+let autoArchiveTimer: NodeJS.Timeout | null = null;
+
+const startDurationAutoArchiveJob = () => {
+    if (autoArchiveTimer) return;
+    const run = () => {
+        autoArchiveExpiredContent().catch((error) => {
+            console.error("AUTO ARCHIVE JOB ERROR:", error);
+        });
+    };
+    run();
+    autoArchiveTimer = setInterval(run, 5 * 60 * 1000);
+};
+
+const normalizeEventRsvpStatus = (value: unknown): EventRsvpResponseStatus | null => {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+    if (normalized === "going") return "Going";
+    if (normalized === "interested") return "Interested";
+    if (normalized === "not going" || normalized === "declined" || normalized === "notgoing") return "Not Going";
+    return null;
+};
+
+const normalizeAttendanceStatus = (value: unknown): EventAttendanceStatus | null => {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+    if (normalized === "pending") return "Pending";
+    if (normalized === "attended" || normalized === "checked in" || normalized === "checkedin") return "Attended";
+    if (normalized === "absent") return "Absent";
+    return null;
+};
+
+const normalizeVerificationStatus = (value: unknown): EventVerificationStatus | null => {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+    if (normalized === "pending") return "Pending";
+    if (normalized === "verified" || normalized === "approved") return "Verified";
+    if (normalized === "not verified" || normalized === "notverified" || normalized === "rejected") return "Not Verified";
+    return null;
+};
+
+const ensureEventRsvpTables = async () => {
+    const announcementTable = await getAnnouncementTableName();
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS event_rsvps (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            event_id INT NOT NULL,
+            alumni_id VARCHAR(36) NOT NULL,
+            response_status VARCHAR(30) NOT NULL,
+            attendance_status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+            verification_status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+            checked_in_at DATETIME NULL,
+            engagement_awarded TINYINT(1) DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_event_alumni (event_id, alumni_id),
+            INDEX idx_event_rsvps_event (event_id),
+            INDEX idx_event_rsvps_alumni (alumni_id),
+            FOREIGN KEY (event_id) REFERENCES ${announcementTable}(id) ON DELETE CASCADE,
+            FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    const rsvpColumns = [
+        { name: "attendance_status", sql: "ALTER TABLE event_rsvps ADD COLUMN attendance_status VARCHAR(30) NOT NULL DEFAULT 'Pending'" },
+        { name: "verification_status", sql: "ALTER TABLE event_rsvps ADD COLUMN verification_status VARCHAR(30) NOT NULL DEFAULT 'Pending'" },
+        { name: "checked_in_at", sql: "ALTER TABLE event_rsvps ADD COLUMN checked_in_at DATETIME NULL" },
+        { name: "engagement_awarded", sql: "ALTER TABLE event_rsvps ADD COLUMN engagement_awarded TINYINT(1) DEFAULT 0" },
+        { name: "updated_at", sql: "ALTER TABLE event_rsvps ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" }
+    ];
+
+    for (const column of rsvpColumns) {
+        try {
+            await db.execute(column.sql);
+        } catch (error) {
+            if (!getErrorMessage(error).toLowerCase().includes("duplicate column")) {
+                console.error(`SCHEMA UPDATE ERROR: ${column.name}`, error);
+            }
+        }
+    }
+
+    try {
+        await db.execute("ALTER TABLE event_rsvps ADD UNIQUE KEY unique_event_alumni (event_id, alumni_id)");
+    } catch {
+        // Older databases already have this key under a different name.
+    }
+
+    await db.execute(
+        `UPDATE event_rsvps
+         SET attendance_status = 'Attended'
+         WHERE LOWER(COALESCE(attendance_status, '')) IN ('checked_in', 'checked in', 'attended')`
+    );
+    await db.execute(
+        `UPDATE event_rsvps
+         SET attendance_status = 'Absent'
+         WHERE LOWER(COALESCE(attendance_status, '')) = 'absent'`
+    );
+    await db.execute(
+        `UPDATE event_rsvps
+         SET attendance_status = 'Pending'
+         WHERE COALESCE(attendance_status, '') = ''`
+    );
+    await db.execute(
+        `UPDATE event_rsvps
+         SET verification_status = 'Pending'
+         WHERE COALESCE(verification_status, '') = ''`
+    );
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS engagement_points (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL,
+            source_type VARCHAR(50) NOT NULL,
+            source_id INT NOT NULL,
+            points INT NOT NULL,
+            reason VARCHAR(255) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_engagement_source (user_id, source_type, source_id),
+            INDEX idx_engagement_points_user (user_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS engagement_metrics (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            alumni_id VARCHAR(36) NOT NULL,
+            event_points INT NOT NULL DEFAULT 0,
+            survey_points INT NOT NULL DEFAULT 0,
+            achievement_points INT NOT NULL DEFAULT 0,
+            freedom_wall_points INT NOT NULL DEFAULT 0,
+            reaction_points INT NOT NULL DEFAULT 0,
+            comment_points INT NOT NULL DEFAULT 0,
+            total_score INT NOT NULL DEFAULT 0,
+            engagement_level VARCHAR(50) NOT NULL DEFAULT 'Emerging',
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_engagement_metrics_alumni (alumni_id),
+            FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+};
+
+const ensureDashboardSlideTable = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS dashboard_slides (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            caption TEXT,
+            media_type VARCHAR(30) NOT NULL DEFAULT 'image',
+            image_url LONGTEXT NOT NULL,
+            link_url TEXT,
+            is_highlighted TINYINT(1) NOT NULL DEFAULT 0,
+            display_order INT NOT NULL DEFAULT 0,
+            status VARCHAR(30) NOT NULL DEFAULT 'active',
+            created_by VARCHAR(36) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_dashboard_slides_visible (status, is_highlighted, display_order),
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+    `);
+
+    try {
+        await db.execute("ALTER TABLE dashboard_slides ADD COLUMN media_type VARCHAR(30) NOT NULL DEFAULT 'image' AFTER caption");
+    } catch (error) {
+        if (!getErrorMessage(error).toLowerCase().includes("duplicate column")) {
+            console.error("DASHBOARD SLIDES MEDIA TYPE MIGRATION ERROR:", error);
+        }
+    }
+
+    await db.execute(`
+        UPDATE dashboard_slides
+        SET media_type = CASE
+            WHEN image_url REGEXP 'youtube\\\\.com|youtu\\\\.be' THEN 'youtube'
+            WHEN image_url REGEXP '\\\\.(mp4|webm|ogg|mov)(\\\\?.*)?$' OR image_url LIKE 'data:video/%' THEN 'video'
+            ELSE 'image'
+        END
+        WHERE COALESCE(media_type, '') = '' OR media_type = 'image'
+    `);
+};
+
+const ensureAlumniLoginActivityTable = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS alumni_login_events (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL,
+            logged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_alumni_login_events_user (user_id),
+            INDEX idx_alumni_login_events_logged_at (logged_at),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+};
+
+const ensureAnnouncementInterestTable = async () => {
+    const announcementTable = await getAnnouncementTableName();
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS announcement_interests (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            announcement_id INT NOT NULL,
+            alumni_id VARCHAR(36) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'interested',
+            interested_at DATETIME NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_announcement_interest_alumni (announcement_id, alumni_id),
+            INDEX idx_announcement_interests_announcement (announcement_id, status),
+            INDEX idx_announcement_interests_alumni (alumni_id),
+            FOREIGN KEY (announcement_id) REFERENCES ${announcementTable}(id) ON DELETE CASCADE,
+            FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+};
+
+const recordAlumniLoginActivity = async (userId: string) => {
+    try {
+        await ensureAlumniLoginActivityTable();
+        await db.execute(
+            "INSERT INTO alumni_login_events (user_id, logged_at) VALUES (?, ?)",
+            [userId, formatSqlDateTime(new Date())]
+        );
+    } catch (error) {
+        console.error("ALUMNI LOGIN ACTIVITY ERROR:", error);
+    }
+};
+
+const normalizeInterestStatus = (value: unknown) => {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[_\s-]+/g, "_");
+    return normalized === "not_interested" || normalized === "cancelled" || normalized === "false"
+        ? "not_interested"
+        : "interested";
+};
+
+const canTrackInterest = (row: QueryRow | null | undefined) => {
+    if (!row) return false;
+    const type = normalizeAnnouncementType(String(row.type || ""));
+    return type === "event" || normalizeBoolean(row.interest_enabled);
+};
+
+const getAnnouncementInterestStatus = async (announcementId: number, alumniId: string) => {
+    await ensureAnnouncementInterestTable();
+    return getSingleRow(
+        `SELECT id, announcement_id, alumni_id, status, interested_at, created_at, updated_at
+         FROM announcement_interests
+         WHERE announcement_id = ? AND alumni_id = ?`,
+        [announcementId, alumniId]
+    );
+};
+
+const getAnnouncementInterestSummary = async (announcementId: number) => {
+    await ensureAnnouncementInterestTable();
+
+    const totalRow = await getSingleRow(
+        "SELECT COUNT(*) AS totalAlumni FROM user_roles WHERE role = 'alumni'"
+    );
+    const interestedRow = await getSingleRow(
+        `SELECT COUNT(*) AS interestedCount
+         FROM announcement_interests
+         WHERE announcement_id = ? AND status = 'interested'`,
+        [announcementId]
+    );
+
+    const totalAlumni = Number(totalRow?.totalAlumni || 0);
+    const interestedCount = Number(interestedRow?.interestedCount || 0);
+    const interestPercentage = totalAlumni > 0 ? Number(((interestedCount / totalAlumni) * 100).toFixed(1)) : 0;
+
+    const alumni = parseRows<AnnouncementInterestSummaryRow>(await db.query<AnnouncementInterestSummaryRow>(
+        `SELECT
+            p.id AS alumni_id,
+            p.name,
+            p.email,
+            p.student_id,
+            p.course,
+            p.batch,
+            ai.status AS interest_status,
+            ai.interested_at,
+            ai.updated_at
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id AND ur.role = 'alumni'
+         LEFT JOIN announcement_interests ai ON ai.announcement_id = ? AND ai.alumni_id = p.id
+         ORDER BY
+            CASE WHEN ai.status = 'interested' THEN 0 ELSE 1 END,
+            p.name ASC`,
+        [announcementId]
+    ));
+
+    return {
+        totalAlumni,
+        interestedCount,
+        notInterestedCount: Math.max(totalAlumni - interestedCount, 0),
+        interestPercentage,
+        alumni: alumni.map((row) => ({
+            alumniId: String(row.alumni_id),
+            name: row.name || "Unknown alumni",
+            email: row.email || null,
+            studentId: row.student_id || null,
+            course: row.course || null,
+            batch: row.batch || null,
+            isInterested: String(row.interest_status || "").toLowerCase() === "interested",
+            interestStatus: String(row.interest_status || "not_interested"),
+            interestedAt: row.interested_at || null,
+            updatedAt: row.updated_at || null
+        }))
+    };
+};
+
+const getDashboardMonthBuckets = () => {
+    const now = new Date();
+    const buckets: Array<{ key: string; label: string }> = [];
+
+    for (let offset = 11; offset >= 0; offset -= 1) {
+        const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        buckets.push({
+            key,
+            label: date.toLocaleString("en-US", { month: "short" })
+        });
+    }
+
+    return buckets;
+};
+
+const getCourseLabel = (course: unknown) => {
+    const rawCourse = String(course || "").trim();
+    if (!rawCourse) return "Unassigned";
+
+    const normalized = normalizeCourseCode(rawCourse);
+    return normalized ? COURSE_LABELS[normalized] || rawCourse : rawCourse;
+};
+
+const getActivityEngagementCategory = (score: number, daysSinceLastActivity: number | null) => {
+    if (score >= 90 && (daysSinceLastActivity === null || daysSinceLastActivity <= 30)) return "Highly Active";
+    if (score >= 45 && (daysSinceLastActivity === null || daysSinceLastActivity <= 60)) return "Moderately Active";
+    if (daysSinceLastActivity !== null && daysSinceLastActivity > 60) return "At Risk of Inactivity";
+    return "Low Engagement";
+};
+
+const getDaysSince = (value: unknown) => {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(date.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
+};
+
+const getAdminDashboardAnalytics = async () => {
+    await ensureAlumniLoginActivityTable();
+    await ensureAnnouncementInterestTable();
+    await ensureAnnouncementEventSurveyEngagementTables();
+    await ensureEventRsvpTables();
+
+    const monthBuckets = getDashboardMonthBuckets();
+    const startMonth = `${monthBuckets[0].key}-01 00:00:00`;
+    const monthlySources: string[] = [];
+
+    const addMonthlySource = async (tableName: string, activityAt: string, activityType: string, whereClause = "") => {
+        if (!(await tableExists(tableName))) return;
+        monthlySources.push(`
+            SELECT ${activityAt} AS activity_at, '${activityType}' AS activity_type
+            FROM ${tableName}
+            ${whereClause}
+        `);
+    };
+
+    await addMonthlySource(
+        "alumni_login_events",
+        "ale.logged_at",
+        "logins",
+        "ale INNER JOIN user_roles ur ON ur.user_id = ale.user_id AND ur.role = 'alumni'"
+    );
+    await addMonthlySource("event_comments", "created_at", "comments");
+    await addMonthlySource("achievement_comments", "created_at", "comments");
+    await addMonthlySource("announcement_interests", "interested_at", "eventInterest", "WHERE status = 'interested'");
+    await addMonthlySource("survey_responses", "submitted_at", "surveyResponses");
+    await addMonthlySource("announcement_comments", "created_at", "announcementInteractions", "WHERE LOWER(COALESCE(status, 'visible')) = 'visible'");
+    await addMonthlySource("announcement_comment_replies", "created_at", "announcementInteractions", "WHERE LOWER(COALESCE(status, 'visible')) = 'visible'");
+    await addMonthlySource("freedom_wall_posts", "created_at", "freedomWall", "WHERE LOWER(COALESCE(status, 'published')) = 'published'");
+    await addMonthlySource("freedom_wall_comments", "created_at", "freedomWall", "WHERE LOWER(COALESCE(status, 'published')) = 'published'");
+    await addMonthlySource("reactions", "created_at", "freedomWall");
+
+    const monthlyRows = monthlySources.length
+        ? parseRows<MonthlyEngagementRow>(await db.query<MonthlyEngagementRow>(
+            `SELECT
+                DATE_FORMAT(activity_at, '%Y-%m') AS month_key,
+                activity_type,
+                COUNT(*) AS activity_count
+             FROM (${monthlySources.join(" UNION ALL ")}) activity
+             WHERE activity_at IS NOT NULL
+             AND activity_at >= ?
+             GROUP BY DATE_FORMAT(activity_at, '%Y-%m'), activity_type
+             ORDER BY month_key ASC`,
+            [startMonth]
+        ))
+        : [];
+
+    const monthlyEngagement = monthBuckets.map((bucket) => ({
+        month: bucket.label,
+        monthKey: bucket.key,
+        logins: 0,
+        comments: 0,
+        eventInterest: 0,
+        surveyResponses: 0,
+        announcementInteractions: 0,
+        freedomWall: 0,
+        total: 0
+    }));
+
+    const monthlyMap = new Map(monthlyEngagement.map((item) => [item.monthKey, item]));
+    for (const row of monthlyRows) {
+        const month = monthlyMap.get(String(row.month_key || ""));
+        if (!month) continue;
+
+        const activityType = String(row.activity_type || "");
+        const count = Number(row.activity_count || 0);
+
+        if (
+            activityType === "logins" ||
+            activityType === "comments" ||
+            activityType === "eventInterest" ||
+            activityType === "surveyResponses" ||
+            activityType === "announcementInteractions" ||
+            activityType === "freedomWall"
+        ) {
+            month[activityType] = count;
+        }
+        month.total += count;
+    }
+
+    const eventContributionSubquery = `
+        SELECT alumni_id AS user_id, COUNT(DISTINCT announcement_id) AS event_count
+        FROM announcement_interests
+        WHERE status = 'interested'
+        GROUP BY alumni_id
+    `;
+
+    const freedomContributionSubquery = `
+        SELECT user_id, SUM(activity_count) AS freedom_wall_count
+        FROM (
+            SELECT user_id, COUNT(*) AS activity_count FROM freedom_wall_posts WHERE LOWER(COALESCE(status, 'published')) = 'published' GROUP BY user_id
+            UNION ALL
+            SELECT user_id, COUNT(*) AS activity_count FROM freedom_wall_comments WHERE LOWER(COALESCE(status, 'published')) = 'published' GROUP BY user_id
+            UNION ALL
+            SELECT user_id, COUNT(*) AS activity_count FROM reactions GROUP BY user_id
+        ) freedom_activity
+        GROUP BY user_id
+    `;
+
+    const commentContributionSubquery = `
+        SELECT user_id, SUM(comment_count) AS comment_count
+        FROM (
+            SELECT alumni_id AS user_id, COUNT(*) AS comment_count FROM event_comments GROUP BY alumni_id
+            UNION ALL
+            SELECT user_id, COUNT(*) AS comment_count FROM achievement_comments GROUP BY user_id
+            UNION ALL
+            SELECT user_id, COUNT(*) AS comment_count FROM announcement_comments WHERE LOWER(COALESCE(status, 'visible')) = 'visible' GROUP BY user_id
+        ) comment_activity
+        GROUP BY user_id
+    `;
+
+    const courseContributionRows = parseRows<CourseContributionRow>(await db.query<CourseContributionRow>(
+        `SELECT
+            COALESCE(NULLIF(TRIM(p.course), ''), 'Unassigned') AS course,
+            COUNT(DISTINCT p.id) AS alumni_count,
+            COALESCE(SUM(d.donation_count), 0) AS donation_count,
+            COALESCE(SUM(d.donated_amount), 0) AS donated_amount,
+            COALESCE(SUM(ev.event_count), 0) AS event_count,
+            COALESCE(SUM(sr.survey_count), 0) AS survey_count,
+            COALESCE(SUM(ach.achievement_count), 0) AS achievement_count,
+            COALESCE(SUM(fw.freedom_wall_count), 0) AS freedom_wall_count,
+            COALESCE(SUM(cm.comment_count), 0) AS comment_count,
+            COALESCE(SUM(
+                COALESCE(d.donation_count, 0) * 15 +
+                COALESCE(ev.event_count, 0) * 10 +
+                COALESCE(sr.survey_count, 0) * 8 +
+                COALESCE(ach.achievement_count, 0) * 12 +
+                COALESCE(fw.freedom_wall_count, 0) * 5 +
+                COALESCE(cm.comment_count, 0) * 4
+            ), 0) AS contribution_score
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id AND ur.role = 'alumni'
+         LEFT JOIN (
+            SELECT user_id, COUNT(*) AS donation_count, COALESCE(SUM(amount), 0) AS donated_amount
+            FROM donations
+            WHERE LOWER(COALESCE(status, '')) = 'approved'
+            GROUP BY user_id
+         ) d ON d.user_id = p.id
+         LEFT JOIN (${eventContributionSubquery}) ev ON ev.user_id = p.id
+         LEFT JOIN (
+            SELECT respondent_id AS user_id, COUNT(*) AS survey_count
+            FROM survey_responses
+            WHERE respondent_id IS NOT NULL
+            GROUP BY respondent_id
+         ) sr ON sr.user_id = p.id
+         LEFT JOIN (
+            SELECT alumni_id AS user_id, COUNT(*) AS achievement_count
+            FROM achievements
+            WHERE LOWER(COALESCE(status, 'approved')) = 'approved'
+            GROUP BY alumni_id
+         ) ach ON ach.user_id = p.id
+         LEFT JOIN (${freedomContributionSubquery}) fw ON fw.user_id = p.id
+         LEFT JOIN (${commentContributionSubquery}) cm ON cm.user_id = p.id
+         GROUP BY COALESCE(NULLIF(TRIM(p.course), ''), 'Unassigned')
+         ORDER BY contribution_score DESC, alumni_count DESC, course ASC
+         LIMIT 10`
+    ));
+
+    const courseContributions = courseContributionRows.map((row) => ({
+        course: String(row.course || "Unassigned"),
+        courseLabel: getCourseLabel(row.course),
+        alumniCount: Number(row.alumni_count || 0),
+        donations: Number(row.donation_count || 0),
+        donatedAmount: Number(row.donated_amount || 0),
+        events: Number(row.event_count || 0),
+        surveyResponses: Number(row.survey_count || 0),
+        achievements: Number(row.achievement_count || 0),
+        freedomWall: Number(row.freedom_wall_count || 0),
+        comments: Number(row.comment_count || 0),
+        contributionScore: Number(row.contribution_score || 0)
+    }));
+
+    const alumniInsightRows = parseRows<AlumniInsightRow>(await db.query<AlumniInsightRow>(
+        `SELECT
+            p.id AS alumni_id,
+            p.name,
+            COALESCE(NULLIF(TRIM(p.course), ''), 'Unassigned') AS course,
+            p.batch,
+            COALESCE(l.login_count, 0) AS login_count,
+            COALESCE(ev.event_count, 0) AS event_count,
+            COALESCE(sr.survey_count, 0) AS survey_count,
+            COALESCE(d.donation_count, 0) AS donation_count,
+            COALESCE(d.donated_amount, 0) AS donated_amount,
+            COALESCE(fw.freedom_wall_count, 0) AS freedom_wall_count,
+            COALESCE(cm.comment_count, 0) AS comment_count,
+            COALESCE(rx.reaction_count, 0) AS reaction_count,
+            COALESCE(em.total_score, 0) AS stored_score,
+            l.last_login_at,
+            GREATEST(
+                COALESCE(l.last_login_at, '1970-01-01'),
+                COALESCE(ev.last_event_at, '1970-01-01'),
+                COALESCE(sr.last_survey_at, '1970-01-01'),
+                COALESCE(d.last_donation_at, '1970-01-01'),
+                COALESCE(fw.last_freedom_wall_at, '1970-01-01'),
+                COALESCE(cm.last_comment_at, '1970-01-01'),
+                COALESCE(rx.last_reaction_at, '1970-01-01')
+            ) AS last_activity_at
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id AND ur.role = 'alumni'
+         LEFT JOIN (
+            SELECT user_id, COUNT(*) AS login_count, MAX(logged_at) AS last_login_at
+            FROM alumni_login_events
+            WHERE logged_at >= DATE_SUB(NOW(), INTERVAL 180 DAY)
+            GROUP BY user_id
+         ) l ON l.user_id = p.id
+         LEFT JOIN (
+            SELECT alumni_id AS user_id, COUNT(*) AS event_count, MAX(COALESCE(updated_at, created_at)) AS last_event_at
+            FROM event_rsvps
+            GROUP BY alumni_id
+         ) ev ON ev.user_id = p.id
+         LEFT JOIN (
+            SELECT respondent_id AS user_id, COUNT(*) AS survey_count, MAX(submitted_at) AS last_survey_at
+            FROM survey_responses
+            WHERE respondent_id IS NOT NULL
+            GROUP BY respondent_id
+         ) sr ON sr.user_id = p.id
+         LEFT JOIN (
+            SELECT user_id, COUNT(*) AS donation_count, COALESCE(SUM(amount), 0) AS donated_amount, MAX(created_at) AS last_donation_at
+            FROM donations
+            WHERE ${donationStatusSql("status")} IN ('approved', 'approve')
+            GROUP BY user_id
+         ) d ON d.user_id = p.id
+         LEFT JOIN (${freedomContributionSubquery.replace("SUM(activity_count) AS freedom_wall_count", "SUM(activity_count) AS freedom_wall_count, MAX(activity_at) AS last_freedom_wall_at").replace("SELECT user_id, COUNT(*) AS activity_count FROM freedom_wall_posts WHERE", "SELECT user_id, COUNT(*) AS activity_count, MAX(created_at) AS activity_at FROM freedom_wall_posts WHERE").replace("SELECT user_id, COUNT(*) AS activity_count FROM freedom_wall_comments WHERE", "SELECT user_id, COUNT(*) AS activity_count, MAX(created_at) AS activity_at FROM freedom_wall_comments WHERE").replace("SELECT user_id, COUNT(*) AS activity_count FROM reactions GROUP BY user_id", "SELECT user_id, COUNT(*) AS activity_count, MAX(created_at) AS activity_at FROM reactions GROUP BY user_id")}) fw ON fw.user_id = p.id
+         LEFT JOIN (
+            SELECT user_id, SUM(comment_count) AS comment_count, MAX(last_comment_at) AS last_comment_at
+            FROM (
+                SELECT alumni_id AS user_id, COUNT(*) AS comment_count, MAX(created_at) AS last_comment_at FROM event_comments GROUP BY alumni_id
+                UNION ALL
+                SELECT user_id, COUNT(*) AS comment_count, MAX(created_at) AS last_comment_at FROM achievement_comments GROUP BY user_id
+                UNION ALL
+                SELECT user_id, COUNT(*) AS comment_count, MAX(created_at) AS last_comment_at FROM announcement_comments WHERE LOWER(COALESCE(status, 'visible')) = 'visible' GROUP BY user_id
+            ) comment_activity
+            GROUP BY user_id
+         ) cm ON cm.user_id = p.id
+         LEFT JOIN (
+            SELECT user_id, COUNT(*) AS reaction_count, MAX(created_at) AS last_reaction_at
+            FROM reactions
+            GROUP BY user_id
+         ) rx ON rx.user_id = p.id
+         LEFT JOIN engagement_metrics em ON em.alumni_id = p.id
+         ORDER BY last_activity_at DESC
+         LIMIT 100`
+    ));
+
+    const alumniInsights = alumniInsightRows.map((row) => {
+        const score =
+            Number(row.stored_score || 0) +
+            Number(row.login_count || 0) * 2 +
+            Number(row.event_count || 0) * 12 +
+            Number(row.survey_count || 0) * 8 +
+            Number(row.donation_count || 0) * 18 +
+            Number(row.freedom_wall_count || 0) * 5 +
+            Number(row.comment_count || 0) * 4 +
+            Number(row.reaction_count || 0) * 2;
+        const daysSinceLastActivity = getDaysSince(row.last_activity_at);
+
+        return {
+            alumniId: String(row.alumni_id),
+            name: String(row.name || "Unknown alumni"),
+            course: String(row.course || "Unassigned"),
+            courseLabel: getCourseLabel(row.course),
+            batch: row.batch ? String(row.batch) : "Unassigned",
+            score,
+            loginCount: Number(row.login_count || 0),
+            eventCount: Number(row.event_count || 0),
+            surveyCount: Number(row.survey_count || 0),
+            donationCount: Number(row.donation_count || 0),
+            donatedAmount: Number(row.donated_amount || 0),
+            interactionCount: Number(row.freedom_wall_count || 0) + Number(row.comment_count || 0) + Number(row.reaction_count || 0),
+            daysSinceLastActivity,
+            prediction: getActivityEngagementCategory(score, daysSinceLastActivity),
+            eventParticipationLikelihood: Math.min(95, Math.round(25 + Number(row.event_count || 0) * 12 + Number(row.login_count || 0) * 2 + Number(row.survey_count || 0) * 4)),
+            donorLikelihood: Math.min(95, Math.round(15 + Number(row.donation_count || 0) * 25 + Number(row.event_count || 0) * 6 + Number(row.login_count || 0) * 2))
+        };
+    });
+
+    const predictionCounts = ["Highly Active", "Moderately Active", "Low Engagement", "At Risk of Inactivity"].map((category) => {
+        const count = alumniInsights.filter((item) => item.prediction === category).length;
+        return {
+            category,
+            count,
+            percentage: alumniInsights.length ? Math.round((count / alumniInsights.length) * 100) : 0
+        };
+    });
+
+    const donationTrendsRows = parseRows<DonationTrendRow>(await db.query<DonationTrendRow>(
+        `SELECT
+            DATE_FORMAT(created_at, '%Y-%m') AS month_key,
+            COUNT(*) AS donation_count,
+            COALESCE(SUM(amount), 0) AS donated_amount
+         FROM donations
+         WHERE ${donationStatusSql("status")} IN ('approved', 'approve')
+           AND created_at >= ?
+         GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+         ORDER BY month_key ASC`,
+        [startMonth]
+    ));
+    const donationTrendMap = new Map(donationTrendsRows.map((row) => [String(row.month_key), row]));
+    const donationTrends = monthBuckets.map((bucket) => {
+        const row = donationTrendMap.get(bucket.key);
+        return {
+            month: bucket.label,
+            monthKey: bucket.key,
+            donationCount: Number(row?.donation_count || 0),
+            donatedAmount: Number(row?.donated_amount || 0)
+        };
+    });
+
+    const heatmapRows = parseRows<HeatmapRow>(await db.query<HeatmapRow>(
+        `SELECT
+            DAYOFWEEK(activity_at) - 1 AS day_index,
+            DATE_FORMAT(activity_at, '%a') AS day_label,
+            HOUR(activity_at) AS hour_block,
+            COUNT(*) AS activity_count
+         FROM (
+            SELECT logged_at AS activity_at FROM alumni_login_events
+            UNION ALL SELECT created_at AS activity_at FROM event_comments
+            UNION ALL SELECT interested_at AS activity_at FROM announcement_interests WHERE status = 'interested'
+            UNION ALL SELECT submitted_at AS activity_at FROM survey_responses
+            UNION ALL SELECT created_at AS activity_at FROM freedom_wall_posts WHERE LOWER(COALESCE(status, 'published')) = 'published'
+            UNION ALL SELECT created_at AS activity_at FROM freedom_wall_comments WHERE LOWER(COALESCE(status, 'published')) = 'published'
+            UNION ALL SELECT created_at AS activity_at FROM reactions
+            UNION ALL SELECT created_at AS activity_at FROM donations
+         ) activity
+         WHERE activity_at IS NOT NULL
+           AND activity_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+         GROUP BY DAYOFWEEK(activity_at), DATE_FORMAT(activity_at, '%a'), HOUR(activity_at)
+         ORDER BY day_index ASC, hour_block ASC`
+    ));
+    const heatmap = heatmapRows.map((row) => ({
+        dayIndex: Number(row.day_index || 0),
+        dayLabel: String(row.day_label || ""),
+        hour: Number(row.hour_block || 0),
+        activityCount: Number(row.activity_count || 0)
+    }));
+
+    const employmentRows = parseRows<EmploymentCourseRow>(await db.query<EmploymentCourseRow>(
+        `SELECT
+            COALESCE(NULLIF(TRIM(p.course), ''), 'Unassigned') AS course,
+            COUNT(DISTINCT tf.user_id) AS tracer_count,
+            COUNT(DISTINCT CASE
+                WHEN LOWER(COALESCE(tf.employment_status, '')) LIKE '%employed%' THEN tf.user_id
+                ELSE NULL
+            END) AS employed_count
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id AND ur.role = 'alumni'
+         LEFT JOIN tracer_form tf ON tf.user_id = p.id
+         GROUP BY COALESCE(NULLIF(TRIM(p.course), ''), 'Unassigned')`
+    ));
+    const employmentMap = new Map(employmentRows.map((row) => [String(row.course || "Unassigned"), row]));
+    const courseComparisons = courseContributions.map((course) => {
+        const employment = employmentMap.get(course.course);
+        const activeCount = alumniInsights.filter((item) => item.course === course.course && ["Highly Active", "Moderately Active"].includes(item.prediction)).length;
+        const tracerCount = Number(employment?.tracer_count || 0);
+        const employedCount = Number(employment?.employed_count || 0);
+        return {
+            ...course,
+            activeCount,
+            engagementRate: course.alumniCount ? Math.round((activeCount / course.alumniCount) * 100) : 0,
+            donationParticipationRate: course.alumniCount ? Math.round((course.donations / course.alumniCount) * 100) : 0,
+            eventParticipationRate: course.alumniCount ? Math.round((course.events / course.alumniCount) * 100) : 0,
+            surveyParticipationRate: course.alumniCount ? Math.round((course.surveyResponses / course.alumniCount) * 100) : 0,
+            employmentRate: tracerCount ? Math.round((employedCount / tracerCount) * 100) : 0
+        };
+    });
+
+    const currentMonth = monthlyEngagement[monthlyEngagement.length - 1];
+    const previousMonth = monthlyEngagement[monthlyEngagement.length - 2];
+    const topCourse = courseComparisons[0];
+    const topAlumni = [...alumniInsights].sort((a, b) => b.score - a.score).slice(0, 8);
+    const atRiskCount = predictionCounts.find((item) => item.category === "At Risk of Inactivity")?.count || 0;
+    const donationGrowth = donationTrends.length >= 2
+        ? donationTrends[donationTrends.length - 1].donatedAmount - donationTrends[donationTrends.length - 2].donatedAmount
+        : 0;
+    const insightSummaries = [
+        topCourse
+            ? `${topCourse.courseLabel} currently leads engagement with ${topCourse.contributionScore} contribution points across events, surveys, donations, and social activity.`
+            : "No course engagement activity has been recorded yet.",
+        currentMonth && previousMonth
+            ? `${currentMonth.month} activity is ${currentMonth.total >= previousMonth.total ? "up" : "down"} by ${Math.abs(currentMonth.total - previousMonth.total)} interactions compared with ${previousMonth.month}.`
+            : "Monthly activity history is still building.",
+        donationGrowth > 0
+            ? `Approved donations increased by ${donationGrowth.toLocaleString()} this month based on live donation records.`
+            : "Donation growth is flat or lower this month, so donation campaign follow-ups may be useful.",
+        atRiskCount > 0
+            ? `${atRiskCount} alumni are predicted at risk of inactivity and should receive engagement reminders.`
+            : "No alumni are currently flagged as at risk by the engagement prediction model."
+    ];
+
+    return {
+        monthlyEngagement,
+        courseContributions,
+        courseComparisons,
+        donationTrends,
+        heatmap,
+        topAlumni,
+        predictionCounts,
+        insightSummaries
+    };
+};
+
+const getEventForRsvp = async (eventId: number) => {
+    const announcementTable = await getAnnouncementTableName();
+    return getSingleRow(
+        `SELECT id, title, type, status, date, time, start_datetime, end_datetime, auto_archive_at, archived_at
+         FROM ${announcementTable}
+         WHERE id = ?`,
+        [eventId]
+    );
+};
+
+const ensureEventCanAcceptRsvp = (eventRow: QueryRow | undefined | null) => {
+    if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+        return "Event not found.";
+    }
+
+    const duration = computeDurationFields(eventRow);
+    if (duration.is_expired || duration.computed_status === "Archived") {
+        return "RSVP is closed for this event.";
+    }
+
+    return null;
+};
+
+const isEventActiveForCheckIn = (eventRow: QueryRow | undefined | null) => {
+    if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+        return false;
+    }
+
+    const duration = computeDurationFields(eventRow);
+    return duration.computed_status === "Active" && !duration.is_expired;
+};
+
+const awardEventAttendancePoints = async (conn: PoolConnection, eventId: number, alumniId: string) => {
+    const [pointResult] = await conn.query<ResultSetHeader>(
+        `INSERT IGNORE INTO engagement_points (user_id, source_type, source_id, points, reason)
+         VALUES (?, 'event_attendance', ?, 10, 'Event attendance')`,
+        [alumniId, eventId]
+    );
+
+    await conn.query(
+        `UPDATE event_rsvps
+         SET engagement_awarded = 1
+         WHERE event_id = ? AND alumni_id = ?`,
+        [eventId, alumniId]
+    );
+
+    if (pointResult.affectedRows > 0) {
+        await conn.query(
+            `INSERT INTO engagement_metrics (alumni_id, event_points, total_score, engagement_level, last_updated)
+             VALUES (?, 10, 10, 'Emerging', ?)
+             ON DUPLICATE KEY UPDATE
+                event_points = event_points + 10,
+                total_score = total_score + 10,
+                last_updated = VALUES(last_updated)`,
+            [alumniId, formatSqlDateTime(new Date())]
+        );
+        await conn.query(
+            `UPDATE engagement_metrics
+             SET engagement_level = CASE
+                WHEN total_score >= 120 THEN 'Champion'
+                WHEN total_score >= 85 THEN 'Highly Active'
+                WHEN total_score >= 50 THEN 'Active'
+                ELSE 'Emerging'
+             END
+             WHERE alumni_id = ?`,
+            [alumniId]
+        );
+    }
+};
+
+const getEventRsvpSummary = async (eventId: number) => {
+    await ensureEventRsvpTables();
+    const rows = parseRows(await db.query(
+        `SELECT
+            er.id,
+            er.event_id,
+            er.alumni_id,
+            er.response_status,
+            er.attendance_status,
+            er.verification_status,
+            er.checked_in_at,
+            er.engagement_awarded,
+            er.created_at,
+            er.updated_at,
+            p.name,
+            p.email,
+            p.student_id,
+            p.course,
+            p.batch
+         FROM event_rsvps er
+         LEFT JOIN profiles p ON p.id = er.alumni_id
+         WHERE er.event_id = ?
+         ORDER BY er.updated_at DESC, er.created_at DESC`,
+        [eventId]
+    ));
+
+    const counts = {
+        going: 0,
+        interested: 0,
+        notGoing: 0,
+        pending: 0,
+        attended: 0,
+        absent: 0,
+        verified: 0,
+        notVerified: 0,
+        verificationPending: 0
+    };
+
+    for (const row of rows) {
+        const responseStatus = normalizeEventRsvpStatus(row.response_status) || "Interested";
+        const attendanceStatus = normalizeAttendanceStatus(row.attendance_status) || "Pending";
+        const verificationStatus = normalizeVerificationStatus(row.verification_status) || "Pending";
+        if (responseStatus === "Going") counts.going += 1;
+        if (responseStatus === "Interested") counts.interested += 1;
+        if (responseStatus === "Not Going") counts.notGoing += 1;
+        if (attendanceStatus === "Pending") counts.pending += 1;
+        if (attendanceStatus === "Attended") counts.attended += 1;
+        if (attendanceStatus === "Absent") counts.absent += 1;
+        if (verificationStatus === "Verified") counts.verified += 1;
+        if (verificationStatus === "Not Verified") counts.notVerified += 1;
+        if (verificationStatus === "Pending") counts.verificationPending += 1;
+    }
+
+    return { rsvps: rows, counts };
+};
+
+const mapDashboardSlide = (row: QueryRow) => ({
+    id: Number(row.id),
+    title: String(row.title || ""),
+    caption: row.caption ? String(row.caption) : "",
+    mediaType: normalizeDashboardSlideMediaType(row.media_type, row.image_url),
+    mediaUrl: normalizeStoredMedia(row.image_url),
+    imageUrl: normalizeStoredMedia(row.image_url),
+    linkUrl: row.link_url ? String(row.link_url) : "",
+    isHighlighted: Boolean(row.is_highlighted),
+    displayOrder: Number(row.display_order || 0),
+    status: String(row.status || "active"),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+});
+
+const getYouTubeVideoId = (value: unknown) => {
+    const text = normalizeText(value);
+    if (!text) return null;
+
+    const directMatch = text.match(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
+    if (directMatch) return directMatch[1];
+
+    try {
+        const normalizedUrl = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+        const url = new URL(normalizedUrl);
+        const host = url.hostname.replace(/^www\./i, "").replace(/^m\./i, "").replace(/^music\./i, "").toLowerCase();
+        const pathParts = url.pathname.split("/").filter(Boolean);
+        const candidate =
+            host === "youtu.be"
+                ? pathParts[0]
+                : host === "youtube.com" || host === "youtube-nocookie.com"
+                    ? url.searchParams.get("v") || (["embed", "shorts", "live", "v"].includes(pathParts[0]) ? pathParts[1] : null)
+                    : null;
+
+        return candidate && /^[A-Za-z0-9_-]{6,}$/.test(candidate) ? candidate : null;
+    } catch {
+        return null;
+    }
+};
+
+const toYouTubeEmbedUrl = (value: unknown) => {
+    const videoId = getYouTubeVideoId(value);
+    if (!videoId) return null;
+
+    const params = new URLSearchParams({
+        autoplay: "1",
+        mute: "1",
+        playsinline: "1",
+        rel: "0",
+        enablejsapi: "1"
+    });
+
+    if (APP_BASE_URL) {
+        try {
+            params.set("origin", new URL(APP_BASE_URL).origin);
+        } catch {
+            // APP_BASE_URL is optional and may be a relative deployment path.
+        }
+    }
+
+    return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+};
+
+const isStoredVideoMedia = (value: unknown) => {
+    const text = normalizeText(value);
+    return /^data:video\//i.test(text) || /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(text);
+};
+
+const normalizeDashboardSlideMediaType = (mediaType: unknown, mediaUrl: unknown) => {
+    const normalized = normalizeText(mediaType).toLowerCase();
+    if (normalized === "youtube") return "youtube";
+    if (normalized === "video") return "video";
+    if (getYouTubeVideoId(mediaUrl)) return "youtube";
+    if (isStoredVideoMedia(mediaUrl)) return "video";
+    return "image";
+};
+
+const prepareDashboardSlideMedia = (mediaType: unknown, mediaUrl: unknown) => {
+    const requestedType = normalizeDashboardSlideMediaType(mediaType, mediaUrl);
+    if (requestedType === "youtube") {
+        const embedUrl = toYouTubeEmbedUrl(mediaUrl);
+        return embedUrl ? { mediaType: "youtube", mediaUrl: embedUrl } : null;
+    }
+
+    const storedMedia = normalizeStoredMedia(typeof mediaUrl === "string" ? mediaUrl : String(mediaUrl || ""));
+    if (!storedMedia) return null;
+
+    return {
+        mediaType: requestedType === "video" || isStoredVideoMedia(storedMedia) ? "video" : "image",
+        mediaUrl: storedMedia
+    };
+};
+
 const formatStatusLabel = (value: string | null | undefined, fallback = "pending") => {
     const normalized = normalizeStatus(value, fallback);
     return normalized
@@ -534,7 +1869,7 @@ const formatStatusLabel = (value: string | null | undefined, fallback = "pending
 };
 
 const normalizeDonationStatus = (value: unknown) => {
-    const normalized = normalizeStatus(String(value || "pending_review"), "pending_review");
+    const normalized = normalizeStatus(String(value || "pending_review"), "pending_review").replace(/[\s-]+/g, "_");
     if (normalized === "pending") {
         return "pending_review";
     }
@@ -545,6 +1880,9 @@ const normalizeDonationStatus = (value: unknown) => {
 
     return "pending_review";
 };
+
+const donationStatusSql = (column = "status") =>
+    `LOWER(REPLACE(REPLACE(TRIM(COALESCE(${column}, 'pending_review')), '-', '_'), ' ', '_'))`;
 
 const normalizeAnnouncementApprovalStatus = (value: unknown, fallback = "approved") => {
     const normalized = normalizeStatus(String(value || fallback), fallback);
@@ -595,6 +1933,17 @@ const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCas
 
 const normalizeText = (value: unknown) => String(value || "").trim().replace(/\s+/g, " ");
 
+const normalizeBoolean = (value: unknown, fallback = false) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value !== "string") return fallback;
+
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+    return fallback;
+};
+
 const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g, "").trim();
 
 const normalizeBatch = (value: unknown) => String(value || "").trim();
@@ -635,26 +1984,29 @@ const getUserSettings = async (userId: string) => {
     };
 };
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
-    const fullName = normalizeText(row.fullName);
-    const graduationYear = normalizeBatch(row.graduationYear);
-    const emailAddress = normalizeEmail(row.emailAddress);
+    const fullName = normalizeText(row.fullName || row.name);
+    const graduationYear = normalizeBatch(row.graduationYear || row.year);
+    const emailAddress = normalizeEmail(row.emailAddress || row.email);
+    const courseValidation = validateSupportedCourse(row.program || row.course);
     const contactNumber = normalizePhone(row.contactNumber);
 
     if (!fullName) {
-        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Full Name is required" } };
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Name is required", category: "invalid" as const } };
     }
 
     if (!graduationYear || !/^\d{4}$/.test(graduationYear)) {
-        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Graduation Year must be a 4-digit year" } };
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Year must be a 4-digit year", category: "invalid" as const } };
     }
 
-    if (!emailAddress || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)) {
-        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Email Address is invalid" } };
+    if (!emailAddress || !EMAIL_REGEX.test(emailAddress)) {
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Email is invalid", category: "invalid" as const } };
     }
 
-    if (!contactNumber) {
-        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Contact Number is required" } };
+    if (!courseValidation.ok || !courseValidation.course) {
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: courseValidation.message || "Program is required", category: "invalid" as const } };
     }
 
     return {
@@ -664,9 +2016,382 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
             name: fullName,
             batch: graduationYear,
             email: emailAddress,
+            course: courseValidation.course,
             contactNumber
         }
     };
+};
+
+const normalizeImportHeader = (value: unknown) =>
+    normalizeText(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+const IMPORT_HEADER_MAP: Record<string, keyof AlumniImportInputRow> = {
+    name: "name",
+    fullname: "fullName",
+    alumniname: "fullName",
+    graduatefullname: "fullName",
+    email: "email",
+    emailaddress: "emailAddress",
+    mail: "email",
+    year: "year",
+    graduationyear: "graduationYear",
+    gradyear: "graduationYear",
+    batch: "graduationYear",
+    batchyear: "graduationYear",
+    yeargraduated: "graduationYear",
+    program: "program",
+    course: "course",
+    degreeprogram: "program",
+    contact: "contactNumber",
+    contactnumber: "contactNumber",
+    mobilenumber: "contactNumber",
+    phone: "contactNumber",
+    phonenumber: "contactNumber"
+};
+
+const getCellText = (cell: ExcelJS.Cell) => {
+    const text = normalizeText(cell.text);
+
+    if (text) {
+        return text;
+    }
+
+    const value = cell.value;
+
+    if (value && typeof value === "object") {
+        if ("text" in value) {
+            return normalizeText(value.text);
+        }
+
+        if ("result" in value) {
+            return normalizeText(value.result);
+        }
+    }
+
+    return normalizeText(value);
+};
+
+const worksheetToImportRows = (worksheet: ExcelJS.Worksheet): AlumniImportInputRow[] => {
+    let headerRowNumber = 0;
+    const headerIndexes = new Map<number, keyof AlumniImportInputRow>();
+
+    worksheet.eachRow((row, rowNumber) => {
+        if (headerRowNumber > 0) {
+            return;
+        }
+
+        row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+            const mappedKey = IMPORT_HEADER_MAP[normalizeImportHeader(getCellText(cell))];
+
+            if (mappedKey) {
+                headerIndexes.set(columnNumber, mappedKey);
+            }
+        });
+
+        if (headerIndexes.size > 0) {
+            headerRowNumber = rowNumber;
+        } else {
+            headerIndexes.clear();
+        }
+    });
+
+    if (headerRowNumber === 0) {
+        throw new Error("Import file must include headers: name, email, year, and program.");
+    }
+
+    const rows: AlumniImportInputRow[] = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber <= headerRowNumber) {
+            return;
+        }
+
+        const parsedRow: AlumniImportInputRow = {};
+        let hasValue = false;
+
+        headerIndexes.forEach((key, columnNumber) => {
+            const value = getCellText(row.getCell(columnNumber));
+
+            if (value) {
+                hasValue = true;
+            }
+
+            parsedRow[key] = value;
+        });
+
+        if (hasValue) {
+            rows.push(parsedRow);
+        }
+    });
+
+    return rows;
+};
+
+const parseAlumniImportFile = async (buffer: Buffer, fileName = "", contentType = "") => {
+    const workbook = new ExcelJS.Workbook();
+    const normalizedName = fileName.toLowerCase();
+    const normalizedType = contentType.toLowerCase();
+    let worksheet: ExcelJS.Worksheet | undefined;
+
+    if (normalizedName.endsWith(".csv") || normalizedType.includes("csv") || normalizedType.includes("text/plain")) {
+        worksheet = await workbook.csv.read(Readable.from([buffer]));
+    } else if (normalizedName.endsWith(".xlsx") || normalizedType.includes("spreadsheetml")) {
+        await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+        worksheet = workbook.worksheets[0];
+    } else if (normalizedName.endsWith(".xls")) {
+        throw new Error("Legacy .xls files are not supported. Save the file as .xlsx or .csv before importing.");
+    } else {
+        throw new Error("Only .xlsx and .csv alumni import files are supported.");
+    }
+
+    if (!worksheet) {
+        throw new Error("The uploaded file does not contain any worksheet.");
+    }
+
+    return worksheetToImportRows(worksheet);
+};
+
+const getSafeEmailError = (error: unknown) => {
+    const message = getErrorMessage(error);
+    return message.length > 300 ? `${message.slice(0, 300)}...` : message;
+};
+
+const MAILING_PURPOSES: Record<TargetedEmailPurpose, string> = {
+    graduate_tracer_reminder: "Graduate Tracer Reminder",
+    event_invitation: "Event Invitation",
+    important_announcement: "Important Announcement",
+    document_request: "Document Request",
+    account_verification_reminder: "Account Verification Reminder"
+};
+
+type MailingReminderReason =
+    | "incomplete_requirements"
+    | "tracer_stale"
+    | "missing_employment"
+    | "missing_documents";
+
+const MAILING_REMINDER_REASONS: Record<MailingReminderReason, string> = {
+    incomplete_requirements: "Incomplete Requirements",
+    tracer_stale: "Tracer Not Updated for 1 Year",
+    missing_employment: "Missing Employment Information",
+    missing_documents: "Missing Documents"
+};
+
+const MAILING_MISSING_INFO_PLACEHOLDER = "[Missing information will be filled automatically for each selected alumnus]";
+
+const isMailingPurpose = (value: unknown): value is TargetedEmailPurpose => {
+    return typeof value === "string" && value in MAILING_PURPOSES;
+};
+
+const isMailingReminderReason = (value: unknown): value is MailingReminderReason => {
+    return typeof value === "string" && value in MAILING_REMINDER_REASONS;
+};
+
+const getSafeMailingError = (error: unknown) => {
+    const message = getSafeEmailError(error);
+
+    if (/api[-_ ]?key|secret|token|password/i.test(message)) {
+        return "Email service is not configured correctly. Ask the system administrator to check the email settings.";
+    }
+
+    return message;
+};
+
+const getAvailableColumnExpression = async (tableName: string, alias: string, columns: string[], fallback = "NULL") => {
+    const availableColumns: string[] = [];
+
+    for (const column of columns) {
+        if (await columnExists(tableName, column)) {
+            availableColumns.push(`${alias}.${column}`);
+        }
+    }
+
+    return availableColumns.length > 0 ? `COALESCE(${availableColumns.join(", ")})` : fallback;
+};
+
+const mapMailingRecipientRow = (row: QueryRow) => {
+    const reasons: string[] = [];
+
+    if (Number(row.incomplete_requirements || 0) === 1) reasons.push(MAILING_REMINDER_REASONS.incomplete_requirements);
+    if (Number(row.tracer_stale || 0) === 1) reasons.push(MAILING_REMINDER_REASONS.tracer_stale);
+    if (Number(row.missing_employment || 0) === 1) reasons.push(MAILING_REMINDER_REASONS.missing_employment);
+    if (Number(row.missing_documents || 0) === 1) reasons.push(MAILING_REMINDER_REASONS.missing_documents);
+
+    return {
+        id: String(row.id || ""),
+        name: String(row.name || ""),
+        email: String(row.email || ""),
+        student_id: row.student_id ? String(row.student_id) : null,
+        course: row.course ? String(row.course) : null,
+        batch: row.batch ? String(row.batch) : null,
+        reminder_reason: reasons[0] || MAILING_REMINDER_REASONS.incomplete_requirements,
+        reminder_reasons: reasons,
+        tracer_last_updated: row.tracer_last_updated || null
+    };
+};
+
+const formatMailingMissingInfo = (recipient: { reminder_reasons?: string[]; reminder_reason?: string | null }) => {
+    const reasons = Array.isArray(recipient.reminder_reasons)
+        ? recipient.reminder_reasons.map((reason) => String(reason || "").trim()).filter(Boolean)
+        : [];
+    const fallbackReason = String(recipient.reminder_reason || "").trim();
+    const items = reasons.length > 0
+        ? reasons
+        : [fallbackReason || MAILING_REMINDER_REASONS.incomplete_requirements];
+
+    return items.map((reason) => `- ${reason}`).join("\n");
+};
+
+const buildRecipientMailingMessage = (
+    message: string,
+    recipient: { reminder_reasons?: string[]; reminder_reason?: string | null }
+) => {
+    if (!message.includes(MAILING_MISSING_INFO_PLACEHOLDER)) {
+        return message;
+    }
+
+    return message.split(MAILING_MISSING_INFO_PLACEHOLDER).join(formatMailingMissingInfo(recipient));
+};
+
+const getEligibleMailingRecipients = async ({
+    search = "",
+    course = "",
+    batch = "",
+    reason = "",
+    alumniIds = [],
+    limit = 100
+}: {
+    search?: string;
+    course?: string;
+    batch?: string;
+    reason?: string;
+    alumniIds?: string[];
+    limit?: number;
+}) => {
+    const tracerTable = await getTracerTableName();
+    const tracerDateExpr = await getAvailableColumnExpression(tracerTable, "tf", ["last_updated", "updated_at", "submitted_at", "created_at"]);
+    const employmentStatusExpr = await getAvailableColumnExpression(tracerTable, "tf", ["employment_status"]);
+    const jobTitleExpr = await getAvailableColumnExpression(tracerTable, "tf", ["job_title"]);
+    const companyExpr = await getAvailableColumnExpression(tracerTable, "tf", ["company"]);
+    const hasUserSettings = await tableExists("user_settings");
+    const hasGraduateTracerForms = await tableExists("graduate_tracer_forms");
+    const hasTracerEmploymentData = await tableExists("tracer_employment_data");
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+
+    const joins = [
+        `LEFT JOIN ${tracerTable} tf ON tf.user_id = p.id`
+    ];
+
+    if (hasGraduateTracerForms) {
+        joins.push("LEFT JOIN graduate_tracer_forms gtf ON gtf.alumni_id = p.id");
+    }
+
+    if (hasGraduateTracerForms && hasTracerEmploymentData) {
+        joins.push("LEFT JOIN tracer_employment_data ted ON ted.form_id = gtf.id");
+    }
+
+    if (hasUserSettings) {
+        joins.push("LEFT JOIN user_settings us ON us.user_id = p.id");
+    }
+
+    const employmentStatus = hasTracerEmploymentData ? `COALESCE(NULLIF(${employmentStatusExpr}, ''), NULLIF(ted.employment_status, ''))` : `NULLIF(${employmentStatusExpr}, '')`;
+    const jobTitle = hasTracerEmploymentData ? `COALESCE(NULLIF(${jobTitleExpr}, ''), NULLIF(ted.job_title, ''))` : `NULLIF(${jobTitleExpr}, '')`;
+    const company = hasTracerEmploymentData ? `COALESCE(NULLIF(${companyExpr}, ''), NULLIF(ted.company, ''))` : `NULLIF(${companyExpr}, '')`;
+    const documentExpr = hasUserSettings ? "(us.resume_url IS NULL OR TRIM(us.resume_url) = '')" : "0 = 1";
+    const graduateTracerStatusExpr = hasGraduateTracerForms ? "(gtf.id IS NULL OR LOWER(COALESCE(gtf.form_status, '')) NOT IN ('completed', 'submitted'))" : "tf.id IS NULL";
+
+    const incompleteExpr = `(
+        p.name IS NULL OR TRIM(p.name) = ''
+        OR p.student_id IS NULL OR TRIM(p.student_id) = ''
+        OR p.course IS NULL OR TRIM(p.course) = ''
+        OR p.batch IS NULL OR TRIM(p.batch) = ''
+        OR p.contact_number IS NULL OR TRIM(p.contact_number) = ''
+        OR tf.id IS NULL
+        OR ${graduateTracerStatusExpr}
+    )`;
+    const staleExpr = `(${tracerDateExpr} IS NULL OR ${tracerDateExpr} < DATE_SUB(NOW(), INTERVAL 1 YEAR))`;
+    const missingEmploymentExpr = `(
+        ${employmentStatus} IS NULL
+        OR (
+            LOWER(${employmentStatus}) IN ('employed', 'self-employed', 'self employed')
+            AND (${jobTitle} IS NULL OR ${company} IS NULL)
+        )
+    )`;
+    const missingDocumentsExpr = `(${documentExpr})`;
+    const eligibilityExpr = `(${incompleteExpr} OR ${staleExpr} OR ${missingEmploymentExpr} OR ${missingDocumentsExpr})`;
+    const reasonFilters: Record<MailingReminderReason, string> = {
+        incomplete_requirements: incompleteExpr,
+        tracer_stale: staleExpr,
+        missing_employment: missingEmploymentExpr,
+        missing_documents: missingDocumentsExpr
+    };
+
+    const where = [
+        "ur.role = 'alumni'",
+        "COALESCE(ur.archived, 0) = 0",
+        "p.email IS NOT NULL",
+        "TRIM(p.email) <> ''",
+        "p.email LIKE '%@%.%'",
+        "p.email NOT LIKE '% %'",
+        eligibilityExpr
+    ];
+    const params: DbParam[] = [];
+
+    if (search.trim()) {
+        const like = `%${search.trim()}%`;
+        where.push(`(
+            p.name LIKE ?
+            OR p.email LIKE ?
+            OR p.student_id LIKE ?
+            OR p.course LIKE ?
+            OR p.batch LIKE ?
+        )`);
+        params.push(like, like, like, like, like);
+    }
+
+    if (course.trim()) {
+        where.push("p.course = ?");
+        params.push(course.trim());
+    }
+
+    if (batch.trim()) {
+        where.push("p.batch = ?");
+        params.push(batch.trim());
+    }
+
+    if (isMailingReminderReason(reason)) {
+        where.push(reasonFilters[reason]);
+    }
+
+    const normalizedAlumniIds = alumniIds.map((value) => String(value || "").trim()).filter(Boolean);
+    if (normalizedAlumniIds.length > 0) {
+        where.push(`p.id IN (${normalizedAlumniIds.map(() => "?").join(", ")})`);
+        params.push(...normalizedAlumniIds);
+    }
+
+    const rows = parseRows(await db.query(
+        `SELECT
+            p.id,
+            p.name,
+            p.email,
+            p.student_id,
+            p.course,
+            p.batch,
+            ${tracerDateExpr} AS tracer_last_updated,
+            CASE WHEN ${incompleteExpr} THEN 1 ELSE 0 END AS incomplete_requirements,
+            CASE WHEN ${staleExpr} THEN 1 ELSE 0 END AS tracer_stale,
+            CASE WHEN ${missingEmploymentExpr} THEN 1 ELSE 0 END AS missing_employment,
+            CASE WHEN ${missingDocumentsExpr} THEN 1 ELSE 0 END AS missing_documents
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id
+         ${joins.join("\n")}
+         WHERE ${where.join("\nAND ")}
+         ORDER BY tracer_stale DESC, incomplete_requirements DESC, missing_employment DESC, missing_documents DESC, p.name ASC
+         LIMIT ${safeLimit}`,
+        params
+    ));
+
+    return rows.map(mapMailingRecipientRow).filter((row) => EMAIL_REGEX.test(normalizeEmail(row.email)));
 };
 
 const generateUniqueAlumniId = async (conn: PoolConnection, batch: string | null | undefined) => {
@@ -710,7 +2435,8 @@ const createAlumniAccount = async (conn: PoolConnection, {
     course,
     batch,
     contactNumber,
-    photoBase64
+    photoBase64,
+    temporaryPassword
 }: {
     name: string;
     email: string;
@@ -718,14 +2444,15 @@ const createAlumniAccount = async (conn: PoolConnection, {
     batch?: string | null;
     contactNumber?: string | null;
     photoBase64?: string | null;
+    temporaryPassword: string;
 }) => {
     const alumniId = await generateUniqueAlumniId(conn, batch);
     const userId = uuidv4();
-    const hashedPassword = await bcrypt.hash(alumniId, 10);
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     await conn.query(
-        "INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
-        [userId, email, hashedPassword]
+        "INSERT INTO users (id, email, password_hash, email_status) VALUES (?, ?, ?, ?)",
+        [userId, email, hashedPassword, "pending"]
     );
 
     await conn.query(
@@ -750,6 +2477,24 @@ const createAlumniAccount = async (conn: PoolConnection, {
     );
 
     return { userId, alumniId };
+};
+
+const updateCredentialEmailStatus = async (
+    userId: string,
+    status: "sent" | "failed",
+    errorMessage: string | null = null
+) => {
+    await db.execute(
+        `UPDATE users
+         SET email_status = ?, email_sent_at = ?, email_error = ?
+         WHERE id = ?`,
+        [
+            status,
+            status === "sent" ? new Date() : null,
+            errorMessage,
+            userId
+        ]
+    );
 };
 
 const ensureDatabaseColumns = async () => {
@@ -809,6 +2554,58 @@ const ensureDatabaseColumns = async () => {
             sql: `ALTER TABLE ${announcementTable} ADD COLUMN audience_value VARCHAR(255) NULL`
         },
         {
+            table: announcementTable,
+            sql: `ALTER TABLE ${announcementTable} ADD COLUMN start_datetime DATETIME NULL`
+        },
+        {
+            table: announcementTable,
+            sql: `ALTER TABLE ${announcementTable} ADD COLUMN end_datetime DATETIME NULL`
+        },
+        {
+            table: announcementTable,
+            sql: `ALTER TABLE ${announcementTable} ADD COLUMN auto_archive_at DATETIME NULL`
+        },
+        {
+            table: announcementTable,
+            sql: `ALTER TABLE ${announcementTable} ADD COLUMN archived_at DATETIME NULL`
+        },
+        {
+            table: announcementTable,
+            sql: `ALTER TABLE ${announcementTable} ADD COLUMN interest_enabled TINYINT(1) NOT NULL DEFAULT 0`
+        },
+        {
+            table: "surveys",
+            sql: "ALTER TABLE surveys ADD COLUMN start_datetime DATETIME NULL"
+        },
+        {
+            table: "surveys",
+            sql: "ALTER TABLE surveys ADD COLUMN end_datetime DATETIME NULL"
+        },
+        {
+            table: "surveys",
+            sql: "ALTER TABLE surveys ADD COLUMN auto_archive_at DATETIME NULL"
+        },
+        {
+            table: "surveys",
+            sql: "ALTER TABLE surveys ADD COLUMN archived_at DATETIME NULL"
+        },
+        {
+            table: "events",
+            sql: "ALTER TABLE events ADD COLUMN start_datetime DATETIME NULL"
+        },
+        {
+            table: "events",
+            sql: "ALTER TABLE events ADD COLUMN end_datetime DATETIME NULL"
+        },
+        {
+            table: "events",
+            sql: "ALTER TABLE events ADD COLUMN auto_archive_at DATETIME NULL"
+        },
+        {
+            table: "events",
+            sql: "ALTER TABLE events ADD COLUMN archived_at DATETIME NULL"
+        },
+        {
             table: "donations",
             sql: "ALTER TABLE donations ADD COLUMN receipt_url LONGTEXT NULL"
         },
@@ -827,6 +2624,26 @@ const ensureDatabaseColumns = async () => {
         {
             table: "user_roles",
             sql: "ALTER TABLE user_roles ADD COLUMN archived TINYINT(1) NOT NULL DEFAULT 0"
+        },
+        {
+            table: "users",
+            sql: "ALTER TABLE users ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending'"
+        },
+        {
+            table: "users",
+            sql: "ALTER TABLE users ADD COLUMN email_sent_at DATETIME NULL"
+        },
+        {
+            table: "users",
+            sql: "ALTER TABLE users ADD COLUMN email_error TEXT NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending'"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_error TEXT NULL"
         },
         {
             table: "freedom_wall_posts",
@@ -873,6 +2690,31 @@ const ensureDatabaseColumns = async () => {
         `);
     } catch (error) {
         console.error("SCHEMA UPDATE ERROR: CREATE TABLE notifications", error);
+    }
+
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id VARCHAR(36) PRIMARY KEY,
+                alumni_id VARCHAR(36) NOT NULL,
+                recipient_email VARCHAR(255) NOT NULL,
+                email_purpose VARCHAR(100) NOT NULL,
+                subject VARCHAR(255) NOT NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                error_message TEXT NULL,
+                sent_at DATETIME NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR(36) NULL,
+                provider_message_id VARCHAR(255) NULL,
+                INDEX idx_email_logs_alumni (alumni_id),
+                INDEX idx_email_logs_purpose (email_purpose),
+                INDEX idx_email_logs_created (created_at),
+                INDEX idx_email_logs_duplicate_guard (alumni_id, email_purpose, created_at)
+            )
+        `);
+    } catch (error) {
+        console.error("SCHEMA UPDATE ERROR: CREATE TABLE email_logs", error);
     }
 
     try {
@@ -983,6 +2825,8 @@ const ensureDatabaseColumns = async () => {
                 contact_number VARCHAR(50) DEFAULT NULL,
                 generated_alumni_id VARCHAR(50) DEFAULT NULL,
                 status VARCHAR(50) DEFAULT 'imported',
+                email_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                email_error TEXT NULL,
                 imported_by VARCHAR(36) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_imported_alumni_batch (import_batch_id),
@@ -1152,7 +2996,8 @@ const getChairmanAlumniData = async (course: string) => {
          LEFT JOIN ${tracerTable} gt ON gt.user_id = p.id
          LEFT JOIN (
             SELECT alumni_id, COUNT(*) AS event_count
-            FROM event_registrations
+            FROM event_rsvps
+            WHERE attendance_status = 'Attended'
             GROUP BY alumni_id
          ) er ON er.alumni_id = p.id
          LEFT JOIN (
@@ -1644,7 +3489,7 @@ const ensureChairmanAccounts = async () => {
 /* =========================
    MIDDLEWARE
 ========================= */
-app.use(cors({ origin: "*" }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(process.cwd(), "../public")));
 
@@ -1691,6 +3536,109 @@ const requireChairman = async (req: AuthenticatedRequest, res: express.Response,
     }
 };
 
+const ensureAnnouncementEventSurveyEngagementTables = async () => {
+    const announcementTable = await getAnnouncementTableName();
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS announcement_comments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            announcement_id INT NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            content TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'visible',
+            moderated_by VARCHAR(36) DEFAULT NULL,
+            moderated_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (announcement_id) REFERENCES ${announcementTable}(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_announcement_comments_announcement (announcement_id, status, created_at),
+            INDEX idx_announcement_comments_user (user_id)
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS announcement_comment_replies (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            comment_id INT NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            content TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'visible',
+            moderated_by VARCHAR(36) DEFAULT NULL,
+            moderated_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (comment_id) REFERENCES announcement_comments(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_announcement_comment_replies_comment (comment_id, status, created_at),
+            INDEX idx_announcement_comment_replies_user (user_id)
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS event_interests (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            event_id INT NOT NULL,
+            alumni_id VARCHAR(36) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Interested',
+            verified_by VARCHAR(36) DEFAULT NULL,
+            verified_at DATETIME NULL,
+            cancelled_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_event_interests_event_alumni (event_id, alumni_id),
+            FOREIGN KEY (event_id) REFERENCES ${announcementTable}(id) ON DELETE CASCADE,
+            FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_event_interests_event (event_id, status),
+            INDEX idx_event_interests_alumni (alumni_id)
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS survey_options (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            question_id INT NOT NULL,
+            option_label VARCHAR(255) NOT NULL,
+            option_value VARCHAR(255) DEFAULT NULL,
+            option_order INT NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (question_id) REFERENCES survey_questions(id) ON DELETE CASCADE,
+            INDEX idx_survey_options_question (question_id, option_order)
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS survey_responses (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            survey_id INT NOT NULL,
+            respondent_id VARCHAR(36) DEFAULT NULL,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+            FOREIGN KEY (respondent_id) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_survey_responses_survey (survey_id, submitted_at),
+            INDEX idx_survey_responses_respondent (respondent_id)
+        )
+    `);
+
+    const compatibilityColumns = [
+        { table: "surveys", name: "allow_multiple_responses", sql: "ALTER TABLE surveys ADD COLUMN allow_multiple_responses TINYINT(1) NOT NULL DEFAULT 0" },
+        { table: "survey_answers", name: "response_id", sql: "ALTER TABLE survey_answers ADD COLUMN response_id INT DEFAULT NULL" },
+        { table: "survey_answers", name: "updated_at", sql: "ALTER TABLE survey_answers ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP" }
+    ];
+
+    for (const column of compatibilityColumns) {
+        try {
+            if (await tableExists(column.table) && !(await columnExists(column.table, column.name))) {
+                await db.execute(column.sql);
+            }
+        } catch (error) {
+            console.error(`SCHEMA UPDATE ERROR: ${column.table}.${column.name}`, error);
+        }
+    }
+};
+
 /* =========================
    STARTUP INIT
 ========================= */
@@ -1702,31 +3650,53 @@ ensureChairmanAccounts().catch((error) => {
     console.error("CHAIRMAN ACCOUNT INIT ERROR:", error);
 });
 
-ensureDatabaseColumns().catch((error) => {
-    console.error("DATABASE COLUMN INIT ERROR:", error);
-});
+ensureDatabaseColumns()
+    .then(() => ensureAnnouncementEventSurveyEngagementTables())
+    .then(() => ensureEventRsvpTables())
+    .then(() => ensureDashboardSlideTable())
+    .then(() => ensureAlumniLoginActivityTable())
+    .then(() => ensureAnnouncementInterestTable())
+    .then(() => startDurationAutoArchiveJob())
+    .catch((error) => {
+        console.error("DATABASE COLUMN INIT ERROR:", error);
+    });
 
 /* =========================
-   TEST ROUTE
+   HEALTH CHECK
 ========================= */
-app.get("/api/test", async (_req, res) => {
+app.get("/api/health", async (_req, res) => {
     try {
-        const rows = await db.query<QueryRow>("SELECT 1 + 1 AS result");
-        res.json(parseRows(rows));
+        await db.query<QueryRow>("SELECT 1 AS ok");
+        res.json({ status: "ok", database: "connected" });
     } catch (err: unknown) {
-        res.status(500).json({ error: getErrorMessage(err) });
+        res.status(500).json({ status: "error", database: "unavailable", error: getErrorMessage(err) });
     }
 });
 
+if (process.env.ENABLE_TEST_ROUTE === "true") {
+    app.get("/api/test", async (_req, res) => {
+        try {
+            const rows = await db.query<QueryRow>("SELECT 1 + 1 AS result");
+            res.json(parseRows(rows));
+        } catch (err: unknown) {
+            res.status(500).json({ error: getErrorMessage(err) });
+        }
+    });
+}
+
 /* ROOT */
 app.get("/", (_req, res) => {
-    res.send("SERVER WORKING ✅");
+    res.send("Alumni Management System API is running.");
 });
 
 /* =========================
    REGISTER ADMIN
 ========================= */
 app.post("/api/auth/setup-admin", async (req, res) => {
+    if (process.env.ENABLE_SETUP_ADMIN !== "true") {
+        return res.status(404).json({ error: "Setup route is disabled." });
+    }
+
     try {
         const { name, email, password } = req.body || {};
 
@@ -1802,7 +3772,7 @@ app.post("/api/auth/login", async (req, res) => {
         const match = await bcrypt.compare(password, user.password_hash);
 
         if (!match) {
-            return res.status(400).json({ error: "Invalid credentials" });
+            return res.status(400).json({ error: "Wrong password" });
         }
 
         const token = jwt.sign(
@@ -1815,6 +3785,10 @@ app.post("/api/auth/login", async (req, res) => {
             id: user.id,
             email: user.email
         });
+
+        if (authPayload.role === "alumni") {
+            await recordAlumniLoginActivity(String(user.id));
+        }
 
         res.json({
             token,
@@ -2100,22 +4074,24 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             email,
             course,
             batch,
+            year,
+            program,
             contactNumber,
             photoBase64,
             sendEmail: shouldSend
         } = _req.body || {};
 
-        if (!name || !email) {
-            return res.status(400).json({ error: "Name and email are required" });
-        }
-
         const normalizedName = normalizeText(name);
         const normalizedEmail = normalizeEmail(email);
-        const normalizedBatch = normalizeBatch(batch);
+        const normalizedBatch = normalizeBatch(batch || year);
         const normalizedContactNumber = normalizePhone(contactNumber) || null;
-        const courseValidation = validateSupportedCourse(course);
+        const courseValidation = validateSupportedCourse(course || program);
 
-        if (!normalizedEmail || !/\S+@\S+\.\S+/.test(normalizedEmail)) {
+        if (!normalizedName) {
+            return res.status(400).json({ error: "Name is required." });
+        }
+
+        if (!normalizedEmail || !EMAIL_REGEX.test(normalizedEmail)) {
             return res.status(400).json({ error: "A valid email address is required." });
         }
 
@@ -2138,35 +4114,55 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
 
         await conn.beginTransaction();
 
-        const { alumniId } = await createAlumniAccount(conn, {
+        const temporaryPassword = generatePassword();
+        const { userId, alumniId } = await createAlumniAccount(conn, {
             name: normalizedName,
             email: normalizedEmail,
             course: courseValidation.course,
             batch: normalizedBatch,
             contactNumber: normalizedContactNumber,
-            photoBase64: photoBase64 || null
+            photoBase64: photoBase64 || null,
+            temporaryPassword
         });
 
         let emailSent = false;
         let emailMessageId: string | null = null;
-
-        if (shouldSend) {
-            const emailResult = await sendEmail({
-                to: normalizedEmail,
-                name: normalizedName,
-                alumniId
-            });
-            emailSent = true;
-            emailMessageId = emailResult.messageId;
-        }
+        let emailError: string | null = null;
 
         await conn.commit();
 
-        res.json({
+        if (shouldSend !== false) {
+            try {
+                const emailResult = await sendAlumniCredentialsEmail({
+                    to: normalizedEmail,
+                    name: normalizedName,
+                    alumniId,
+                    temporaryPassword
+                });
+                emailSent = true;
+                emailMessageId = emailResult.messageId;
+                await updateCredentialEmailStatus(userId, "sent");
+            } catch (emailSendError: unknown) {
+                emailError = getSafeEmailError(emailSendError);
+                console.error("SEND ALUMNI CREDENTIALS ERROR:", {
+                    alumniId,
+                    email: normalizedEmail,
+                    error: emailError
+                });
+                await updateCredentialEmailStatus(userId, "failed", emailError);
+            }
+        }
+
+        res.status(201).json({
             success: true,
+            message: emailSent
+                ? "Alumni account created and credentials email sent."
+                : "Alumni account created. Credentials email was not sent.",
             alumniId,
             emailSent,
-            emailMessageId
+            emailStatus: emailSent ? "sent" : shouldSend === false ? "pending" : "failed",
+            emailMessageId,
+            emailError
         });
     } catch (err: unknown) {
         await conn.rollback();
@@ -2177,11 +4173,31 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
     }
 });
 
-app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+const alumniImportFileParser = express.raw({
+    type: [
+        "text/csv",
+        "text/plain",
+        "application/csv",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/octet-stream"
+    ],
+    limit: "15mb"
+});
+
+app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFileParser, async (req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
-        const rows = Array.isArray(req.body?.rows) ? req.body.rows as AlumniImportInputRow[] : [];
+        const rows = Buffer.isBuffer(req.body)
+            ? await parseAlumniImportFile(
+                req.body,
+                String(req.headers["x-file-name"] || ""),
+                String(req.headers["content-type"] || "")
+            )
+            : Array.isArray(req.body?.rows)
+                ? req.body.rows as AlumniImportInputRow[]
+                : [];
         const importBatchId = uuidv4();
 
         if (rows.length === 0) {
@@ -2205,7 +4221,8 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: Au
                     rowNumber: result.prepared.rowNumber,
                     fullName: result.prepared.name,
                     emailAddress: result.prepared.email,
-                    reason: "Duplicate email found in the uploaded file"
+                    reason: "Duplicate email found in the uploaded file",
+                    category: "duplicate"
                 });
                 return;
             }
@@ -2238,29 +4255,46 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: Au
                 rowNumber: row.rowNumber,
                 fullName: row.name,
                 emailAddress: row.email,
-                reason: "Email already exists in the database"
+                reason: "Email already exists in the database",
+                category: "duplicate"
             });
 
             return false;
         });
 
-        const importedRows: Array<{ rowNumber: number; alumniId: string; emailAddress: string; fullName: string; }> = [];
+        const importedRows: Array<{
+            rowNumber: number;
+            alumniId: string;
+            emailAddress: string;
+            fullName: string;
+            emailSent: boolean;
+            emailStatus: "sent" | "failed";
+        }> = [];
+        const failedEmailRows: Array<{ rowNumber: number; alumniId: string; emailAddress: string; fullName: string; reason: string; }> = [];
 
-        if (rowsToImport.length > 0) {
-            await conn.beginTransaction();
+        for (const row of rowsToImport) {
+            let userId = "";
+            let alumniId = "";
+            const temporaryPassword = generatePassword();
 
-            for (const row of rowsToImport) {
-                const { userId, alumniId } = await createAlumniAccount(conn, {
+            try {
+                await conn.beginTransaction();
+
+                const createdAccount = await createAlumniAccount(conn, {
                     name: row.name,
                     email: row.email,
+                    course: row.course,
                     batch: row.batch,
-                    contactNumber: row.contactNumber
+                    contactNumber: row.contactNumber,
+                    temporaryPassword
                 });
+                userId = createdAccount.userId;
+                alumniId = createdAccount.alumniId;
 
                 await conn.query(
                     `INSERT INTO imported_alumni_records
-                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, generated_alumni_id, status, imported_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?)`,
+                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, generated_alumni_id, status, email_status, imported_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
                     [
                         importBatchId,
                         userId,
@@ -2273,16 +4307,75 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: Au
                     ]
                 );
 
-                importedRows.push({
+                await conn.commit();
+            } catch (insertError: unknown) {
+                await conn.rollback();
+                failedRows.push({
+                    rowNumber: row.rowNumber,
+                    fullName: row.name,
+                    emailAddress: row.email,
+                    reason: `Database insert failed: ${getSafeEmailError(insertError)}`,
+                    category: "database"
+                });
+                continue;
+            }
+
+            let emailSent = false;
+            let emailStatus: "sent" | "failed" = "failed";
+
+            try {
+                await sendAlumniCredentialsEmail({
+                    to: row.email,
+                    name: row.name,
+                    alumniId,
+                    temporaryPassword
+                });
+                emailSent = true;
+                emailStatus = "sent";
+                await updateCredentialEmailStatus(userId, "sent");
+                await db.execute(
+                    `UPDATE imported_alumni_records
+                     SET email_status = 'sent', email_error = NULL
+                     WHERE import_batch_id = ? AND imported_profile_id = ?`,
+                    [importBatchId, userId]
+                );
+            } catch (emailSendError: unknown) {
+                const emailError = getSafeEmailError(emailSendError);
+                console.error("IMPORT ALUMNI BREVO ERROR:", {
+                    rowNumber: row.rowNumber,
+                    alumniId,
+                    email: row.email,
+                    error: emailError
+                });
+                await updateCredentialEmailStatus(userId, "failed", emailError);
+                await db.execute(
+                    `UPDATE imported_alumni_records
+                     SET email_status = 'failed', email_error = ?, status = 'email_failed'
+                     WHERE import_batch_id = ? AND imported_profile_id = ?`,
+                    [emailError, importBatchId, userId]
+                );
+                failedEmailRows.push({
                     rowNumber: row.rowNumber,
                     alumniId,
                     emailAddress: row.email,
-                    fullName: row.name
+                    fullName: row.name,
+                    reason: emailError
                 });
             }
 
-            await conn.commit();
+            importedRows.push({
+                rowNumber: row.rowNumber,
+                alumniId,
+                emailAddress: row.email,
+                fullName: row.name,
+                emailSent,
+                emailStatus
+            });
         }
+
+        const duplicateEmails = failedRows.filter((row) => row.category === "duplicate").length;
+        const invalidRows = failedRows.filter((row) => row.category === "invalid").length;
+        const failedEmailSends = failedEmailRows.length;
 
         res.json({
             success: true,
@@ -2290,10 +4383,15 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: Au
                 totalRows: rows.length,
                 validRows: validRows.length,
                 importedRows: importedRows.length,
-                failedRows: failedRows.length
+                successfulImports: importedRows.length,
+                duplicateEmails,
+                invalidRows,
+                failedEmailSends,
+                failedRows: failedRows.length + failedEmailSends
             },
             importedRows,
-            failedRows: failedRows.sort((a, b) => a.rowNumber - b.rowNumber)
+            failedRows: failedRows.sort((a, b) => a.rowNumber - b.rowNumber),
+            failedEmailRows: failedEmailRows.sort((a, b) => a.rowNumber - b.rowNumber)
         });
     } catch (err: unknown) {
         await conn.rollback();
@@ -2309,6 +4407,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, async (req: Au
 ========================= */
 app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, res) => {
     try {
+        await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
         const hasAnnouncementApprovalStatus = await columnExists(announcementTable, "approval_status");
         const totalAlumniRow = await getSingleRow(
@@ -2340,7 +4439,8 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
         );
 
         const totalDonationsRow = await getSingleRow(
-            "SELECT COALESCE(SUM(amount), 0) AS totalDonations FROM donations WHERE LOWER(status) = 'approved'"
+            `SELECT COALESCE(SUM(CASE WHEN ${donationStatusSql("status")} IN ('approved', 'approve') THEN amount ELSE 0 END), 0) AS totalDonations
+             FROM donations`
         );
 
         const pendingDonations = parseRows<PendingDonationRow>(await db.query<PendingDonationRow>(
@@ -2357,7 +4457,7 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
                 p.name
             FROM donations d
             LEFT JOIN profiles p ON p.id = d.user_id
-            WHERE LOWER(COALESCE(d.status, 'pending_review')) IN ('pending', 'pending_review')
+            WHERE ${donationStatusSql("d.status")} IN ('pending', 'pending_review', 'pendingreview')
             ORDER BY d.created_at DESC
             LIMIT 5`
         ));
@@ -2374,15 +4474,22 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
                 e.organizer,
                 e.image_url,
                 e.status,
+                e.start_datetime,
+                e.end_datetime,
+                e.auto_archive_at,
+                e.archived_at,
                 COUNT(er.id) AS regCount
             FROM ${announcementTable} e
             LEFT JOIN event_registrations er ON er.event_id = e.id
-            WHERE LOWER(e.status) = 'upcoming'
+            WHERE LOWER(e.status) IN ('upcoming', 'ongoing', 'active')
+            AND e.archived_at IS NULL
             ${hasAnnouncementApprovalStatus ? "AND LOWER(COALESCE(e.approval_status, 'approved')) = 'approved'" : ""}
             GROUP BY e.id
             ORDER BY e.date ASC
             LIMIT 5`
         ));
+
+        const analytics = await getAdminDashboardAnalytics();
 
         res.json({
             totalAlumni: Number(totalAlumniRow?.totalAlumni || 0),
@@ -2398,14 +4505,192 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
                 }
             })),
             upcomingEvents: upcomingEvents.map((event) => ({
-                ...event,
+                ...withDurationFields(event as Record<string, unknown>),
                 id: String(event.id),
                 image_url: normalizeStoredMedia(event.image_url),
                 status: formatStatusLabel(event.status, "upcoming")
-            }))
+            })),
+            monthlyEngagement: analytics.monthlyEngagement,
+            courseContributions: analytics.courseContributions,
+            courseComparisons: analytics.courseComparisons,
+            donationTrends: analytics.donationTrends,
+            heatmap: analytics.heatmap,
+            topAlumni: analytics.topAlumni,
+            predictionCounts: analytics.predictionCounts,
+            insightSummaries: analytics.insightSummaries
         });
     } catch (err: unknown) {
         console.error("ADMIN DASHBOARD ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/slideshow", authenticateToken, async (_req, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const rows = parseRows(await db.query(
+            `SELECT *
+             FROM dashboard_slides
+             WHERE LOWER(COALESCE(status, 'active')) = 'active'
+             ORDER BY is_highlighted DESC, display_order ASC, created_at DESC`
+        ));
+
+        res.json(rows.map(mapDashboardSlide));
+    } catch (err: unknown) {
+        console.error("GET SLIDESHOW ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/admin/slideshow", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const rows = parseRows(await db.query(
+            `SELECT *
+             FROM dashboard_slides
+             ORDER BY CASE WHEN LOWER(COALESCE(status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                      is_highlighted DESC,
+                      display_order ASC,
+                      created_at DESC`
+        ));
+
+        res.json(rows.map(mapDashboardSlide));
+    } catch (err: unknown) {
+        console.error("GET ADMIN SLIDESHOW ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/slideshow", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const title = normalizeText(req.body?.title) || "Homepage advertisement";
+        const caption = normalizeText(req.body?.caption);
+        const media = prepareDashboardSlideMedia(
+            req.body?.mediaType || req.body?.media_type,
+            req.body?.mediaUrl || req.body?.media_url || req.body?.imageUrl || req.body?.image_url
+        );
+        const linkUrl = normalizeText(req.body?.linkUrl || req.body?.link_url);
+        const isHighlighted = normalizeBoolean(req.body?.isHighlighted ?? req.body?.is_highlighted);
+        const displayOrder = Number(req.body?.displayOrder ?? req.body?.display_order ?? 0);
+        const status = normalizeStatus(req.body?.status, "active");
+
+        if (!media) {
+            return res.status(400).json({ error: "A valid slideshow image, video, or YouTube link is required." });
+        }
+
+        const result = await db.execute(
+            `INSERT INTO dashboard_slides
+                (title, caption, media_type, image_url, link_url, is_highlighted, display_order, status, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [title, caption || null, media.mediaType, media.mediaUrl, linkUrl || null, isHighlighted ? 1 : 0, Number.isFinite(displayOrder) ? displayOrder : 0, status, req.user?.id || null]
+        ) as ResultSetHeader;
+
+        const slide = await getSingleRow("SELECT * FROM dashboard_slides WHERE id = ?", [result.insertId]);
+        res.json({ success: true, slide: slide ? mapDashboardSlide(slide) : null });
+    } catch (err: unknown) {
+        console.error("CREATE SLIDE ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.put("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const slideId = Number(req.params.id);
+        const title = normalizeText(req.body?.title);
+        const caption = normalizeText(req.body?.caption);
+        const media = prepareDashboardSlideMedia(
+            req.body?.mediaType || req.body?.media_type,
+            req.body?.mediaUrl || req.body?.media_url || req.body?.imageUrl || req.body?.image_url
+        );
+        const linkUrl = normalizeText(req.body?.linkUrl || req.body?.link_url);
+        const isHighlighted = normalizeBoolean(req.body?.isHighlighted ?? req.body?.is_highlighted);
+        const displayOrder = Number(req.body?.displayOrder ?? req.body?.display_order ?? 0);
+        const status = normalizeStatus(req.body?.status, "active");
+
+        if (!slideId) return res.status(400).json({ error: "Invalid slide id." });
+        if (!title || !media) {
+            return res.status(400).json({ error: "Slide title and valid media are required." });
+        }
+
+        await db.execute(
+            `UPDATE dashboard_slides
+             SET title = ?, caption = ?, media_type = ?, image_url = ?, link_url = ?, is_highlighted = ?, display_order = ?, status = ?
+             WHERE id = ?`,
+            [title, caption || null, media.mediaType, media.mediaUrl, linkUrl || null, isHighlighted ? 1 : 0, Number.isFinite(displayOrder) ? displayOrder : 0, status, slideId]
+        );
+
+        const slide = await getSingleRow("SELECT * FROM dashboard_slides WHERE id = ?", [slideId]);
+        res.json({ success: true, slide: slide ? mapDashboardSlide(slide) : null });
+    } catch (err: unknown) {
+        console.error("UPDATE SLIDE ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.patch("/api/admin/slideshow/:id/highlight", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const slideId = Number(req.params.id);
+        if (!slideId) return res.status(400).json({ error: "Invalid slide id." });
+
+        await db.execute(
+            "UPDATE dashboard_slides SET is_highlighted = ? WHERE id = ?",
+            [normalizeBoolean(req.body?.isHighlighted ?? req.body?.is_highlighted) ? 1 : 0, slideId]
+        );
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("HIGHLIGHT SLIDE ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.patch("/api/admin/slideshow/reorder", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const slides = Array.isArray(req.body?.slides) ? req.body.slides : [];
+        const normalizedSlides = slides
+            .map((slide: Record<string, unknown>) => ({
+                id: Number(slide.id),
+                displayOrder: Number(slide.displayOrder ?? slide.display_order)
+            }))
+            .filter((slide: { id: number; displayOrder: number }) => Number.isInteger(slide.id) && Number.isFinite(slide.displayOrder));
+
+        if (normalizedSlides.length === 0) {
+            return res.status(400).json({ error: "No valid slideshow order data provided." });
+        }
+
+        await Promise.all(normalizedSlides.map((slide: { id: number; displayOrder: number }) =>
+            db.execute("UPDATE dashboard_slides SET display_order = ? WHERE id = ?", [slide.displayOrder, slide.id])
+        ));
+
+        const rows = parseRows(await db.query(
+            `SELECT *
+             FROM dashboard_slides
+             ORDER BY CASE WHEN LOWER(COALESCE(status, 'active')) = 'active' THEN 0 ELSE 1 END,
+                      is_highlighted DESC,
+                      display_order ASC,
+                      created_at DESC`
+        ));
+
+        res.json(rows.map(mapDashboardSlide));
+    } catch (err: unknown) {
+        console.error("REORDER SLIDES ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.delete("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await ensureDashboardSlideTable();
+        const slideId = Number(req.params.id);
+        if (!slideId) return res.status(400).json({ error: "Invalid slide id." });
+
+        await db.execute("DELETE FROM dashboard_slides WHERE id = ?", [slideId]);
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("DELETE SLIDE ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
@@ -2630,6 +4915,7 @@ app.get("/api/chairman/engagement", authenticateToken, requireChairman, async (r
 app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
+        await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
         const hasAnnouncementApprovalStatus = await columnExists(announcementTable, "approval_status");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
@@ -2638,10 +4924,12 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         const audienceCourse = normalizeText(profile?.course).toLowerCase();
         const audienceBatch = normalizeBatch(profile?.batch).toLowerCase();
 
-        const events = parseRows(await db.query(
-            `SELECT id, title, description, date, time, venue, organizer, image_url, status, type, google_form_link
+        const eventsRaw = parseRows(await db.query(
+            `SELECT id, title, description, date, time, venue, organizer, image_url, status, type, google_form_link,
+                    start_datetime, end_datetime, auto_archive_at, archived_at
              FROM ${announcementTable}
-             WHERE LOWER(status) IN ('upcoming', 'ongoing', 'active')
+             WHERE LOWER(COALESCE(status, 'active')) <> 'archived'
+             ${await columnExists(announcementTable, "archived_at") ? "AND archived_at IS NULL" : ""}
              ${hasAnnouncementApprovalStatus ? "AND LOWER(COALESCE(approval_status, 'approved')) = 'approved'" : ""}
              ${hasAudienceScope
                 ? `AND (
@@ -2657,13 +4945,110 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
                     WHEN LOWER(status) = 'upcoming' THEN 3
                     ELSE 4
                 END,
-                date ASC
-             LIMIT 20`,
+                date DESC,
+                created_at DESC
+             LIMIT 60`,
             hasAudienceScope ? [audienceCourse, audienceBatch] : []
         ));
+        const events = eventsRaw
+            .map((event) => withDurationFields(event as Record<string, unknown>))
+            .filter((event) => event.computed_status !== "Archived");
 
+        const totalRegisteredUsers = await getSingleRow(
+            "SELECT COUNT(*) AS count FROM user_roles WHERE role = 'alumni'"
+        );
+
+        const donationUpdates = parseRows(await db.query(
+            `SELECT d.id, d.amount, d.method, d.status, d.purpose, d.created_at, p.name
+             FROM donations d
+             LEFT JOIN profiles p ON p.id = d.user_id
+             WHERE LOWER(COALESCE(d.status, 'pending_review')) IN ('approved', 'pending_review', 'pending')
+             ORDER BY d.created_at DESC
+             LIMIT 6`
+        ));
+
+        const surveyRows = await tableExists("surveys")
+            ? parseRows(await db.query(
+                `SELECT s.*, COUNT(DISTINCT sa.respondent_id) AS response_count
+                 FROM surveys s
+                 LEFT JOIN survey_answers sa ON sa.survey_id = s.id
+                 WHERE LOWER(COALESCE(s.status, 'draft')) = 'published'
+                   AND s.archived_at IS NULL
+                 GROUP BY s.id
+                 ORDER BY COALESCE(s.start_datetime, s.opens_at, s.created_at) DESC
+                 LIMIT 20`
+            ))
+            : [];
+
+        const surveys = (await Promise.all(surveyRows.map(async (row) => {
+            const questions = parseRows(await db.query(
+                `SELECT *
+                 FROM survey_questions
+                 WHERE survey_id = ?
+                 ORDER BY question_order ASC, id ASC`,
+                [row.id]
+            ));
+            const userAnswers = parseRows(await db.query(
+                `SELECT question_id, answer_text, answer_value, answer_json, rating_value
+                 FROM survey_answers
+                 WHERE survey_id = ? AND respondent_id = ?`,
+                [row.id, req.user?.id || null]
+            ));
+            const duration = withDurationFields({
+                ...row,
+                start_datetime: row.start_datetime || row.opens_at,
+                end_datetime: row.end_datetime || row.closes_at
+            });
+
+            return {
+                id: Number(row.id),
+                title: row.title,
+                description: row.description,
+                status: row.status,
+                computed_status: duration.computed_status,
+                duration_status: duration.duration_status,
+                remaining_time: duration.remaining_time,
+                is_expired: duration.is_expired,
+                start_datetime: duration.start_datetime,
+                end_datetime: duration.end_datetime,
+                responseCount: Number(row.response_count || 0),
+                questions: questions.map((question) => ({
+                    id: Number(question.id),
+                    questionText: question.question_text,
+                    questionType: question.question_type,
+                    questionOrder: Number(question.question_order),
+                    isRequired: Boolean(question.is_required),
+                    options: question.options_json
+                        ? (typeof question.options_json === "string" ? JSON.parse(String(question.options_json)) : question.options_json)
+                        : [],
+                    minRating: question.min_rating,
+                    maxRating: question.max_rating,
+                    placeholder: question.placeholder
+                })),
+                userAnswers: userAnswers.map((answer) => ({
+                    questionId: Number(answer.question_id),
+                    answerText: answer.answer_text,
+                    answerValue: answer.answer_value,
+                    answerJson: answer.answer_json
+                        ? (typeof answer.answer_json === "string" ? JSON.parse(String(answer.answer_json)) : answer.answer_json)
+                        : null,
+                    ratingValue: answer.rating_value
+                }))
+            };
+        }))).filter((survey) => survey.questions.length > 0);
+
+        await ensureDashboardSlideTable();
+        const slides = parseRows(await db.query(
+            `SELECT *
+             FROM dashboard_slides
+             WHERE LOWER(COALESCE(status, 'active')) = 'active'
+             ORDER BY is_highlighted DESC, display_order ASC, created_at DESC
+             LIMIT 10`
+        ));
+
+        await ensureEventRsvpTables();
         const registrations = parseRows<RegistrationRow>(await db.query<RegistrationRow>(
-            `SELECT event_id FROM event_registrations WHERE alumni_id = ?`,
+            `SELECT event_id FROM event_rsvps WHERE alumni_id = ?`,
             [req.user.id]
         ));
 
@@ -2679,8 +5064,108 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             ? await getOfficerRosterForSchoolYear(Number(activeSchoolYear.id))
             : [];
 
+        const activitySummary = await getSingleRow(
+            `SELECT
+                (SELECT COUNT(*) FROM alumni_login_events WHERE user_id = ? AND logged_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS login30,
+                (SELECT COUNT(*) FROM event_rsvps WHERE alumni_id = ?) AS eventCount,
+                (SELECT COUNT(*) FROM survey_responses WHERE respondent_id = ?) AS surveyCount,
+                (SELECT COUNT(*) FROM donations WHERE user_id = ? AND ${donationStatusSql("status")} IN ('approved', 'approve')) AS donationCount,
+                (SELECT COUNT(*) FROM freedom_wall_posts WHERE user_id = ? AND LOWER(COALESCE(status, 'published')) = 'published') AS wallPosts,
+                (SELECT COUNT(*) FROM reactions WHERE user_id = ?) AS reactions`,
+            [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id]
+        );
+        const recommendationItems: Array<{ id: string; type: string; title: string; reason: string; priority: number; link: string }> = [];
+        const courseLabel = getCourseLabel(profile?.course);
+        const normalizedCourseText = String(profile?.course || courseLabel || "").toLowerCase();
+        const joinedEventIds = new Set(registrations.map((r) => String(r.event_id)));
+        const answeredSurveyIds = new Set(
+            surveys
+                .filter((survey) => survey.userAnswers.length > 0)
+                .map((survey) => String(survey.id))
+        );
+
+        events
+            .filter((event) => event.type === "event" && !joinedEventIds.has(String(event.id)))
+            .slice(0, 8)
+            .forEach((event) => {
+                const text = `${event.title || ""} ${event.description || ""}`.toLowerCase();
+                const courseMatch = normalizedCourseText && text.includes(normalizedCourseText);
+                recommendationItems.push({
+                    id: `event-${event.id}`,
+                    type: "Event",
+                    title: String(event.title || "Recommended event"),
+                    reason: courseMatch
+                        ? `Matched to your ${courseLabel} profile and current event availability.`
+                        : "Recommended because you have not joined this active alumni event yet.",
+                    priority: courseMatch ? 95 : 70,
+                    link: "/alumni/announcements"
+                });
+            });
+
+        surveys
+            .filter((survey) => !answeredSurveyIds.has(String(survey.id)) && !survey.is_expired)
+            .slice(0, 4)
+            .forEach((survey) => {
+                recommendationItems.push({
+                    id: `survey-${survey.id}`,
+                    type: "Survey",
+                    title: String(survey.title || "Recommended survey"),
+                    reason: "Relevant open survey based on your alumni profile and response history.",
+                    priority: 82,
+                    link: "/alumni/announcements"
+                });
+            });
+
+        if (Number(activitySummary?.donationCount || 0) > 0) {
+            recommendationItems.push({
+                id: "donation-campaign",
+                type: "Donation",
+                title: "Follow current donation campaigns",
+                reason: "You have donor activity, so new contribution updates are prioritized for you.",
+                priority: 78,
+                link: "/alumni/donate"
+            });
+        }
+
+        if (Number(activitySummary?.login30 || 0) <= 1 && Number(activitySummary?.eventCount || 0) === 0) {
+            recommendationItems.push({
+                id: "engagement-reminder",
+                type: "Activity",
+                title: "Reconnect with alumni activities",
+                reason: "Your recent login and event activity is low, so the system recommends joining an event or survey.",
+                priority: 88,
+                link: "/alumni/announcements"
+            });
+        }
+
+        if (Number(activitySummary?.wallPosts || 0) + Number(activitySummary?.reactions || 0) < 2) {
+            recommendationItems.push({
+                id: "community-group",
+                type: "Community",
+                title: "Join alumni community discussions",
+                reason: "Recommended to increase your Freedom Wall and alumni group engagement.",
+                priority: 65,
+                link: "/alumni/community"
+            });
+        }
+
         res.json({
             events,
+            surveys,
+            recommendations: recommendationItems
+                .sort((a, b) => b.priority - a.priority)
+                .slice(0, 6),
+            totalRegisteredUsers: Number(totalRegisteredUsers?.count || 0),
+            donationUpdates: donationUpdates.map((donation) => ({
+                id: String(donation.id),
+                amount: Number(donation.amount || 0),
+                method: donation.method || "",
+                status: formatStatusLabel(normalizeDonationStatus(donation.status), "pending_review"),
+                purpose: donation.purpose || "General donation",
+                created_at: donation.created_at,
+                donorName: donation.name || "Alumni donor"
+            })),
+            slideshow: slides.map(mapDashboardSlide),
             registrations: registrations.map((r) => String(r.event_id)),
             comments,
             officers: officers.map((row) => ({
@@ -2738,45 +5223,7 @@ app.get("/api/graduate-tracer", authenticateToken, requireAdmin, async (_req, re
     }
 });
 
-app.get("/api/admin/tracer", authenticateToken, requireAdmin, async (_req, res) => {
-    try {
-        const tracerTable = await getTracerTableName();
-        const tracerColumns = getTracerColumnNames(tracerTable);
-        const hasUpdatedAt = await columnExists(tracerTable, "updated_at");
-
-        const rows = parseRows(await db.query(
-            `SELECT
-                gt.id,
-                gt.user_id,
-                p.name,
-                p.email,
-                p.student_id,
-                p.course,
-                p.batch,
-                gt.employment_status,
-                gt.company,
-                gt.industry,
-                gt.work_location,
-                gt.job_title,
-                gt.${tracerColumns.income} AS income,
-                gt.relevance,
-                gt.${tracerColumns.timeToJob} AS time_to_job,
-                gt.further_studies,
-                gt.certifications,
-                gt.comments,
-                gt.created_at,
-                ${hasUpdatedAt ? "gt.updated_at" : "NULL AS updated_at"}
-            FROM ${tracerTable} gt
-            LEFT JOIN profiles p ON p.id = gt.user_id
-            ORDER BY gt.created_at DESC`
-        ));
-
-        res.json(rows);
-    } catch (err: unknown) {
-        console.error("GET ADMIN TRACER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
-    }
-});
+app.get("/api/admin/tracer", authenticateToken, assertTracerAdminAccess, listTracerRecords);
 
 /* =========================
    TRACER (Alumni - GET own / POST submit)
@@ -2793,8 +5240,9 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
             "SELECT COUNT(*) AS totalAlumni FROM user_roles WHERE role = 'alumni'"
         );
 
+        await ensureEventRsvpTables();
         const registeredEventUsersRow = await getSingleRow(
-            "SELECT COUNT(DISTINCT alumni_id) AS engagedAlumni FROM event_registrations"
+            "SELECT COUNT(DISTINCT alumni_id) AS engagedAlumni FROM event_rsvps WHERE attendance_status = 'Attended'"
         );
 
         const donationUsersRow = await getSingleRow(
@@ -2818,7 +5266,7 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
                 e.views,
                 e.success_score
             FROM ${announcementTable} e
-            LEFT JOIN event_registrations er ON er.event_id = e.id
+            LEFT JOIN event_rsvps er ON er.event_id = e.id AND er.attendance_status = 'Attended'
             LEFT JOIN event_comments ec ON ec.event_id = e.id
             GROUP BY e.id
             ORDER BY e.date DESC, e.created_at DESC
@@ -2827,11 +5275,11 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
 
         const donationBreakdown = parseRows(await db.query(
             `SELECT
-                LOWER(status) AS status,
+                ${donationStatusSql("status")} AS status,
                 COUNT(*) AS count,
                 COALESCE(SUM(amount), 0) AS totalAmount
             FROM donations
-            GROUP BY LOWER(status)
+            GROUP BY ${donationStatusSql("status")}
             ORDER BY count DESC`
         ));
 
@@ -2858,10 +5306,11 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventCountRow = await getSingleRow(`SELECT COUNT(*) AS cnt FROM ${announcementTable}`);
-        const regCountRow = await getSingleRow("SELECT COUNT(*) AS cnt FROM event_registrations");
+        await ensureEventRsvpTables();
+        const regCountRow = await getSingleRow("SELECT COUNT(*) AS cnt FROM event_rsvps WHERE attendance_status = 'Attended'");
         const commentCountRow = await getSingleRow("SELECT COUNT(*) AS cnt FROM event_comments");
         const donationCountRow = await getSingleRow(
-            "SELECT COUNT(*) AS cnt FROM donations WHERE LOWER(status) = 'approved'"
+            `SELECT COUNT(*) AS cnt FROM donations WHERE ${donationStatusSql("status")} IN ('approved', 'approve')`
         );
         const totalAlumniRow = await getSingleRow(
             "SELECT COUNT(*) AS cnt FROM user_roles WHERE role = 'alumni'"
@@ -2878,7 +5327,7 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
         ));
 
         const regs = parseRows(await db.query(
-            `SELECT er.alumni_id AS user_id FROM event_registrations er`
+            `SELECT er.alumni_id AS user_id FROM event_rsvps er WHERE er.attendance_status = 'Attended'`
         ));
 
         const comments = parseRows(await db.query(
@@ -2899,9 +5348,9 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
                 e.venue,
                 COUNT(DISTINCT er.id) AS registrations,
                 COUNT(DISTINCT ec.id) AS comments,
-                COALESCE(SUM(CASE WHEN LOWER(d.status) = 'approved' THEN d.amount ELSE 0 END), 0) AS approvedDonations
+                COALESCE(SUM(CASE WHEN ${donationStatusSql("d.status")} IN ('approved', 'approve') THEN d.amount ELSE 0 END), 0) AS approvedDonations
             FROM ${announcementTable} e
-            LEFT JOIN event_registrations er ON er.event_id = e.id
+            LEFT JOIN event_rsvps er ON er.event_id = e.id AND er.attendance_status = 'Attended'
             LEFT JOIN event_comments ec ON ec.event_id = e.id
             LEFT JOIN donations d ON LOWER(d.purpose) = LOWER(e.title)
             GROUP BY e.id
@@ -2964,7 +5413,7 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
         const shaped = rows.map((r) => ({
             id: r.id,
             user_id: r.user_id,
-            amount: r.amount,
+            amount: Number(r.amount || 0),
             method: r.method,
             status: formatStatusLabel(normalizeDonationStatus(r.status), "pending_review"),
             purpose: r.purpose,
@@ -2987,6 +5436,34 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
         res.json(shaped);
     } catch (err: unknown) {
         console.error("GET DONATIONS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const statusSql = donationStatusSql("status");
+        const summary = await getSingleRow(
+            `SELECT
+                COALESCE(SUM(CASE WHEN ${statusSql} IN ('approved', 'approve') THEN amount ELSE 0 END), 0) AS approvedTotal,
+                COUNT(CASE WHEN ${statusSql} IN ('approved', 'approve') THEN 1 END) AS approvedCount,
+                COUNT(CASE WHEN ${statusSql} IN ('pending', 'pending_review', 'pendingreview') THEN 1 END) AS pendingCount,
+                COUNT(CASE WHEN ${statusSql} IN ('rejected', 'reject') THEN 1 END) AS rejectedCount,
+                COUNT(DISTINCT user_id) AS donorCount,
+                COUNT(*) AS totalDonations
+             FROM donations`
+        );
+
+        res.json({
+            approvedTotal: Number(summary?.approvedTotal || 0),
+            approvedCount: Number(summary?.approvedCount || 0),
+            pendingCount: Number(summary?.pendingCount || 0),
+            rejectedCount: Number(summary?.rejectedCount || 0),
+            donorCount: Number(summary?.donorCount || 0),
+            totalDonations: Number(summary?.totalDonations || 0)
+        });
+    } catch (err: unknown) {
+        console.error("GET DONATION SUMMARY ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
@@ -3273,22 +5750,37 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
         if (!req.user?.id) return res.sendStatus(401);
 
         const { amount, method, purpose, ref_number, message, receipt_url } = req.body || {};
+        const donationAmount = Number(amount);
+        const normalizedMethod = normalizeText(method);
+        const normalizedReceipt = normalizeStoredMedia(receipt_url);
 
-        if (!amount || !method) {
+        if (!Number.isFinite(donationAmount) || donationAmount <= 0) {
+            return res.status(400).json({ error: "Enter a valid donation amount." });
+        }
+
+        if (!["GCash", "Personal"].includes(normalizedMethod)) {
             return res.status(400).json({ error: "Amount and method are required" });
+        }
+
+        if (normalizedMethod === "GCash" && !normalizeText(ref_number)) {
+            return res.status(400).json({ error: "GCash reference number is required." });
+        }
+
+        if (!normalizedReceipt) {
+            return res.status(400).json({ error: "Receipt image is required." });
         }
 
         await db.execute(
             `INSERT INTO donations (user_id, amount, method, status, purpose, ref_number, message, receipt_url)
              VALUES (?, ?, ?, 'pending_review', ?, ?, ?, ?)`,
-            [req.user.id, amount, method, purpose || null, ref_number || null, message || null, normalizeStoredMedia(receipt_url)]
+            [req.user.id, donationAmount, normalizedMethod, normalizeText(purpose) || null, normalizeText(ref_number) || null, normalizeText(message) || null, normalizedReceipt]
         );
 
         const adminUserIds = await getAdminUserIds();
         await createUserNotifications({
             userIds: adminUserIds,
             title: "New donation submitted",
-            message: `${Number(amount).toLocaleString()} donation submitted for review.`,
+            message: `${donationAmount.toLocaleString()} donation submitted for review.`,
             category: "donation",
             linkUrl: "/admin/donations",
             actorId: req.user.id
@@ -3307,6 +5799,7 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
 app.get("/api/announcements", authenticateToken, async (_req, res) => {
     try {
         const req = _req as AuthenticatedRequest;
+        await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
         const hasGoogleFormLink = await columnExists(announcementTable, "google_form_link");
         const hasApprovalStatus = await columnExists(announcementTable, "approval_status");
@@ -3315,6 +5808,12 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
         const hasRejectionReason = await columnExists(announcementTable, "rejection_reason");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
         const hasAudienceValue = await columnExists(announcementTable, "audience_value");
+        const hasStartDatetime = await columnExists(announcementTable, "start_datetime");
+        const hasEndDatetime = await columnExists(announcementTable, "end_datetime");
+        const hasAutoArchiveAt = await columnExists(announcementTable, "auto_archive_at");
+        const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+        const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
+        await ensureAnnouncementInterestTable();
         const role = req.user?.id ? await getRoleForUser(req.user.id) : "alumni";
         const canModerate = canModerateAnnouncementContent(role);
         const params: DbParam[] = [];
@@ -3333,10 +5832,10 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
 
         const visibilityClause = !canModerate
             ? hasApprovalStatus && hasCreatedBy
-                ? `WHERE ((LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause}) OR e.created_by = ?)`
+                ? `WHERE ((LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause}) OR e.created_by = ?) AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
                 : hasApprovalStatus
-                    ? `WHERE LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause}`
-                    : `WHERE ${audienceClause}`
+                    ? `WHERE LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
+                    : `WHERE ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
             : "";
 
         if (!canModerate && hasAudienceScope) {
@@ -3363,6 +5862,11 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
                 e.capacity,
                 e.views,
                 e.success_score,
+                ${hasStartDatetime ? "e.start_datetime" : "NULL AS start_datetime"},
+                ${hasEndDatetime ? "e.end_datetime" : "NULL AS end_datetime"},
+                ${hasAutoArchiveAt ? "e.auto_archive_at" : "NULL AS auto_archive_at"},
+                ${hasArchivedAt ? "e.archived_at" : "NULL AS archived_at"},
+                ${hasInterestEnabled ? "e.interest_enabled" : "0 AS interest_enabled"},
                 e.created_at,
                 e.updated_at,
                 ${hasApprovalStatus ? "e.approval_status" : "'approved' AS approval_status"},
@@ -3372,11 +5876,11 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
                 ${hasAudienceScope ? "e.audience_scope" : "'all' AS audience_scope"},
                 ${hasAudienceValue ? "e.audience_value" : "NULL AS audience_value"},
                 ${hasCreatedBy ? "creator.name AS created_by_name" : "NULL AS created_by_name"},
-                COUNT(DISTINCT er.id) AS registration_count,
-                COUNT(DISTINCT ec.id) AS comment_count
+                COUNT(DISTINCT CASE WHEN ai.status = 'interested' THEN ai.id END) AS interest_count,
+                COUNT(DISTINCT ac.id) AS comment_count
             FROM ${announcementTable} e
-            LEFT JOIN event_registrations er ON er.event_id = e.id
-            LEFT JOIN event_comments ec ON ec.event_id = e.id
+            LEFT JOIN announcement_interests ai ON ai.announcement_id = e.id
+            LEFT JOIN announcement_comments ac ON ac.announcement_id = e.id AND ac.status = 'visible'
             ${hasCreatedBy ? "LEFT JOIN profiles creator ON creator.id = e.created_by" : ""}
             ${visibilityClause}
             GROUP BY e.id
@@ -3393,8 +5897,10 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
             params
         ));
 
-        res.json(rows.map((row) => ({
-            ...row,
+        const mappedAnnouncements = rows.map((row) => {
+            const duration = withDurationFields(row as Record<string, unknown>);
+            return {
+            ...duration,
             id: String(row.id),
             type: normalizeAnnouncementType(String(row.type || "")),
             image_url: normalizeStoredMedia(row.image_url),
@@ -3406,8 +5912,14 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
             audienceScope: normalizeAnnouncementAudienceScope((row as QueryRow).audience_scope),
             audienceValue: (row as QueryRow).audience_value || null,
             audienceLabel: formatAnnouncementAudienceLabel((row as QueryRow).audience_scope, (row as QueryRow).audience_value),
-            createdByName: (row as QueryRow).created_by_name || null
-        })));
+            createdByName: (row as QueryRow).created_by_name || null,
+            interestEnabled: normalizeAnnouncementType(String(row.type || "")) === "event" || normalizeBoolean((row as QueryRow).interest_enabled),
+            interestCount: Number((row as QueryRow).interest_count || 0),
+            registration_count: Number((row as QueryRow).interest_count || 0)
+        };
+        });
+
+        res.json(canModerate ? mappedAnnouncements : mappedAnnouncements.filter((item) => item.computed_status !== "Archived"));
     } catch (err: unknown) {
         console.error("GET ANNOUNCEMENTS ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
@@ -3426,16 +5938,29 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
         const hasRejectionReason = await columnExists(announcementTable, "rejection_reason");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
         const hasAudienceValue = await columnExists(announcementTable, "audience_value");
-        const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue } = req.body || {};
+        const hasStartDatetime = await columnExists(announcementTable, "start_datetime");
+        const hasEndDatetime = await columnExists(announcementTable, "end_datetime");
+        const hasAutoArchiveAt = await columnExists(announcementTable, "auto_archive_at");
+        const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+        const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
+        const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
+        const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
+        const durationWindow = getDurationWindowFromBody(req.body || {});
+        const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
+        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
         const role = await getRoleForUser(req.user.id);
         const canModerate = canModerateAnnouncementContent(role);
         const approvalStatus = canModerate ? "approved" : "pending_approval";
 
-        if (!title || !date) {
+        if (!title || !effectiveDate) {
             return res.status(400).json({ error: "Title and date are required" });
+        }
+
+        if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
         }
 
         if (normalizedAudienceScope !== "all" && !normalizedAudienceValue) {
@@ -3459,14 +5984,19 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             ...(hasApprovedBy ? ["approved_by"] : []),
             ...(hasRejectionReason ? ["rejection_reason"] : []),
             ...(hasAudienceScope ? ["audience_scope"] : []),
-            ...(hasAudienceValue ? ["audience_value"] : [])
+            ...(hasAudienceValue ? ["audience_value"] : []),
+            ...(hasStartDatetime ? ["start_datetime"] : []),
+            ...(hasEndDatetime ? ["end_datetime"] : []),
+            ...(hasAutoArchiveAt ? ["auto_archive_at"] : []),
+            ...(hasArchivedAt ? ["archived_at"] : []),
+            ...(hasInterestEnabled ? ["interest_enabled"] : [])
         ];
 
         const values: DbParam[] = [
             title,
             description || null,
-            date,
-            time || null,
+            effectiveDate,
+            effectiveTime || null,
             venue || null,
             normalizedType,
             ...(hasGoogleFormLink ? [google_form_link || null] : []),
@@ -3479,7 +6009,12 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             ...(hasApprovedBy ? [canModerate ? req.user.id : null] : []),
             ...(hasRejectionReason ? [null] : []),
             ...(hasAudienceScope ? [normalizedAudienceScope] : []),
-            ...(hasAudienceValue ? [normalizedAudienceValue] : [])
+            ...(hasAudienceValue ? [normalizedAudienceValue] : []),
+            ...(hasStartDatetime ? [durationWindow.startSql] : []),
+            ...(hasEndDatetime ? [durationWindow.endSql] : []),
+            ...(hasAutoArchiveAt ? [durationWindow.endSql] : []),
+            ...(hasArchivedAt ? [null] : []),
+            ...(hasInterestEnabled ? [enabledInterest ? 1 : 0] : [])
         ];
 
         const placeholders = columns.map(() => "?").join(", ");
@@ -3496,7 +6031,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             success: true,
             event: newEvent
                 ? {
-                    ...newEvent,
+                    ...withDurationFields(newEvent),
                     id: String(newEvent.id),
                     type: normalizeAnnouncementType(String(newEvent.type || normalizedType)),
                     image_url: normalizeStoredMedia(newEvent.image_url),
@@ -3504,7 +6039,8 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
                     approvalStatus: normalizeAnnouncementApprovalStatus(newEvent.approval_status, approvalStatus),
                     audienceScope: normalizeAnnouncementAudienceScope(newEvent.audience_scope || normalizedAudienceScope),
                     audienceValue: newEvent.audience_value || normalizedAudienceValue,
-                    audienceLabel: formatAnnouncementAudienceLabel(newEvent.audience_scope || normalizedAudienceScope, newEvent.audience_value || normalizedAudienceValue)
+                    audienceLabel: formatAnnouncementAudienceLabel(newEvent.audience_scope || normalizedAudienceScope, newEvent.audience_value || normalizedAudienceValue),
+                    interestEnabled: normalizedType === "event" || normalizeBoolean(newEvent.interest_enabled)
                 }
                 : null,
             message: canModerate
@@ -3543,6 +6079,7 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
+        await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
         const hasGoogleFormLink = await columnExists(announcementTable, "google_form_link");
         const hasApprovalStatus = await columnExists(announcementTable, "approval_status");
@@ -3551,6 +6088,12 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
         const hasRejectionReason = await columnExists(announcementTable, "rejection_reason");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
         const hasAudienceValue = await columnExists(announcementTable, "audience_value");
+        const hasStartDatetime = await columnExists(announcementTable, "start_datetime");
+        const hasEndDatetime = await columnExists(announcementTable, "end_datetime");
+        const hasAutoArchiveAt = await columnExists(announcementTable, "auto_archive_at");
+        const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+        const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
+        await ensureAnnouncementInterestTable();
         const eventId = Number(req.params.id);
         const role = await getRoleForUser(req.user.id);
         const canModerate = canModerateAnnouncementContent(role);
@@ -3578,6 +6121,11 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
                 e.capacity,
                 e.views,
                 e.success_score,
+                ${hasStartDatetime ? "e.start_datetime" : "NULL AS start_datetime"},
+                ${hasEndDatetime ? "e.end_datetime" : "NULL AS end_datetime"},
+                ${hasAutoArchiveAt ? "e.auto_archive_at" : "NULL AS auto_archive_at"},
+                ${hasArchivedAt ? "e.archived_at" : "NULL AS archived_at"},
+                ${hasInterestEnabled ? "e.interest_enabled" : "0 AS interest_enabled"},
                 e.created_at,
                 e.updated_at,
                 ${hasApprovalStatus ? "e.approval_status" : "'approved' AS approval_status"},
@@ -3587,11 +6135,11 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
                 ${hasAudienceScope ? "e.audience_scope" : "'all' AS audience_scope"},
                 ${hasAudienceValue ? "e.audience_value" : "NULL AS audience_value"},
                 ${hasCreatedBy ? "creator.name AS created_by_name" : "NULL AS created_by_name"},
-                COUNT(DISTINCT er.id) AS registration_count,
-                COUNT(DISTINCT ec.id) AS comment_count
+                COUNT(DISTINCT CASE WHEN ai.status = 'interested' THEN ai.id END) AS interest_count,
+                COUNT(DISTINCT ac.id) AS comment_count
             FROM ${announcementTable} e
-            LEFT JOIN event_registrations er ON er.event_id = e.id
-            LEFT JOIN event_comments ec ON ec.event_id = e.id
+            LEFT JOIN announcement_interests ai ON ai.announcement_id = e.id
+            LEFT JOIN announcement_comments ac ON ac.announcement_id = e.id AND ac.status = 'visible'
             ${hasCreatedBy ? "LEFT JOIN profiles creator ON creator.id = e.created_by" : ""}
             WHERE e.id = ?
             GROUP BY e.id`,
@@ -3615,9 +6163,13 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
         if (!canModerate && approvalStatus === "approved" && String(event.created_by || "") !== req.user.id && !canViewByAudience) {
             return res.status(404).json({ error: "Announcement not found" });
         }
+        const eventDuration = withDurationFields(event);
+        if (!canModerate && eventDuration.computed_status === "Archived" && String(event.created_by || "") !== req.user.id) {
+            return res.status(404).json({ error: "Announcement not found" });
+        }
 
         res.json({
-            ...event,
+            ...eventDuration,
             id: String(event.id),
             type: normalizeAnnouncementType(String(event.type || "")),
             image_url: normalizeStoredMedia(event.image_url),
@@ -3629,10 +6181,381 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
             audienceScope,
             audienceValue,
             audienceLabel: formatAnnouncementAudienceLabel(audienceScope, audienceValue),
-            createdByName: event.created_by_name || null
+            createdByName: event.created_by_name || null,
+            interestEnabled: normalizeAnnouncementType(String(event.type || "")) === "event" || normalizeBoolean(event.interest_enabled),
+            interestCount: Number(event.interest_count || 0),
+            registration_count: Number(event.interest_count || 0)
         });
     } catch (err: unknown) {
         console.error("GET ANNOUNCEMENT DETAIL ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/announcements/:id/interest-status", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementInterestTable();
+
+        const announcementTable = await getAnnouncementTableName();
+        const announcementId = Number(req.params.id);
+        if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
+
+        const announcement = await getSingleRow(
+            `SELECT id, title, type, status, approval_status, created_by, interest_enabled
+             FROM ${announcementTable}
+             WHERE id = ?`,
+            [announcementId]
+        );
+        if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+        if (!canTrackInterest(announcement)) {
+            return res.status(400).json({ error: "Interest tracking is not enabled for this announcement." });
+        }
+
+        const interest = await getAnnouncementInterestStatus(announcementId, req.user.id);
+        res.json({
+            interest: interest
+                ? {
+                    announcementId,
+                    alumniId: req.user.id,
+                    status: normalizeInterestStatus(interest.status),
+                    isInterested: normalizeInterestStatus(interest.status) === "interested",
+                    interestedAt: interest.interested_at || null,
+                    updatedAt: interest.updated_at || null
+                }
+                : null
+        });
+    } catch (err: unknown) {
+        console.error("GET ANNOUNCEMENT INTEREST STATUS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/announcements/:id/interest", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementInterestTable();
+        await autoArchiveExpiredContent();
+
+        const announcementTable = await getAnnouncementTableName();
+        const announcementId = Number(req.params.id);
+        if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
+
+        const role = await getRoleForUser(req.user.id);
+        if (role !== "alumni") {
+            return res.status(403).json({ error: "Only alumni can mark interest." });
+        }
+
+        const announcement = await getSingleRow(
+            `SELECT id, title, type, status, approval_status, interest_enabled, archived_at
+             FROM ${announcementTable}
+             WHERE id = ?`,
+            [announcementId]
+        );
+        if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+        if (!canTrackInterest(announcement)) {
+            return res.status(400).json({ error: "Interest tracking is not enabled for this announcement." });
+        }
+        if (normalizeAnnouncementApprovalStatus(announcement.approval_status, "approved") !== "approved") {
+            return res.status(400).json({ error: "Interest can only be tracked after publication." });
+        }
+        if (normalizeStatus(String(announcement.status || ""), "") === "archived" || announcement.archived_at) {
+            return res.status(400).json({ error: "Interest tracking is closed for archived content." });
+        }
+
+        const existing = await getAnnouncementInterestStatus(announcementId, req.user.id);
+        const requested = req.body && Object.prototype.hasOwnProperty.call(req.body, "interested")
+            ? (normalizeBoolean(req.body.interested) ? "interested" : "not_interested")
+            : existing && normalizeInterestStatus(existing.status) === "interested"
+                ? "not_interested"
+                : "interested";
+
+        await db.execute(
+            `INSERT INTO announcement_interests (announcement_id, alumni_id, status, interested_at)
+             VALUES (?, ?, ?, CASE WHEN ? = 'interested' THEN ? ELSE NULL END)
+             ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                interested_at = CASE WHEN VALUES(status) = 'interested' THEN COALESCE(interested_at, VALUES(interested_at)) ELSE NULL END`,
+            [announcementId, req.user.id, requested, requested, formatSqlDateTime(new Date())]
+        );
+
+        const interest = await getAnnouncementInterestStatus(announcementId, req.user.id);
+        res.json({
+            success: true,
+            interest: {
+                announcementId,
+                alumniId: req.user.id,
+                status: normalizeInterestStatus(interest?.status),
+                isInterested: normalizeInterestStatus(interest?.status) === "interested",
+                interestedAt: interest?.interested_at || null,
+                updatedAt: interest?.updated_at || null
+            }
+        });
+    } catch (err: unknown) {
+        console.error("SAVE ANNOUNCEMENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/admin/announcements/:id/interests", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const announcementTable = await getAnnouncementTableName();
+        const announcementId = Number(req.params.id);
+        if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
+
+        const announcement = await getSingleRow(
+            `SELECT id, title, type, interest_enabled
+             FROM ${announcementTable}
+             WHERE id = ?`,
+            [announcementId]
+        );
+        if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+
+        const summary = await getAnnouncementInterestSummary(announcementId);
+        res.json({
+            ...summary,
+            announcement: {
+                id: String(announcement.id),
+                title: announcement.title,
+                type: normalizeAnnouncementType(String(announcement.type || "")),
+                interestEnabled: canTrackInterest(announcement)
+            }
+        });
+    } catch (err: unknown) {
+        console.error("ADMIN ANNOUNCEMENT INTERESTS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/admin/events/:eventId/interests", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const announcementTable = await getAnnouncementTableName();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const event = await getSingleRow(
+            `SELECT id, title, type, interest_enabled
+             FROM ${announcementTable}
+             WHERE id = ?`,
+            [eventId]
+        );
+        if (!event || normalizeAnnouncementType(String(event.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found" });
+        }
+
+        const summary = await getAnnouncementInterestSummary(eventId);
+        res.json({
+            ...summary,
+            announcement: {
+                id: String(event.id),
+                title: event.title,
+                type: "event",
+                interestEnabled: true
+            }
+        });
+    } catch (err: unknown) {
+        console.error("ADMIN EVENT INTERESTS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/announcements/:id/comments", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const announcementId = Number(req.params.id);
+        if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
+
+        const announcementTable = await getAnnouncementTableName();
+        const announcement = await getSingleRow(`SELECT id FROM ${announcementTable} WHERE id = ?`, [announcementId]);
+        if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+
+        const role = await getRoleForUser(req.user.id);
+        const canModerate = canModerateAnnouncementContent(role);
+        const statusClause = canModerate ? "" : "AND ac.status = 'visible'";
+
+        const commentRows = parseRows(await db.query(
+            `SELECT
+                ac.id,
+                ac.announcement_id,
+                ac.user_id,
+                ac.content,
+                ac.status,
+                ac.created_at,
+                ac.updated_at,
+                p.name AS author_name,
+                p.email AS author_email,
+                p.photo AS author_photo
+             FROM announcement_comments ac
+             LEFT JOIN profiles p ON p.id = ac.user_id
+             WHERE ac.announcement_id = ? ${statusClause}
+             ORDER BY ac.created_at ASC, ac.id ASC`,
+            [announcementId]
+        ));
+
+        const commentIds = commentRows.map((row) => Number(row.id)).filter(Boolean);
+        const repliesByComment = new Map<number, QueryRow[]>();
+        if (commentIds.length) {
+            const placeholders = commentIds.map(() => "?").join(", ");
+            const replyRows = parseRows(await db.query(
+                `SELECT
+                    acr.id,
+                    acr.comment_id,
+                    acr.user_id,
+                    acr.content,
+                    acr.status,
+                    acr.created_at,
+                    acr.updated_at,
+                    p.name AS author_name,
+                    p.email AS author_email,
+                    p.photo AS author_photo
+                 FROM announcement_comment_replies acr
+                 LEFT JOIN profiles p ON p.id = acr.user_id
+                 WHERE acr.comment_id IN (${placeholders}) ${canModerate ? "" : "AND acr.status = 'visible'"}
+                 ORDER BY acr.created_at ASC, acr.id ASC`,
+                commentIds
+            ));
+            for (const reply of replyRows) {
+                const commentId = Number(reply.comment_id);
+                repliesByComment.set(commentId, [...(repliesByComment.get(commentId) || []), reply]);
+            }
+        }
+
+        res.json(commentRows.map((comment) => ({
+            id: Number(comment.id),
+            announcementId: Number(comment.announcement_id),
+            userId: comment.user_id,
+            content: comment.status === "hidden" ? "This comment was hidden by admin." : comment.content,
+            status: comment.status,
+            createdAt: comment.created_at,
+            updatedAt: comment.updated_at,
+            authorName: comment.author_name || "Alumni",
+            authorEmail: comment.author_email || null,
+            authorPhoto: normalizeStoredMedia(comment.author_photo ? String(comment.author_photo) : null),
+            replies: (repliesByComment.get(Number(comment.id)) || []).map((reply) => ({
+                id: Number(reply.id),
+                commentId: Number(reply.comment_id),
+                userId: reply.user_id,
+                content: reply.status === "hidden" ? "This reply was hidden by admin." : reply.content,
+                status: reply.status,
+                createdAt: reply.created_at,
+                updatedAt: reply.updated_at,
+                authorName: reply.author_name || "Alumni",
+                authorEmail: reply.author_email || null,
+                authorPhoto: normalizeStoredMedia(reply.author_photo ? String(reply.author_photo) : null)
+            }))
+        })));
+    } catch (err: unknown) {
+        console.error("GET ANNOUNCEMENT COMMENTS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/announcements/:id/comments", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const announcementId = Number(req.params.id);
+        const content = normalizeText(req.body?.content);
+        if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
+        if (!content) return res.status(400).json({ error: "Comment is required." });
+
+        const announcementTable = await getAnnouncementTableName();
+        const announcement = await getSingleRow(`SELECT id, title FROM ${announcementTable} WHERE id = ?`, [announcementId]);
+        if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+
+        const result = await db.execute(
+            "INSERT INTO announcement_comments (announcement_id, user_id, content) VALUES (?, ?, ?)",
+            [announcementId, req.user.id, content]
+        ) as ResultSetHeader;
+
+        const adminUserIds = await getAdminUserIds();
+        await createUserNotifications({
+            userIds: adminUserIds.filter((id) => id !== req.user?.id),
+            title: "New announcement comment",
+            message: `A comment was added to ${announcement.title}.`,
+            category: "announcement",
+            linkUrl: "/admin/announcements",
+            actorId: req.user.id
+        });
+
+        res.json({ success: true, commentId: result.insertId });
+    } catch (err: unknown) {
+        console.error("CREATE ANNOUNCEMENT COMMENT ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/announcements/:id/comments/:commentId/replies", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const announcementId = Number(req.params.id);
+        const commentId = Number(req.params.commentId);
+        const content = normalizeText(req.body?.content);
+        if (!announcementId || !commentId) return res.status(400).json({ error: "Invalid comment target" });
+        if (!content) return res.status(400).json({ error: "Reply is required." });
+
+        const comment = await getSingleRow(
+            "SELECT id, announcement_id, user_id FROM announcement_comments WHERE id = ? AND announcement_id = ?",
+            [commentId, announcementId]
+        );
+        if (!comment) return res.status(404).json({ error: "Comment not found" });
+
+        const result = await db.execute(
+            "INSERT INTO announcement_comment_replies (comment_id, user_id, content) VALUES (?, ?, ?)",
+            [commentId, req.user.id, content]
+        ) as ResultSetHeader;
+
+        const notifyIds = Array.from(new Set([String(comment.user_id), ...(await getAdminUserIds())])).filter((id) => id && id !== req.user?.id);
+        await createUserNotifications({
+            userIds: notifyIds,
+            title: "New announcement reply",
+            message: "A reply was added to an announcement comment.",
+            category: "announcement",
+            linkUrl: "/alumni/announcements",
+            actorId: req.user.id
+        });
+
+        res.json({ success: true, replyId: result.insertId });
+    } catch (err: unknown) {
+        console.error("CREATE ANNOUNCEMENT REPLY ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.patch("/api/admin/announcement-comments/:commentId", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const commentId = Number(req.params.commentId);
+        const status = normalizeText(req.body?.status || "hidden").toLowerCase() === "visible" ? "visible" : "hidden";
+        if (!commentId) return res.status(400).json({ error: "Invalid comment id" });
+        const result = await db.execute(
+            "UPDATE announcement_comments SET status = ?, moderated_by = ?, moderated_at = ? WHERE id = ?",
+            [status, req.user?.id || null, formatSqlDateTime(new Date()), commentId]
+        ) as ResultSetHeader;
+        if (result.affectedRows === 0) return res.status(404).json({ error: "Comment not found" });
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("MODERATE ANNOUNCEMENT COMMENT ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.patch("/api/admin/announcement-comment-replies/:replyId", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const replyId = Number(req.params.replyId);
+        const status = normalizeText(req.body?.status || "hidden").toLowerCase() === "visible" ? "visible" : "hidden";
+        if (!replyId) return res.status(400).json({ error: "Invalid reply id" });
+        const result = await db.execute(
+            "UPDATE announcement_comment_replies SET status = ?, moderated_by = ?, moderated_at = ? WHERE id = ?",
+            [status, req.user?.id || null, formatSqlDateTime(new Date()), replyId]
+        ) as ResultSetHeader;
+        if (result.affectedRows === 0) return res.status(404).json({ error: "Reply not found" });
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("MODERATE ANNOUNCEMENT REPLY ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
@@ -3643,33 +6566,58 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
         const hasGoogleFormLink = await columnExists(announcementTable, "google_form_link");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
         const hasAudienceValue = await columnExists(announcementTable, "audience_value");
+        const hasStartDatetime = await columnExists(announcementTable, "start_datetime");
+        const hasEndDatetime = await columnExists(announcementTable, "end_datetime");
+        const hasAutoArchiveAt = await columnExists(announcementTable, "auto_archive_at");
+        const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+        const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
         const eventId = Number(req.params.id);
-        const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue } = req.body || {};
+        const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
+        const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
+        const durationWindow = getDurationWindowFromBody(req.body || {});
+        const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
+        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
 
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
         if (normalizedAudienceScope !== "all" && !normalizedAudienceValue) {
             return res.status(400).json({ error: `Please provide the target ${normalizedAudienceScope} audience.` });
         }
+        if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
+        }
+
+        const durationSetSql = [
+            ...(hasStartDatetime ? ["start_datetime = ?"] : []),
+            ...(hasEndDatetime ? ["end_datetime = ?"] : []),
+            ...(hasAutoArchiveAt ? ["auto_archive_at = ?"] : []),
+            ...(hasArchivedAt && durationWindow.end && durationWindow.end.getTime() > Date.now() ? ["archived_at = NULL"] : [])
+        ];
+        const durationValues: DbParam[] = [
+            ...(hasStartDatetime ? [durationWindow.startSql] : []),
+            ...(hasEndDatetime ? [durationWindow.endSql] : []),
+            ...(hasAutoArchiveAt ? [durationWindow.endSql] : [])
+        ];
+        const durationSetSuffix = durationSetSql.length ? `, ${durationSetSql.join(", ")}` : "";
 
         await db.execute(
             hasGoogleFormLink
                 ? `UPDATE ${announcementTable} SET
                     title = ?, description = ?, date = ?, time = ?, venue = ?,
-                    type = ?, google_form_link = ?, organizer = ?, image_url = ?, status = ?, capacity = ?${hasAudienceScope ? ", audience_scope = ?" : ""}${hasAudienceValue ? ", audience_value = ?" : ""}
+                    type = ?, google_form_link = ?, organizer = ?, image_url = ?, status = ?, capacity = ?${hasAudienceScope ? ", audience_scope = ?" : ""}${hasAudienceValue ? ", audience_value = ?" : ""}${hasInterestEnabled ? ", interest_enabled = ?" : ""}${durationSetSuffix}
                    WHERE id = ?`
                 : `UPDATE ${announcementTable} SET
                     title = ?, description = ?, date = ?, time = ?, venue = ?,
-                    type = ?, organizer = ?, image_url = ?, status = ?, capacity = ?${hasAudienceScope ? ", audience_scope = ?" : ""}${hasAudienceValue ? ", audience_value = ?" : ""}
+                    type = ?, organizer = ?, image_url = ?, status = ?, capacity = ?${hasAudienceScope ? ", audience_scope = ?" : ""}${hasAudienceValue ? ", audience_value = ?" : ""}${hasInterestEnabled ? ", interest_enabled = ?" : ""}${durationSetSuffix}
                    WHERE id = ?`,
             hasGoogleFormLink
                 ? [
                     title,
                     description || null,
-                    date,
-                    time || null,
+                    effectiveDate,
+                    effectiveTime || null,
                     venue || null,
                     normalizedType,
                     google_form_link || null,
@@ -3679,13 +6627,15 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
                     ...(hasAudienceValue ? [normalizedAudienceValue] : []),
+                    ...(hasInterestEnabled ? [enabledInterest ? 1 : 0] : []),
+                    ...durationValues,
                     eventId
                 ]
                 : [
                     title,
                     description || null,
-                    date,
-                    time || null,
+                    effectiveDate,
+                    effectiveTime || null,
                     venue || null,
                     normalizedType,
                     organizer || null,
@@ -3694,6 +6644,8 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
                     ...(hasAudienceValue ? [normalizedAudienceValue] : []),
+                    ...(hasInterestEnabled ? [enabledInterest ? 1 : 0] : []),
+                    ...durationValues,
                     eventId
                 ]
         );
@@ -3703,14 +6655,15 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
             success: true,
             event: updated
                 ? {
-                    ...updated,
+                    ...withDurationFields(updated),
                     type: normalizeAnnouncementType(String(updated.type || normalizedType)),
                     image_url: normalizeStoredMedia(updated.image_url),
                     status: normalizeStatus(updated.status, getAnnouncementStatusFallback(String(updated.type || normalizedType))),
                     approvalStatus: normalizeAnnouncementApprovalStatus(updated.approval_status, "approved"),
                     audienceScope: normalizeAnnouncementAudienceScope(updated.audience_scope || normalizedAudienceScope),
                     audienceValue: updated.audience_value || normalizedAudienceValue,
-                    audienceLabel: formatAnnouncementAudienceLabel(updated.audience_scope || normalizedAudienceScope, updated.audience_value || normalizedAudienceValue)
+                    audienceLabel: formatAnnouncementAudienceLabel(updated.audience_scope || normalizedAudienceScope, updated.audience_value || normalizedAudienceValue),
+                    interestEnabled: normalizeAnnouncementType(String(updated.type || normalizedType)) === "event" || normalizeBoolean(updated.interest_enabled)
                 }
                 : null
         });
@@ -3810,6 +6763,66 @@ app.patch("/api/announcements/:id/approval", authenticateToken, requireAdmin, as
     }
 });
 
+app.patch("/api/announcements/:id/archive", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const announcementTable = await getAnnouncementTableName();
+        const eventId = Number(req.params.id);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET status = 'archived',
+                 archived_at = COALESCE(archived_at, ?),
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
+             WHERE id = ?`,
+            [formatSqlDateTime(new Date()), eventId]
+        );
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("ARCHIVE ANNOUNCEMENT ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.patch("/api/announcements/:id/restore", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const announcementTable = await getAnnouncementTableName();
+        const eventId = Number(req.params.id);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const durationWindow = getDurationWindowFromBody(req.body || {});
+        if (!durationWindow.end || durationWindow.end.getTime() <= Date.now()) {
+            return res.status(400).json({ error: "Set a new future end date/time before restoring this item." });
+        }
+        if (durationWindow.start && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
+        }
+
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET status = ?,
+                 start_datetime = ?,
+                 end_datetime = ?,
+                 auto_archive_at = ?,
+                 archived_at = NULL
+             WHERE id = ?`,
+            [
+                durationWindow.start && durationWindow.start.getTime() > Date.now() ? "upcoming" : "active",
+                durationWindow.startSql,
+                durationWindow.endSql,
+                durationWindow.endSql,
+                eventId
+            ]
+        );
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("RESTORE ANNOUNCEMENT ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
 app.delete("/api/announcements/:id", authenticateToken, requireAdmin, async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
@@ -3827,54 +6840,545 @@ app.delete("/api/announcements/:id", authenticateToken, requireAdmin, async (req
 /* =========================
    EVENT RSVP
 ========================= */
-app.get("/api/events/:id/rsvps", authenticateToken, async (req, res) => {
+app.get("/api/events/:eventId/rsvps", authenticateToken, async (req, res) => {
     try {
-        const eventId = Number(req.params.id);
-        const rsvps = parseRows(await db.query(
-            `SELECT er.*, p.name FROM event_registrations er
-             LEFT JOIN profiles p ON p.id = er.alumni_id
-             WHERE er.event_id = ?`,
-            [eventId]
-        ));
-        res.json({ rsvps });
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        const summary = await getEventRsvpSummary(eventId);
+        res.json(summary);
     } catch (err: unknown) {
         console.error("GET RSVPS ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
 
-app.post("/api/events/:id/rsvp", authenticateToken, async (req: AuthenticatedRequest, res) => {
+app.get("/api/events/:eventId/rsvp-status", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
-        const eventId = Number(req.params.id);
+        await ensureEventRsvpTables();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const eventRow = await getEventForRsvp(eventId);
+        if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found." });
+        }
+
+        const rsvp = await getSingleRow(
+            `SELECT id, event_id, alumni_id, response_status, attendance_status, verification_status, checked_in_at, engagement_awarded, created_at, updated_at
+             FROM event_rsvps
+             WHERE event_id = ? AND alumni_id = ?`,
+            [eventId, req.user.id]
+        );
+
+        res.json({
+            rsvp: rsvp || null,
+            event: withDurationFields(eventRow)
+        });
+    } catch (err: unknown) {
+        console.error("GET RSVP STATUS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/events/:eventId/rsvp", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureEventRsvpTables();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const responseStatus = normalizeEventRsvpStatus(req.body?.responseStatus || req.body?.response_status);
+        if (!responseStatus) {
+            return res.status(400).json({ error: "Choose Going, Interested, or Not Going." });
+        }
+
+        const eventRow = await getEventForRsvp(eventId);
+        const closedReason = ensureEventCanAcceptRsvp(eventRow);
+        if (closedReason) return res.status(eventRow ? 400 : 404).json({ error: closedReason });
 
         const existing = await getSingleRow(
-            "SELECT id FROM event_registrations WHERE event_id = ? AND alumni_id = ?",
+            "SELECT id FROM event_rsvps WHERE event_id = ? AND alumni_id = ?",
             [eventId, req.user.id]
         );
 
         if (existing) {
-            return res.json({ success: true, message: "Already registered" });
+            return res.status(409).json({ error: "You already responded to this event. Use Update RSVP instead." });
         }
 
         await db.execute(
-            "INSERT INTO event_registrations (event_id, alumni_id, status) VALUES (?, ?, 'registered')",
-            [eventId, req.user.id]
+            `INSERT INTO event_rsvps (event_id, alumni_id, response_status, attendance_status, verification_status)
+             VALUES (?, ?, ?, 'Pending', 'Pending')`,
+            [eventId, req.user.id, responseStatus]
+        );
+
+        await db.execute(
+            `INSERT INTO event_registrations (event_id, alumni_id, status)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE status = VALUES(status)`,
+            [eventId, req.user.id, responseStatus === "Not Going" ? "cancelled" : "registered"]
+        );
+
+        await db.execute(
+            `INSERT INTO event_interests (event_id, alumni_id, status)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                cancelled_at = CASE WHEN VALUES(status) = 'Cancelled' THEN COALESCE(cancelled_at, NOW()) ELSE NULL END`,
+            [eventId, req.user.id, responseStatus === "Not Going" ? "Cancelled" : "Interested"]
         );
 
         const adminUserIds = await getAdminUserIds();
         await createUserNotifications({
             userIds: adminUserIds,
             title: "New event response",
-            message: "An alumni member registered for an event announcement.",
+            message: `An alumni member responded ${responseStatus} to an event.`,
             category: "event",
             linkUrl: "/admin/announcements",
             actorId: req.user.id
         });
 
-        res.json({ success: true });
+        res.json({ success: true, rsvp: { event_id: eventId, alumni_id: req.user.id, response_status: responseStatus, attendance_status: "Pending", verification_status: "Pending" } });
     } catch (err: unknown) {
         console.error("RSVP ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/events/:eventId/interested", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAnnouncementInterestTable();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const eventRow = await getEventForRsvp(eventId);
+        const closedReason = ensureEventCanAcceptRsvp(eventRow);
+        if (closedReason) return res.status(eventRow ? 400 : 404).json({ error: closedReason });
+
+        const existing = await getAnnouncementInterestStatus(eventId, req.user.id);
+        const requested = req.body && Object.prototype.hasOwnProperty.call(req.body, "interested")
+            ? (normalizeBoolean(req.body.interested) ? "interested" : "not_interested")
+            : existing && normalizeInterestStatus(existing.status) === "interested"
+                ? "not_interested"
+                : "interested";
+
+        await db.execute(
+            `INSERT INTO announcement_interests (announcement_id, alumni_id, status, interested_at)
+             VALUES (?, ?, ?, CASE WHEN ? = 'interested' THEN ? ELSE NULL END)
+             ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                interested_at = CASE WHEN VALUES(status) = 'interested' THEN COALESCE(interested_at, VALUES(interested_at)) ELSE NULL END`,
+            [eventId, req.user.id, requested, requested, formatSqlDateTime(new Date())]
+        );
+
+        const interest = await getAnnouncementInterestStatus(eventId, req.user.id);
+
+        res.json({
+            success: true,
+            interest: {
+                announcementId: eventId,
+                alumniId: req.user.id,
+                status: normalizeInterestStatus(interest?.status),
+                isInterested: normalizeInterestStatus(interest?.status) === "interested",
+                interestedAt: interest?.interested_at || null,
+                updatedAt: interest?.updated_at || null
+            }
+        });
+    } catch (err: unknown) {
+        console.error("EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.put("/api/events/:eventId/rsvp", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureEventRsvpTables();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const responseStatus = normalizeEventRsvpStatus(req.body?.responseStatus || req.body?.response_status);
+        if (!responseStatus) {
+            return res.status(400).json({ error: "Choose Going, Interested, or Not Going." });
+        }
+
+        const eventRow = await getEventForRsvp(eventId);
+        const closedReason = ensureEventCanAcceptRsvp(eventRow);
+        if (closedReason) return res.status(eventRow ? 400 : 404).json({ error: closedReason });
+
+        const existing = await getSingleRow(
+            "SELECT attendance_status, engagement_awarded FROM event_rsvps WHERE event_id = ? AND alumni_id = ?",
+            [eventId, req.user.id]
+        );
+        if (normalizeAttendanceStatus(existing?.attendance_status) === "Attended" || Number(existing?.engagement_awarded || 0) === 1) {
+            return res.status(400).json({ error: "Cannot update RSVP after attendance has been confirmed." });
+        }
+
+        const result = await db.execute(
+            `UPDATE event_rsvps
+             SET response_status = ?,
+                 attendance_status = CASE WHEN ? = 'Going' THEN attendance_status ELSE 'Pending' END,
+                 checked_in_at = CASE WHEN ? = 'Going' THEN checked_in_at ELSE NULL END
+             WHERE event_id = ? AND alumni_id = ?`,
+            [responseStatus, responseStatus, responseStatus, eventId, req.user.id]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "No RSVP found to update." });
+        }
+
+        await db.execute(
+            `INSERT INTO event_registrations (event_id, alumni_id, status)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE status = VALUES(status)`,
+            [eventId, req.user.id, responseStatus === "Not Going" ? "cancelled" : "registered"]
+        );
+
+        await db.execute(
+            `INSERT INTO event_interests (event_id, alumni_id, status)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                cancelled_at = CASE WHEN VALUES(status) = 'Cancelled' THEN COALESCE(cancelled_at, NOW()) ELSE NULL END`,
+            [eventId, req.user.id, responseStatus === "Not Going" ? "Cancelled" : "Interested"]
+        );
+
+        const rsvp = await getSingleRow(
+            `SELECT id, event_id, alumni_id, response_status, attendance_status, verification_status, checked_in_at, engagement_awarded, created_at, updated_at
+             FROM event_rsvps
+             WHERE event_id = ? AND alumni_id = ?`,
+            [eventId, req.user.id]
+        );
+
+        res.json({ success: true, rsvp });
+    } catch (err: unknown) {
+        console.error("UPDATE RSVP ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.delete("/api/events/:eventId/rsvp", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureEventRsvpTables();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const eventRow = await getEventForRsvp(eventId);
+        const closedReason = ensureEventCanAcceptRsvp(eventRow);
+        if (closedReason) return res.status(eventRow ? 400 : 404).json({ error: closedReason });
+
+        const existing = await getSingleRow(
+            "SELECT attendance_status, engagement_awarded FROM event_rsvps WHERE event_id = ? AND alumni_id = ?",
+            [eventId, req.user.id]
+        );
+        if (normalizeAttendanceStatus(existing?.attendance_status) === "Attended" || Number(existing?.engagement_awarded || 0) === 1) {
+            return res.status(400).json({ error: "Cannot cancel after attendance has been confirmed." });
+        }
+
+        await db.execute(
+            `UPDATE event_interests
+             SET status = 'Cancelled',
+                 cancelled_at = COALESCE(cancelled_at, NOW())
+             WHERE event_id = ? AND alumni_id = ?`,
+            [eventId, req.user.id]
+        );
+        await db.execute("DELETE FROM event_rsvps WHERE event_id = ? AND alumni_id = ?", [eventId, req.user.id]);
+        await db.execute("DELETE FROM event_registrations WHERE event_id = ? AND alumni_id = ?", [eventId, req.user.id]);
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("CANCEL RSVP ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/events/:eventId/check-in", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    let conn: PoolConnection | null = null;
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureEventRsvpTables();
+        await autoArchiveExpiredContent();
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const eventRow = await getEventForRsvp(eventId);
+        if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found." });
+        }
+        if (!isEventActiveForCheckIn(eventRow)) {
+            return res.status(400).json({ error: "Check-in is only allowed during the event date/time." });
+        }
+
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        const [rows] = await conn.query<QueryRow[]>(
+            `SELECT id, response_status, attendance_status, verification_status, engagement_awarded
+             FROM event_rsvps
+             WHERE event_id = ? AND alumni_id = ?
+             FOR UPDATE`,
+            [eventId, req.user.id]
+        );
+        const rsvp = rows[0];
+        if (!rsvp) {
+            await conn.rollback();
+            return res.status(400).json({ error: "You must RSVP Going before checking in." });
+        }
+        if (normalizeEventRsvpStatus(rsvp.response_status) !== "Going") {
+            await conn.rollback();
+            return res.status(400).json({ error: "Only alumni marked Going can check in." });
+        }
+
+        await conn.query(
+            `UPDATE event_rsvps
+             SET attendance_status = 'Attended',
+                 checked_in_at = COALESCE(checked_in_at, ?)
+             WHERE event_id = ? AND alumni_id = ?`,
+            [formatSqlDateTime(new Date()), eventId, req.user.id]
+        );
+        await awardEventAttendancePoints(conn, eventId, req.user.id);
+        await conn.commit();
+
+        const updated = await getSingleRow(
+            `SELECT id, event_id, alumni_id, response_status, attendance_status, verification_status, checked_in_at, engagement_awarded, created_at, updated_at
+             FROM event_rsvps
+             WHERE event_id = ? AND alumni_id = ?`,
+            [eventId, req.user.id]
+        );
+        res.json({ success: true, rsvp: updated, pointsAwarded: 10 });
+    } catch (err: unknown) {
+        if (conn) {
+            try {
+                await conn.rollback();
+            } catch (rollbackError) {
+                console.error("CHECK-IN ROLLBACK ERROR:", rollbackError);
+            }
+        }
+        console.error("CHECK-IN ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    } finally {
+        conn?.release();
+    }
+});
+
+app.get("/api/admin/events/:eventId/rsvps", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        const eventRow = await getEventForRsvp(eventId);
+        if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found." });
+        }
+        const summary = await getEventRsvpSummary(eventId);
+        res.json({ ...summary, event: withDurationFields(eventRow) });
+    } catch (err: unknown) {
+        console.error("ADMIN EVENT RSVPS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/events/:eventId/mark-attendance", authenticateToken, requireAdmin, async (req, res) => {
+    let conn: PoolConnection | null = null;
+    try {
+        await ensureEventRsvpTables();
+        const eventId = Number(req.params.eventId);
+        const alumniId = normalizeText(req.body?.alumniId || req.body?.alumni_id);
+        const attendanceStatus = normalizeAttendanceStatus(req.body?.attendanceStatus || req.body?.attendance_status);
+
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        if (!alumniId) return res.status(400).json({ error: "Alumni id is required." });
+        if (!attendanceStatus || attendanceStatus === "Pending") {
+            return res.status(400).json({ error: "Choose Attended or Absent." });
+        }
+
+        const eventRow = await getEventForRsvp(eventId);
+        if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found." });
+        }
+
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        const [rows] = await conn.query<QueryRow[]>(
+            `SELECT id, response_status, attendance_status, engagement_awarded
+             FROM event_rsvps
+             WHERE event_id = ? AND alumni_id = ?
+             FOR UPDATE`,
+            [eventId, alumniId]
+        );
+        const rsvp = rows[0];
+        if (!rsvp) {
+            await conn.rollback();
+            return res.status(404).json({ error: "This alumni has no RSVP for the event." });
+        }
+        if (attendanceStatus === "Attended" && normalizeEventRsvpStatus(rsvp.response_status) !== "Going") {
+            await conn.rollback();
+            return res.status(400).json({ error: "Only Going RSVPs can be marked Attended." });
+        }
+        if (attendanceStatus === "Absent" && Number(rsvp.engagement_awarded || 0) === 1) {
+            await conn.rollback();
+            return res.status(400).json({ error: "Cannot mark Absent after attendance points were already awarded." });
+        }
+
+        await conn.query(
+            `UPDATE event_rsvps
+             SET attendance_status = ?,
+                 checked_in_at = CASE WHEN ? = 'Attended' THEN COALESCE(checked_in_at, ?) ELSE NULL END
+             WHERE event_id = ? AND alumni_id = ?`,
+            [attendanceStatus, attendanceStatus, formatSqlDateTime(new Date()), eventId, alumniId]
+        );
+
+        if (attendanceStatus === "Attended") {
+            await awardEventAttendancePoints(conn, eventId, alumniId);
+        }
+
+        await conn.commit();
+        const summary = await getEventRsvpSummary(eventId);
+        res.json({ success: true, ...summary });
+    } catch (err: unknown) {
+        if (conn) {
+            try {
+                await conn.rollback();
+            } catch (rollbackError) {
+                console.error("MARK ATTENDANCE ROLLBACK ERROR:", rollbackError);
+            }
+        }
+        console.error("MARK ATTENDANCE ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    } finally {
+        conn?.release();
+    }
+});
+
+app.post("/api/admin/events/:eventId/verify-interest", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await ensureEventRsvpTables();
+        const eventId = Number(req.params.eventId);
+        const alumniId = normalizeText(req.body?.alumniId || req.body?.alumni_id);
+        const verificationStatus = normalizeVerificationStatus(req.body?.verificationStatus || req.body?.verification_status);
+
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        if (!alumniId) return res.status(400).json({ error: "Alumni id is required." });
+        if (!verificationStatus || verificationStatus === "Pending") {
+            return res.status(400).json({ error: "Choose Verified or Not Verified." });
+        }
+
+        const eventRow = await getEventForRsvp(eventId);
+        if (!eventRow || normalizeAnnouncementType(String(eventRow.type || "")) !== "event") {
+            return res.status(404).json({ error: "Event not found." });
+        }
+
+        const result = await db.execute(
+            `UPDATE event_rsvps
+             SET verification_status = ?
+             WHERE event_id = ? AND alumni_id = ?`,
+            [verificationStatus, eventId, alumniId]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "This alumni has no event response to verify." });
+        }
+
+        await db.execute(
+            `INSERT INTO event_interests (event_id, alumni_id, status, verified_by, verified_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE status = VALUES(status), verified_by = VALUES(verified_by), verified_at = VALUES(verified_at)`,
+            [eventId, alumniId, verificationStatus === "Verified" ? "Verified" : "Interested", (req as AuthenticatedRequest).user?.id || null, formatSqlDateTime(new Date())]
+        );
+
+        const summary = await getEventRsvpSummary(eventId);
+        res.json({ success: true, ...summary });
+    } catch (err: unknown) {
+        console.error("VERIFY EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.delete("/api/admin/events/:eventId/interests/:alumniId", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        await ensureEventRsvpTables();
+        await ensureAnnouncementEventSurveyEngagementTables();
+        const eventId = Number(req.params.eventId);
+        const alumniId = normalizeText(req.params.alumniId);
+
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        if (!alumniId) return res.status(400).json({ error: "Alumni id is required." });
+
+        await db.execute("DELETE FROM event_rsvps WHERE event_id = ? AND alumni_id = ?", [eventId, alumniId]);
+        await db.execute("DELETE FROM event_registrations WHERE event_id = ? AND alumni_id = ?", [eventId, alumniId]);
+        await db.execute(
+            `INSERT INTO event_interests (event_id, alumni_id, status, cancelled_at)
+             VALUES (?, ?, 'Cancelled', ?)
+             ON DUPLICATE KEY UPDATE status = 'Cancelled', cancelled_at = VALUES(cancelled_at)`,
+            [eventId, alumniId, formatSqlDateTime(new Date())]
+        );
+
+        const summary = await getEventRsvpSummary(eventId);
+        res.json({ success: true, ...summary });
+    } catch (err: unknown) {
+        console.error("REMOVE EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/events/:eventId/archive", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        const announcementTable = await getAnnouncementTableName();
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET status = 'archived',
+                 archived_at = COALESCE(archived_at, ?),
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
+             WHERE id = ? AND LOWER(COALESCE(type, '')) = 'event'`,
+            [formatSqlDateTime(new Date()), eventId]
+        );
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("ADMIN ARCHIVE EVENT ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/events/:eventId/reopen", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const eventId = Number(req.params.eventId);
+        if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        const durationWindow = getDurationWindowFromBody(req.body || {});
+        if (!durationWindow.end || durationWindow.end.getTime() <= Date.now()) {
+            return res.status(400).json({ error: "Set a new future end date/time before reopening this event." });
+        }
+        if (durationWindow.start && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
+        }
+
+        const announcementTable = await getAnnouncementTableName();
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET status = ?,
+                 start_datetime = ?,
+                 end_datetime = ?,
+                 auto_archive_at = ?,
+                 archived_at = NULL
+             WHERE id = ? AND LOWER(COALESCE(type, '')) = 'event'`,
+            [
+                durationWindow.start && durationWindow.start.getTime() > Date.now() ? "upcoming" : "active",
+                durationWindow.startSql,
+                durationWindow.endSql,
+                durationWindow.endSql,
+                eventId
+            ]
+        );
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("ADMIN REOPEN EVENT ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
@@ -4683,6 +8187,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
+        await autoArchiveExpiredContent();
         const role = await getRoleForUser(req.user.id);
         const canManageSurveys = role !== "alumni";
         const announcementTable = await getAnnouncementTableName();
@@ -4695,7 +8200,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
              FROM surveys s
              LEFT JOIN ${announcementTable} e ON e.id = s.event_id
              LEFT JOIN survey_answers sa ON sa.survey_id = s.id
-             ${canManageSurveys ? "" : "WHERE s.status = 'published'"}
+             ${canManageSurveys ? "" : "WHERE s.status = 'published' AND s.archived_at IS NULL AND LOWER(COALESCE(s.status, '')) <> 'archived'"}
              GROUP BY s.id
              ORDER BY s.created_at DESC, s.id DESC`
         ));
@@ -4718,6 +8223,12 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
                     [row.id, req.user?.id || null]
                 ));
 
+            const duration = withDurationFields({
+                ...row,
+                start_datetime: row.start_datetime || row.opens_at,
+                end_datetime: row.end_datetime || row.closes_at
+            });
+
             return {
                 id: Number(row.id),
                 eventId: row.event_id ? Number(row.event_id) : null,
@@ -4727,8 +8238,21 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
                 status: row.status,
                 targetAudience: row.target_audience,
                 isAnonymous: Boolean(row.is_anonymous),
+                allowMultipleResponses: Boolean(row.allow_multiple_responses),
                 opensAt: row.opens_at,
                 closesAt: row.closes_at,
+                start_datetime: duration.start_datetime,
+                start_date: duration.start_date,
+                start_time: duration.start_time,
+                end_datetime: duration.end_datetime,
+                end_date: duration.end_date,
+                end_time: duration.end_time,
+                auto_archive_at: duration.auto_archive_at,
+                archived_at: duration.archived_at,
+                duration_status: duration.duration_status,
+                computed_status: duration.computed_status,
+                remaining_time: duration.remaining_time,
+                is_expired: duration.is_expired,
                 eventTitle: row.event_title,
                 responseCount: Number(row.response_count || 0),
                 questions: questions.map((question) => ({
@@ -4756,7 +8280,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
             };
         }));
 
-        res.json(surveys);
+        res.json(canManageSurveys ? surveys : surveys.filter((survey) => survey.questions.length > 0));
     } catch (err: unknown) {
         console.error("GET SURVEYS ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
@@ -4777,21 +8301,30 @@ app.post("/api/surveys", authenticateToken, requireAdmin, async (req: Authentica
             status,
             targetAudience,
             isAnonymous,
+            allowMultipleResponses,
             opensAt,
             closesAt,
             questions
         } = req.body || {};
+        const durationWindow = getDurationWindowFromBody({
+            ...req.body,
+            start_datetime: req.body?.start_datetime || opensAt,
+            end_datetime: req.body?.end_datetime || closesAt
+        });
 
         if (!title || !surveyType || !Array.isArray(questions) || questions.length === 0) {
             return res.status(400).json({ error: "Title, type, and at least one question are required" });
+        }
+        if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
         }
 
         await conn.beginTransaction();
 
         const [result] = await conn.execute<ResultSetHeader>(
             `INSERT INTO surveys
-                (event_id, title, description, survey_type, status, target_audience, is_anonymous, opens_at, closes_at, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                (event_id, title, description, survey_type, status, target_audience, is_anonymous, allow_multiple_responses, opens_at, closes_at, start_datetime, end_datetime, auto_archive_at, archived_at, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
             [
                 eventId || null,
                 title,
@@ -4800,8 +8333,12 @@ app.post("/api/surveys", authenticateToken, requireAdmin, async (req: Authentica
                 status || "draft",
                 targetAudience || "all_alumni",
                 isAnonymous ? 1 : 0,
-                opensAt || null,
-                closesAt || null,
+                allowMultipleResponses ? 1 : 0,
+                opensAt || durationWindow.startSql,
+                closesAt || durationWindow.endSql,
+                durationWindow.startSql,
+                durationWindow.endSql,
+                durationWindow.endSql,
                 req.user.id,
                 req.user.id
             ]
@@ -4850,22 +8387,147 @@ app.post("/api/surveys", authenticateToken, requireAdmin, async (req: Authentica
     }
 });
 
+app.put("/api/surveys/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    const conn = await db.getConnection();
+
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const surveyId = Number(req.params.id);
+        const {
+            title,
+            description,
+            eventId,
+            surveyType,
+            status,
+            targetAudience,
+            isAnonymous,
+            allowMultipleResponses,
+            opensAt,
+            closesAt,
+            questions
+        } = req.body || {};
+
+        if (!surveyId) return res.status(400).json({ error: "Invalid survey id" });
+        if (!title || !surveyType || !Array.isArray(questions) || questions.length === 0) {
+            return res.status(400).json({ error: "Title, type, and at least one question are required" });
+        }
+
+        const durationWindow = getDurationWindowFromBody({
+            ...req.body,
+            start_datetime: req.body?.start_datetime || opensAt,
+            end_datetime: req.body?.end_datetime || closesAt
+        });
+
+        if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
+            return res.status(400).json({ error: "End date/time must be after the start date/time." });
+        }
+
+        await conn.beginTransaction();
+
+        const [updateResult] = await conn.execute<ResultSetHeader>(
+            `UPDATE surveys
+             SET event_id = ?, title = ?, description = ?, survey_type = ?, status = ?, target_audience = ?,
+                 is_anonymous = ?, allow_multiple_responses = ?, opens_at = ?, closes_at = ?, start_datetime = ?, end_datetime = ?,
+                 auto_archive_at = ?, archived_at = CASE WHEN ? = 'archived' THEN COALESCE(archived_at, ?) ELSE NULL END,
+                 updated_by = ?
+             WHERE id = ?`,
+            [
+                eventId || null,
+                title,
+                description || null,
+                surveyType,
+                status || "draft",
+                targetAudience || "all_alumni",
+                isAnonymous ? 1 : 0,
+                allowMultipleResponses ? 1 : 0,
+                opensAt || durationWindow.startSql,
+                closesAt || durationWindow.endSql,
+                durationWindow.startSql,
+                durationWindow.endSql,
+                durationWindow.endSql,
+                status || "draft",
+                formatSqlDateTime(new Date()),
+                req.user.id,
+                surveyId
+            ]
+        );
+
+        if (updateResult.affectedRows === 0) {
+            await conn.rollback();
+            return res.status(404).json({ error: "Survey not found" });
+        }
+
+        await conn.execute("DELETE FROM survey_questions WHERE survey_id = ?", [surveyId]);
+
+        for (let index = 0; index < questions.length; index += 1) {
+            const question = questions[index];
+            await conn.execute(
+                `INSERT INTO survey_questions
+                    (survey_id, question_text, question_type, question_order, is_required, options_json, min_rating, max_rating, placeholder)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    surveyId,
+                    question.questionText,
+                    question.questionType,
+                    index + 1,
+                    question.isRequired ? 1 : 0,
+                    question.options?.length ? JSON.stringify(question.options) : null,
+                    question.minRating || null,
+                    question.maxRating || null,
+                    question.placeholder || null
+                ]
+            );
+        }
+
+        await conn.commit();
+        res.json({ success: true, surveyId });
+    } catch (err: unknown) {
+        await conn.rollback();
+        console.error("UPDATE SURVEY ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    } finally {
+        conn.release();
+    }
+});
+
 app.patch("/api/surveys/:id/status", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
         const surveyId = Number(req.params.id);
         const { status } = req.body || {};
+        const durationWindow = getDurationWindowFromBody(req.body || {});
 
         if (!surveyId || !status) {
             return res.status(400).json({ error: "Survey id and status are required" });
         }
 
+        const normalizedStatus = normalizeStatus(String(status), "draft");
+        const current = await getSingleRow("SELECT id, archived_at FROM surveys WHERE id = ?", [surveyId]);
+        if (!current) {
+            return res.status(404).json({ error: "Survey not found" });
+        }
+
+        if (normalizedStatus !== "archived" && current.archived_at && (!durationWindow.end || durationWindow.end.getTime() <= Date.now())) {
+            return res.status(400).json({ error: "Set a new future end date/time before restoring this survey." });
+        }
+
+        const updates = ["status = ?", "updated_by = ?"];
+        const params: DbParam[] = [normalizedStatus, req.user?.id || null];
+        if (normalizedStatus === "archived") {
+            updates.push("archived_at = COALESCE(archived_at, ?)");
+            params.push(formatSqlDateTime(new Date()));
+        } else if (durationWindow.end) {
+            updates.push("start_datetime = ?", "end_datetime = ?", "auto_archive_at = ?", "opens_at = ?", "closes_at = ?", "archived_at = NULL");
+            params.push(durationWindow.startSql, durationWindow.endSql, durationWindow.endSql, durationWindow.startSql, durationWindow.endSql);
+        }
+        params.push(surveyId);
+
         await db.execute(
-            "UPDATE surveys SET status = ?, updated_by = ? WHERE id = ?",
-            [status, req.user?.id || null, surveyId]
+            `UPDATE surveys SET ${updates.join(", ")} WHERE id = ?`,
+            params
         );
 
         const survey = await getSingleRow("SELECT title FROM surveys WHERE id = ?", [surveyId]);
-        if (survey && String(status) === "published") {
+        if (survey && normalizedStatus === "published") {
             const alumniUserIds = await getAlumniUserIds();
             await createUserNotifications({
                 userIds: alumniUserIds,
@@ -4912,18 +8574,50 @@ app.post("/api/surveys/:id/responses", authenticateToken, async (req: Authentica
             return res.status(400).json({ error: "Survey id and answers are required" });
         }
 
+        await autoArchiveExpiredContent();
+        const survey = await getSingleRow(
+            "SELECT id, title, status, allow_multiple_responses, opens_at, closes_at, start_datetime, end_datetime, auto_archive_at, archived_at FROM surveys WHERE id = ?",
+            [surveyId]
+        );
+        if (!survey) {
+            return res.status(404).json({ error: "Survey not found" });
+        }
+        const duration = computeDurationFields({
+            ...survey,
+            start_datetime: survey.start_datetime || survey.opens_at,
+            end_datetime: survey.end_datetime || survey.closes_at
+        });
+        if (normalizeStatus(String(survey.status || ""), "") !== "published" || duration.is_expired || duration.computed_status !== "Active") {
+            return res.status(400).json({ error: "This survey is closed and no longer accepts responses." });
+        }
+
         await conn.beginTransaction();
-        await conn.execute(
-            "DELETE FROM survey_answers WHERE survey_id = ? AND respondent_id = ?",
+        if (!normalizeBoolean(survey.allow_multiple_responses)) {
+            const existing = await getSingleRow(
+                "SELECT id FROM survey_responses WHERE survey_id = ? AND respondent_id = ? LIMIT 1",
+                [surveyId, req.user.id]
+            ) || await getSingleRow(
+                "SELECT id FROM survey_answers WHERE survey_id = ? AND respondent_id = ? LIMIT 1",
+                [surveyId, req.user.id]
+            );
+            if (existing) {
+                await conn.rollback();
+                return res.status(409).json({ error: "You already answered this survey." });
+            }
+        }
+
+        const [responseResult] = await conn.execute<ResultSetHeader>(
+            "INSERT INTO survey_responses (survey_id, respondent_id) VALUES (?, ?)",
             [surveyId, req.user.id]
         );
 
         for (const answer of answers) {
             await conn.execute(
                 `INSERT INTO survey_answers
-                    (survey_id, question_id, respondent_id, answer_text, answer_value, answer_json, rating_value)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    (response_id, survey_id, question_id, respondent_id, answer_text, answer_value, answer_json, rating_value)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
+                    responseResult.insertId,
                     surveyId,
                     answer.questionId,
                     req.user.id,
@@ -4939,7 +8633,6 @@ app.post("/api/surveys/:id/responses", authenticateToken, async (req: Authentica
         res.json({ success: true });
 
         const adminUserIds = await getAdminUserIds();
-        const survey = await getSingleRow("SELECT title FROM surveys WHERE id = ?", [surveyId]);
         await createUserNotifications({
             userIds: adminUserIds,
             title: "New survey response",
@@ -5483,83 +9176,238 @@ app.get("/api/notifications", authenticateToken, requireAdmin, async (_req, res)
     }
 });
 
-app.post("/api/notifications/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.get("/api/admin/mailing/alumni", authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const { subject, message, recipients } = req.body || {};
+        const search = String(req.query.search || "").trim();
+        const course = String(req.query.course || "").trim();
+        const batch = String(req.query.batch || "").trim();
+        const reason = String(req.query.reason || "").trim();
+        const rows = await getEligibleMailingRecipients({ search, course, batch, reason, limit: 100 });
 
-        if (!subject || !message) {
-            return res.status(400).json({ error: "Subject and message are required" });
-        }
-
-        let recipientRows: Array<{ email: string; name: string }> = [];
-
-        if (recipients === "all" || !recipients) {
-            recipientRows = parseRows(await db.query(
-                `SELECT p.email, p.name
-                 FROM profiles p
-                 INNER JOIN user_roles ur ON ur.user_id = p.id
-                 WHERE ur.role = 'alumni' AND p.email IS NOT NULL AND p.email <> ''`
-            ));
-        } else if (recipients === "pending_tracer") {
-            const tracerTable = await getTracerTableName();
-            recipientRows = parseRows(await db.query(
-                `SELECT p.email, p.name
-                 FROM profiles p
-                 INNER JOIN user_roles ur ON ur.user_id = p.id
-                 LEFT JOIN ${tracerTable} gt ON gt.user_id = p.id
-                 WHERE ur.role = 'alumni'
-                   AND gt.user_id IS NULL
-                   AND p.email IS NOT NULL
-                   AND p.email <> ''`
-            ));
-        }
-
-        if (recipientRows.length > 0) {
-            await Promise.all(recipientRows.map((recipient) =>
-                sendMail({
-                    to: recipient.email,
-                    subject,
-                    text: message,
-                    html: `
-                        <p>Hello ${recipient.name || "Alumni"},</p>
-                        <p>${String(message).replace(/\n/g, "<br />")}</p>
-                    `
-                })
-            ));
-        }
-
-        const notifId = uuidv4();
-        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-
-        await db.execute(
-            `INSERT INTO notifications (id, subject, message, type, status, recipients, recipient_count, sent_at, created_at, created_by)
-             VALUES (?, ?, ?, 'email', 'sent', ?, ?, ?, ?, ?)`,
-            [notifId, subject, message, recipients || "all", recipientRows.length, now, now, req.user?.id || null]
-        );
-
-        const alumniUserIds = await getAlumniUserIds();
-        await createUserNotifications({
-            userIds: alumniUserIds,
-            title: subject,
-            message,
-            category: "notification",
-            linkUrl: "/alumni",
-            actorId: req.user?.id || null
-        });
-
-        res.json({ success: true, id: notifId, recipientCount: recipientRows.length });
+        res.json(rows);
     } catch (err: unknown) {
-        console.error("SEND NOTIFICATION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        console.error("GET MAILING ALUMNI ERROR:", err);
+        res.status(500).json({ error: "Unable to load alumni recipients." });
     }
 });
 
-app.use(cors());
-app.use(express.json());
+app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const rows = parseRows(await db.query(
+            `SELECT
+                el.id,
+                el.alumni_id,
+                p.name AS alumni_name,
+                p.student_id,
+                el.recipient_email,
+                el.email_purpose,
+                el.subject,
+                el.message,
+                el.status,
+                el.error_message,
+                el.sent_at,
+                el.created_at
+             FROM email_logs el
+             LEFT JOIN profiles p ON p.id = el.alumni_id
+             ORDER BY el.created_at DESC
+             LIMIT 100`
+        ));
 
-app.get("/api/admin/tracer/:id/pdf/preview", authenticateToken, assertTracerAdminAccess, previewTracerPdfByRecordId);
-app.get("/api/admin/tracer/:id/pdf", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
-app.use("/api/email", emailRoutes);
-app.use("/api/tracer", tracerRoutes);
+        res.json(rows);
+    } catch (err: unknown) {
+        console.error("GET EMAIL LOGS ERROR:", err);
+        res.status(500).json({ error: "Unable to load email logs." });
+    }
+});
+
+app.get("/api/admin/mailing/filters", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const rows = await getEligibleMailingRecipients({ limit: 500 });
+        const courses = Array.from(new Set(rows.map((row) => row.course).filter(Boolean))).sort();
+        const batches = Array.from(new Set(rows.map((row) => row.batch).filter(Boolean))).sort();
+
+        res.json({
+            courses,
+            batches,
+            reasons: Object.entries(MAILING_REMINDER_REASONS).map(([value, label]) => ({ value, label }))
+        });
+    } catch (err: unknown) {
+        console.error("GET MAILING FILTERS ERROR:", err);
+        res.status(500).json({ error: "Unable to load mailing filters." });
+    }
+});
+
+app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+
+    try {
+        const { alumniId, alumniIds, purpose, subject, message, confirmed } = req.body || {};
+        const normalizedSubject = String(subject || "").trim();
+        const normalizedMessage = String(message || "").trim();
+        const requestedAlumniIds = Array.isArray(alumniIds)
+            ? alumniIds
+            : alumniId
+                ? [alumniId]
+                : [];
+        const selectedAlumniIds = requestedAlumniIds
+            .map((value) => String(value || "").trim())
+            .filter(Boolean);
+        const uniqueAlumniIds = Array.from(new Set(selectedAlumniIds));
+
+        if (confirmed !== true) {
+            return res.status(400).json({ error: "Preview and confirm the email before sending." });
+        }
+
+        if (uniqueAlumniIds.length === 0) {
+            return res.status(400).json({ error: "Select at least one alumnus before sending email." });
+        }
+
+        if (uniqueAlumniIds.length !== selectedAlumniIds.length) {
+            return res.status(400).json({ error: "Remove duplicate alumni selections before sending email." });
+        }
+
+        if (uniqueAlumniIds.length > 10) {
+            return res.status(400).json({ error: "You can send email to a maximum of 10 selected alumni at once." });
+        }
+
+        if (!isMailingPurpose(purpose)) {
+            return res.status(400).json({ error: "Choose a valid email purpose." });
+        }
+
+        if (!normalizedSubject || !normalizedMessage) {
+            return res.status(400).json({ error: "Subject and message are required." });
+        }
+
+        if (normalizedSubject.length > 255) {
+            return res.status(400).json({ error: "Subject must be 255 characters or less." });
+        }
+
+        const recipients = await getEligibleMailingRecipients({ alumniIds: uniqueAlumniIds, limit: 10 });
+
+        if (recipients.length !== uniqueAlumniIds.length) {
+            return res.status(404).json({ error: "One or more selected alumni are not eligible for follow-up or have no valid email address." });
+        }
+
+        const placeholders = uniqueAlumniIds.map(() => "?").join(", ");
+        const duplicateRows = parseRows(await db.query(
+            `SELECT alumni_id, created_at
+             FROM email_logs
+             WHERE alumni_id IN (${placeholders})
+               AND email_purpose = ?
+               AND subject = ?
+               AND status = 'sent'
+               AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
+            [...uniqueAlumniIds, purpose, normalizedSubject]
+        ));
+
+        if (duplicateRows.length > 0) {
+            return res.status(409).json({ error: "This email was already sent recently to one or more selected alumni. Please wait before sending it again." });
+        }
+
+        const sentRecipients: Array<{ id: string; name: unknown; email: string }> = [];
+        const failedRecipients: Array<{ id: string; name: unknown; email: string; error: string; logId: string }> = [];
+
+        for (const recipient of recipients) {
+            const logId = uuidv4();
+            const recipientEmail = normalizeEmail(recipient.email);
+            const recipientMessage = buildRecipientMailingMessage(normalizedMessage, recipient);
+
+            try {
+                const result = await sendTargetedAlumniEmail({
+                    to: recipientEmail,
+                    name: String(recipient.name || "Alumni"),
+                    purpose,
+                    subject: normalizedSubject,
+                    message: recipientMessage
+                });
+
+                await db.execute(
+                    `INSERT INTO email_logs
+                        (id, alumni_id, recipient_email, email_purpose, subject, message, status, error_message, sent_at, created_at, created_by, provider_message_id)
+                     VALUES (?, ?, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?, ?)`,
+                    [logId, recipient.id, recipientEmail, purpose, normalizedSubject, recipientMessage, now, now, req.user?.id || null, result.messageId]
+                );
+
+                sentRecipients.push({
+                    id: String(recipient.id),
+                    name: recipient.name,
+                    email: recipientEmail
+                });
+            } catch (sendError: unknown) {
+                const safeError = getSafeMailingError(sendError);
+
+                await db.execute(
+                    `INSERT INTO email_logs
+                        (id, alumni_id, recipient_email, email_purpose, subject, message, status, error_message, sent_at, created_at, created_by, provider_message_id)
+                     VALUES (?, ?, ?, ?, ?, ?, 'failed', ?, NULL, ?, ?, NULL)`,
+                    [logId, recipient.id, recipientEmail, purpose, normalizedSubject, recipientMessage, safeError, now, req.user?.id || null]
+                );
+
+                failedRecipients.push({
+                    id: String(recipient.id),
+                    name: recipient.name,
+                    email: recipientEmail,
+                    error: safeError,
+                    logId
+                });
+            }
+        }
+
+        if (sentRecipients.length > 0) {
+            const recipientLabel =
+                sentRecipients.length === 1
+                    ? String(sentRecipients[0].name || sentRecipients[0].email)
+                    : `${sentRecipients.length} selected alumni`;
+
+            await db.execute(
+                `INSERT INTO notifications (id, subject, message, type, status, recipients, recipient_count, sent_at, created_at, created_by)
+                 VALUES (?, ?, ?, 'email', 'sent', ?, ?, ?, ?, ?)`,
+                [uuidv4(), normalizedSubject, normalizedMessage, recipientLabel, sentRecipients.length, now, now, req.user?.id || null]
+            );
+        }
+
+        if (sentRecipients.length === 0) {
+            return res.status(502).json({
+                error: "Email was not sent to any selected alumnus. Check the email logs for safe error messages.",
+                failedCount: failedRecipients.length
+            });
+        }
+
+        return res.status(failedRecipients.length > 0 ? 207 : 200).json({
+            success: failedRecipients.length === 0,
+            message:
+                failedRecipients.length > 0
+                    ? `Email sent to ${sentRecipients.length} selected alumni. ${failedRecipients.length} failed.`
+                    : `Email sent to ${sentRecipients.length} selected alumni.`,
+            sentCount: sentRecipients.length,
+            failedCount: failedRecipients.length,
+            recipients: sentRecipients,
+            failures: failedRecipients.map(({ id, name, email, logId }) => ({ id, name, email, logId }))
+        });
+    } catch (err: unknown) {
+        console.error("SEND TARGETED MAIL ERROR:", {
+            message: getErrorMessage(err)
+        });
+        res.status(500).json({ error: "Unable to send email right now." });
+    }
+});
+
+app.post("/api/notifications/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        return res.status(400).json({
+            error: "Bulk mailing is disabled. Use the targeted mailing endpoint and select up to 10 alumni."
+        });
+    } catch (err: unknown) {
+        console.error("SEND NOTIFICATION ERROR:", err);
+        res.status(500).json({ error: "Unable to send notification." });
+    }
+});
+
+app.post("/api/admin/tracer/bulk-download", authenticateToken, assertTracerAdminAccess, bulkDownloadTracerPdfs);
+app.get("/api/admin/tracer/:alumniId/pdf/preview", authenticateToken, assertTracerAdminAccess, previewTracerPdfByRecordId);
+app.get("/api/admin/tracer/:alumniId/pdf/download", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
+app.get("/api/admin/tracer/:alumniId/pdf", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
+app.get("/api/admin/tracer/:alumniId", authenticateToken, assertTracerAdminAccess, getAdminTracerRecord);
+app.use("/api/email", authenticateToken, requireAdmin, emailRoutes);
 
 export default app;

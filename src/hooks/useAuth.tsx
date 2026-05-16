@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { API_URL, clearAuthToken, getAuthToken, setAuthToken } from "@/lib/api";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { API_URL, clearAuthToken, getAuthToken, readApiResponse, setAuthToken } from "@/lib/api";
 
 export type AppRole =
     | "alumni"
@@ -21,6 +21,15 @@ export interface Profile {
 export interface User {
     id: string;
     email: string;
+}
+
+interface AuthPayload {
+    token?: string;
+    user: User;
+    profile?: Profile | null;
+    role?: AppRole | null;
+    isTracerCompleted?: boolean;
+    error?: string;
 }
 
 export interface AuthState {
@@ -62,27 +71,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [isTracerCompleted, setIsTracerCompleted] = useState(false);
 
-    const clearAuthState = () => {
+    const clearAuthState = useCallback(() => {
         setUser(null);
         setProfile(null);
         setRole(null);
         setSession(null);
         setIsTracerCompleted(false);
-    };
+    }, []);
 
-    const fetchSession = async (token: string) => {
+    const fetchSession = useCallback(async (token: string) => {
         try {
             const res = await fetch(`${API_URL}/auth/session`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
-            if (!res.ok) throw new Error("Invalid session");
-
-            const data = await res.json();
+            const data = await readApiResponse<AuthPayload>(res);
 
             setUser(data.user);
-            setProfile(data.profile);
-            setRole(data.role);
+            setProfile(data.profile || null);
+            setRole(data.role || "alumni");
             setSession(token);
             setIsTracerCompleted(Boolean(data.isTracerCompleted));
         } catch (error) {
@@ -91,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [clearAuthState]);
 
     useEffect(() => {
         const token = getAuthToken();
@@ -100,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
             setLoading(false);
         }
-    }, []);
+    }, [fetchSession]);
 
     const signIn = async (email: string, password: string, rememberMe = false) => {
         try {
@@ -110,11 +117,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 body: JSON.stringify({ email, password }),
             });
 
-            const data = await res.json();
-
-            if (!res.ok) {
-                return { error: data.error || "Login failed" };
-            }
+            const data = await readApiResponse<AuthPayload>(res);
+            if (!data.token) return { error: data.error || "Login failed" };
 
             setAuthToken(data.token, rememberMe);
 

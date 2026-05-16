@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Download, Eye, Loader2, Save } from "lucid
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
 import SectionA from "./SectionA";
 import SectionB from "./SectionB";
 import SectionC from "./SectionC";
@@ -100,7 +101,12 @@ function normalizeFormSource(envelope: TracerEnvelope | null, defaults: Partial<
   return readDraft(defaults);
 }
 
-async function fetchTracerBlob(url: string) {
+function getFileNameFromDisposition(disposition: string | null, fallback: string) {
+  const match = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  return match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : fallback;
+}
+
+async function fetchTracerBlob(url: string, fallbackFileName: string) {
   const response = await fetch(url, {
     headers: getAuthHeaders(),
   });
@@ -109,33 +115,25 @@ async function fetchTracerBlob(url: string) {
     await readApiResponse(response);
   }
 
-  return response.blob();
+  return {
+    blob: await response.blob(),
+    fileName: getFileNameFromDisposition(response.headers.get("content-disposition"), fallbackFileName),
+  };
 }
 
-async function downloadTracerFile(format: "pdf" | "docx") {
-  const blob = await fetchTracerBlob(`${API_URL}/tracer/export/me?format=${format}`);
+async function downloadTracerPdf() {
+  const { blob, fileName } = await fetchTracerBlob(`${API_URL}/tracer/my-pdf/download`, "graduate-tracer.pdf");
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
-  anchor.download = format === "pdf" ? "graduate-tracer.pdf" : "graduate-tracer.docx";
+  anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(objectUrl);
 }
 
-async function previewTracerPdf() {
-  const blob = await fetchTracerBlob(`${API_URL}/tracer/export/me/preview`);
-  const objectUrl = URL.createObjectURL(blob);
-  const previewWindow = window.open(objectUrl, "_blank", "noopener,noreferrer");
-
-  if (!previewWindow) {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.target = "_blank";
-    anchor.rel = "noopener noreferrer";
-    anchor.click();
-  }
-
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+async function previewTracerPdf(previewWindow: Window | null) {
+  const { blob, fileName } = await fetchTracerBlob(`${API_URL}/tracer/my-pdf/preview`, "graduate-tracer-preview.pdf");
+  showPdfPreview(previewWindow, blob, fileName, "Graduate Tracer PDF Preview");
 }
 
 export default function TracerForm() {
@@ -163,7 +161,7 @@ export default function TracerForm() {
   const [loading, setLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [downloading, setDownloading] = useState<"preview-pdf" | "download-pdf" | "docx" | null>(null);
+  const [downloading, setDownloading] = useState<"preview-pdf" | "download-pdf" | null>(null);
   const [tracerState, setTracerState] = useState<TracerEnvelope | null>(null);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
@@ -392,7 +390,7 @@ export default function TracerForm() {
     const loadTracer = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`${API_URL}/tracer`, { headers: getAuthHeaders() });
+        const response = await fetch(`${API_URL}/tracer/my-form`, { headers: getAuthHeaders() });
         const payload = await readApiResponse<TracerEnvelope>(response);
         setTracerState(payload);
         setForm(normalizeFormSource(payload, defaultValues));
@@ -426,8 +424,8 @@ export default function TracerForm() {
     try {
       setSavingDraft(true);
       setFeedback(null);
-      const response = await fetch(`${API_URL}/tracer/draft`, {
-        method: "PUT",
+      const response = await fetch(`${API_URL}/tracer/save-draft`, {
+        method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ ched_payload: form }),
       });
@@ -486,10 +484,10 @@ export default function TracerForm() {
     }
   };
 
-  const handleDownload = async (format: "pdf" | "docx") => {
+  const handleDownload = async () => {
     try {
-      setDownloading(format === "pdf" ? "download-pdf" : "docx");
-      await downloadTracerFile(format);
+      setDownloading("download-pdf");
+      await downloadTracerPdf();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to export tracer file.";
       setFeedback({ type: "error", message });
@@ -500,11 +498,14 @@ export default function TracerForm() {
   };
 
   const handlePreviewPdf = async () => {
+    const previewWindow = openPdfPreviewWindow("Graduate Tracer PDF Preview");
+
     try {
       setDownloading("preview-pdf");
-      await previewTracerPdf();
+      await previewTracerPdf(previewWindow);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open tracer preview.";
+      showPdfPreviewError(previewWindow, message, "Graduate Tracer PDF Preview");
       setFeedback({ type: "error", message });
       toast.error(message);
     } finally {
@@ -522,18 +523,18 @@ export default function TracerForm() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Official CHED Form</p>
-            <h2 className="mt-2 text-2xl font-bold text-navy-dark">
+            <h2 className="mt-2 text-xl font-bold text-navy-dark md:text-2xl">
               {hasCompletedSubmission ? "Graduate Tracer Submission Saved" : "Complete Graduate Tracer Survey"}
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Fill out the official graduate tracer survey, save a server draft anytime, then submit or update your accomplished CHED response whenever needed.
             </p>
           </div>
-          <div className="min-w-[260px] rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:min-w-[260px]">
             <p className="text-xs font-medium text-muted-foreground">Progress</p>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
               <div className="h-full rounded-full bg-navy transition-all" style={{ width: `${completion}%` }} />
@@ -592,7 +593,7 @@ export default function TracerForm() {
               type="button"
               onClick={() => void handleSaveDraft()}
               disabled={savingDraft}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto md:min-h-0"
             >
               {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {savingDraft ? "Saving Draft..." : "Save Draft"}
@@ -601,28 +602,19 @@ export default function TracerForm() {
               type="button"
               onClick={() => void handlePreviewPdf()}
               disabled={!hasCompletedSubmission || downloading !== null}
-              className="inline-flex items-center gap-2 rounded-xl bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto md:min-h-0"
             >
               {downloading === "preview-pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
               {downloading === "preview-pdf" ? "Opening Preview..." : "Preview PDF"}
             </button>
             <button
               type="button"
-              onClick={() => void handleDownload("pdf")}
+              onClick={() => void handleDownload()}
               disabled={!hasCompletedSubmission || downloading !== null}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto md:min-h-0"
             >
               {downloading === "download-pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {downloading === "download-pdf" ? "Preparing PDF..." : "Download PDF"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleDownload("docx")}
-              disabled={!hasCompletedSubmission || downloading !== null}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {downloading === "docx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {downloading === "docx" ? "Preparing DOCX..." : "Download DOCX"}
             </button>
           </div>
         </div>
@@ -635,7 +627,7 @@ export default function TracerForm() {
         </div>
       ) : null}
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
         {activeStep.id === "sectionA" ? (
           <SectionA form={form} errors={errors} setField={setField} toggleArrayValue={toggleArrayValue} addTableRow={addTableRow} removeTableRow={removeTableRow} updateTableRow={updateTableRow} onNext={goNext} />
         ) : null}

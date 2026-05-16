@@ -15,9 +15,7 @@
   },
   "include": [
     "**/*.ts",
-    "**/*.js",
-    "../database/*.js",
-    "../test.js"
+    "**/*.js"
   ],
   "exclude": [
     "node_modules"

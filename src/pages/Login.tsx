@@ -46,7 +46,7 @@ export default function Login() {
     const { error } = await signIn(identifier, password, rememberMe);
 
     if (error) {
-      setError(error);
+      setError(error === "Invalid credentials" ? "Wrong password" : error);
       setLoading(false);
       return;
     }
@@ -62,14 +62,14 @@ export default function Login() {
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url(${salayBackground})` }}
       />
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(33,33,33,0.78),rgba(112,24,47,0.78),rgba(69,69,69,0.74))]" />
+      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(24,24,24,0.82),rgba(85,0,0,0.80),rgba(48,48,48,0.78))]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.08),transparent_26%)]" />
 
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-4">
         <div className="w-full max-w-lg">
-          <div className="overflow-hidden rounded-[30px] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,246,247,0.97))] shadow-[0_26px_70px_rgba(36,16,22,0.26)]">
+          <div className="overflow-hidden rounded-[30px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,246,247,0.98))] shadow-[0_30px_80px_rgba(0,0,0,0.36)] ring-1 ring-white/50">
             <div className="relative overflow-hidden border-b border-slate-200/90 px-6 pb-4 pt-5 sm:px-7">
-              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(92,18,38,0.98),rgba(58,58,58,0.95))]" />
+              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(85,0,0,0.98),rgba(42,42,42,0.95))]" />
               <div className="absolute -right-10 top-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
               <div className="absolute left-8 top-16 h-16 w-16 rounded-full bg-white/10 blur-xl" />
 
@@ -143,7 +143,7 @@ export default function Login() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,hsl(345_65%_28%),hsl(345_52%_36%))] px-8 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_14px_30px_rgba(91,18,36,0.24)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,hsl(0_100%_17%),hsl(0_82%_24%))] px-8 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_14px_30px_rgba(85,0,0,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                   {loading ? "Signing in..." : "Log In"}

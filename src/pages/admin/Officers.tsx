@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Archive,
   CheckCircle2,
   ImagePlus,
   Loader2,
@@ -8,13 +7,12 @@ import {
   Plus,
   Search,
   Shield,
-  Sparkles,
   Trash2,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AdminPageIntro, AdminStatCard, AdminStatsGrid } from "@/components/admin/AdminPageIntro";
+import { AdminPageIntro } from "@/components/admin/AdminPageIntro";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +20,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { API_URL, fetchApi, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type OfficerPosition =
@@ -217,8 +215,8 @@ export default function AdminOfficers() {
     setLoadingOverview(true);
     try {
       const [officersResponse, profilesResponse] = await Promise.all([
-        fetch(`${API_URL}/officers`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/profiles`, { headers: getAuthHeaders() }),
+        fetchApi(`${API_URL}/officers`, { headers: getAuthHeaders() }),
+        fetchApi(`${API_URL}/profiles`, { headers: getAuthHeaders() }),
       ]);
 
       const officersData = await readApiResponse<OfficersOverviewResponse>(officersResponse);
@@ -247,7 +245,7 @@ export default function AdminOfficers() {
   const loadSchoolYearDetail = async (schoolYearId: number) => {
     setLoadingDetail(true);
     try {
-      const response = await fetch(`${API_URL}/officers/${schoolYearId}`, {
+      const response = await fetchApi(`${API_URL}/officers/${schoolYearId}`, {
         headers: getAuthHeaders(),
       });
       const data = await readApiResponse<SchoolYearDetailResponse>(response);
@@ -306,15 +304,6 @@ export default function AdminOfficers() {
       return matchesSearch && matchesPosition;
     });
   }, [positionFilter, rosterSearch, selectedDetail]);
-
-  const stats = useMemo(() => {
-    const current = overview.schoolYears.find((item) => item.isCurrent);
-    return {
-      schoolYears: overview.schoolYears.length,
-      currentRoster: current?.officerCount || 0,
-      archivedYears: overview.schoolYears.filter((item) => !item.isCurrent).length,
-    };
-  }, [overview.schoolYears]);
 
   const missingRequiredLabels = useMemo(() => {
     return PRIMARY_SLOTS.filter((slot) => {
@@ -550,7 +539,7 @@ export default function AdminOfficers() {
     ];
 
     try {
-      const response = await fetch(`${API_URL}/officers/bundles`, {
+      const response = await fetchApi(`${API_URL}/officers/bundles`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -582,7 +571,6 @@ export default function AdminOfficers() {
         <AdminPageIntro
           eyebrow="Officer Archive"
           title="Officer bundles by school year"
-          description="Build a complete officer set, keep past rosters archived, and make the current chart sync cleanly with the alumni dashboard."
           action={
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={openEditBundle} disabled={!selectedDetail}>
@@ -596,12 +584,6 @@ export default function AdminOfficers() {
             </div>
           }
         />
-
-        <AdminStatsGrid className="xl:grid-cols-3">
-          <AdminStatCard label="School years" value={stats.schoolYears} description="Saved officer bundles" icon={<Archive className="h-4 w-4" />} toneClassName="bg-slate-100 text-slate-700" />
-          <AdminStatCard label="Current roster" value={stats.currentRoster} description="Officers in the active bundle" icon={<Users className="h-4 w-4" />} toneClassName="bg-emerald-100 text-emerald-700" />
-          <AdminStatCard label="Archive years" value={stats.archivedYears} description="Past school-year records" icon={<Sparkles className="h-4 w-4" />} toneClassName="bg-amber-100 text-amber-700" />
-        </AdminStatsGrid>
 
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
@@ -742,7 +724,7 @@ export default function AdminOfficers() {
                         ) : (
                           filteredOfficers.map((officer) => (
                             <TableRow key={officer.id} className="hover:bg-slate-50/70">
-                              <TableCell>
+                              <TableCell data-label="Photo">
                                 <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                                   {officer.photo ? (
                                     <img src={resolveAssetUrl(officer.photo) || officer.photo} alt={officer.name} className="h-full w-full object-cover" />
@@ -751,15 +733,15 @@ export default function AdminOfficers() {
                                   )}
                                 </div>
                               </TableCell>
-                              <TableCell>
+                              <TableCell data-label="Full Name">
                                 <p className="font-semibold text-navy-dark">{officer.name}</p>
                               </TableCell>
-                              <TableCell>
+                              <TableCell data-label="Position">
                                 <Badge variant="outline" className="border-navy/20 bg-navy/5 text-navy-dark">
                                   {officer.positionLabel}
                                 </Badge>
                               </TableCell>
-                              <TableCell>{officer.contactNumber || "No contact number"}</TableCell>
+                              <TableCell data-label="Contact Number">{officer.contactNumber || "No contact number"}</TableCell>
                             </TableRow>
                           ))
                         )}
@@ -776,7 +758,7 @@ export default function AdminOfficers() {
       <Dialog open={bundleOpen} onOpenChange={(open) => !savingBundle && setBundleOpen(open)}>
         <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           <DialogHeader className="space-y-2">
-            <DialogTitle className="text-2xl text-navy-dark">{bundleMode === "edit" ? "Edit Officer Bundle" : "Create Officer Bundle"}</DialogTitle>
+            <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{bundleMode === "edit" ? "Edit Officer Bundle" : "Create Officer Bundle"}</DialogTitle>
             <DialogDescription>
               Use solid officer cards, complete the required set, and save the bundle to sync the current organization chart.
             </DialogDescription>

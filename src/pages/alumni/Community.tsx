@@ -65,6 +65,7 @@ export default function Community() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [postDialogOpen, setPostDialogOpen] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<FeedPost | null>(null);
   const [postForm, setPostForm] = useState<PostFormState>(BLANK_POST_FORM);
   const [submittingPost, setSubmittingPost] = useState(false);
   const [commentsByPost, setCommentsByPost] = useState<Record<number, FeedComment[]>>({});
@@ -241,64 +242,70 @@ export default function Community() {
   return (
     <AlumniLayout title="Freedom Wall" subtitle="Share updates and interact with alumni posts in real time">
       <div className="space-y-6">
-        <section className="rounded-2xl border border-border bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative w-full max-w-md">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search posts"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-navy"
-              />
+        <div className="flex justify-center">
+          <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-navy-dark">Freedom Wall posts</h2>
+              <p className="text-sm text-muted-foreground">Search, filter, react, and comment on alumni posts in real time.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {CATEGORIES.map((category) => (
-                <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`rounded-full px-3 py-2 text-sm font-medium transition ${
-                    selectedCategory === category
-                      ? "bg-navy text-white"
-                      : "border border-border bg-white text-muted-foreground hover:border-navy"
-                  }`}
-                  type="button"
-                >
-                  {category}
-                </button>
-              ))}
-            </div>
-          </div>
-        </section>
 
-        {loading ? (
-          <section className="rounded-2xl border border-border bg-white p-10 text-center shadow-sm">
-            <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Loading Freedom Wall posts...</p>
-          </section>
-        ) : filteredPosts.length === 0 ? (
-          <section className="rounded-2xl border border-border bg-white p-10 text-center shadow-sm">
-            <MessageSquare className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-            <h3 className="text-base font-semibold text-navy-dark">No Freedom Wall posts yet</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Be the first to share something with the alumni community.
-            </p>
-            <Button className="mt-4" onClick={() => setPostDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Post
-            </Button>
-          </section>
-        ) : (
-          <div className="space-y-4">
+            <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative w-full max-w-md">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search posts"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-navy"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map((category) => (
+                  <button
+                    key={category}
+                    onClick={() => setSelectedCategory(category)}
+                    className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                      selectedCategory === category
+                        ? "bg-navy text-white"
+                        : "border border-slate-200 bg-white text-muted-foreground hover:border-navy"
+                    }`}
+                    type="button"
+                  >
+                    {category}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {loading ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
+                  <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Loading Freedom Wall posts...</p>
+                </div>
+              ) : filteredPosts.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
+                  <MessageSquare className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+                  <h3 className="text-base font-semibold text-navy-dark">No Freedom Wall posts yet</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Be the first to share something with the alumni community.
+                  </p>
+                  <Button className="mt-4" onClick={() => setPostDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Post
+                  </Button>
+                </div>
+              ) : (
+                <>
             {filteredPosts.map((post) => {
               const authorPhoto = resolveAssetUrl(post.authorPhoto);
-              const postImage = resolveAssetUrl(post.imageUrl);
+              const postImage = resolveAssetUrl(post.imageUrl) || post.imageUrl;
               const postComments = commentsByPost[post.id] || [];
               const isCommentsOpen = commentsOpen[post.id] ?? false;
 
               return (
-                <article key={post.id} className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+                <article key={post.id} onClick={() => setSelectedPost(post)} className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-3.5 transition hover:border-navy/30">
                   <div className="flex items-start gap-3">
                     <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-sm font-semibold text-white">
                       {authorPhoto ? (
@@ -320,21 +327,21 @@ export default function Community() {
                           .join(" | ")}
                       </p>
 
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground">{post.content}</p>
+                      <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-foreground">{post.content}</p>
 
                       {postImage && (
                         <img
                           src={postImage}
                           alt="Freedom Wall attachment"
-                          className="mt-4 h-56 w-full rounded-2xl border border-border object-cover"
+                          className="mt-3 h-40 w-40 rounded-xl border border-slate-200 object-cover sm:h-48 sm:w-48"
                         />
                       )}
 
-                      <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                         <span>{post.reactionCounts?.heart || 0} hearts</span>
                         <button
                           type="button"
-                          onClick={() => void toggleComments(post.id)}
+                          onClick={(event) => { event.stopPropagation(); void toggleComments(post.id); }}
                           className="inline-flex items-center gap-1 transition hover:text-navy"
                         >
                           <MessageCircle className="h-3.5 w-3.5" />
@@ -342,11 +349,11 @@ export default function Community() {
                         </button>
                       </div>
 
-                      <div className="mt-4 flex">
+                      <div className="mt-3 flex">
                         <button
                           type="button"
                           disabled={reactingPostId === post.id}
-                          onClick={() => void reactToPost(post.id, "heart")}
+                          onClick={(event) => { event.stopPropagation(); void reactToPost(post.id, "heart"); }}
                           className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
                             post.currentUserReaction === "heart"
                               ? "border-rose-500 bg-rose-500 text-white shadow-sm"
@@ -359,7 +366,7 @@ export default function Community() {
                       </div>
 
                       {isCommentsOpen && (
-                        <div className="mt-4 rounded-2xl border border-border bg-muted/15 p-4">
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
                           {loadingComments[post.id] ? (
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -372,7 +379,7 @@ export default function Community() {
                               {postComments.map((comment) => {
                                 const commentPhoto = resolveAssetUrl(comment.authorPhoto);
                                 return (
-                                  <div key={comment.id} className="rounded-xl border border-border bg-white p-3">
+                                  <div key={comment.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                     <div className="flex items-start gap-3">
                                       <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-xs font-semibold text-white">
                                         {commentPhoto ? (
@@ -402,6 +409,7 @@ export default function Community() {
                           <div className="mt-4 flex gap-2">
                             <Input
                               value={commentInputs[post.id] || ""}
+                              onClick={(event) => event.stopPropagation()}
                               onChange={(event) =>
                                 setCommentInputs((current) => ({ ...current, [post.id]: event.target.value }))
                               }
@@ -416,7 +424,7 @@ export default function Community() {
                             />
                             <Button
                               type="button"
-                              onClick={() => void submitComment(post.id)}
+                              onClick={(event) => { event.stopPropagation(); void submitComment(post.id); }}
                               disabled={submittingComment[post.id]}
                             >
                               {submittingComment[post.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -429,23 +437,48 @@ export default function Community() {
                 </article>
               );
             })}
+                </>
+              )}
+            </div>
+          </section>
           </div>
-        )}
       </div>
 
       <button
         type="button"
         onClick={() => setPostDialogOpen(true)}
-        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(91,18,36,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
+        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
       >
         <Plus className="h-4 w-4" />
         Post
       </button>
 
+      <Dialog open={Boolean(selectedPost)} onOpenChange={(open) => !open && setSelectedPost(null)}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+          {selectedPost && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="pr-8 text-xl text-navy-dark">{selectedPost.authorName}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="outline">{selectedPost.category}</Badge>
+                  <span>{[selectedPost.authorCourse, selectedPost.authorBatch ? `Batch ${selectedPost.authorBatch}` : null, formatDateTime(selectedPost.createdAt)].filter(Boolean).join(" | ")}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">{selectedPost.content}</p>
+                {(resolveAssetUrl(selectedPost.imageUrl) || selectedPost.imageUrl) && (
+                  <img src={resolveAssetUrl(selectedPost.imageUrl) || selectedPost.imageUrl || ""} alt="Freedom Wall attachment" className="mx-auto aspect-square w-full max-w-sm rounded-xl border border-slate-200 object-cover" />
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={postDialogOpen} onOpenChange={(open) => !submittingPost && setPostDialogOpen(open)}>
         <DialogContent className="max-w-2xl border-slate-200 bg-white shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="text-xl text-navy-dark">Create Freedom Wall Post</DialogTitle>
+            <DialogTitle className="pr-8 text-xl text-navy-dark">Create Freedom Wall Post</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-5">
@@ -495,11 +528,11 @@ export default function Community() {
               <img
                 src={postForm.imageUrl}
                 alt="Post preview"
-                className="h-52 w-full rounded-2xl border border-slate-200 object-cover"
+                className="h-40 w-40 rounded-xl border border-slate-200 object-cover sm:h-48 sm:w-48"
               />
             )}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" onClick={() => setPostDialogOpen(false)} disabled={submittingPost}>
                 Cancel
               </Button>

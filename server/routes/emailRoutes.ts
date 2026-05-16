@@ -1,5 +1,5 @@
 import express from "express";
-import { TransactionalEmailsClient } from "@getbrevo/brevo/transactionalEmails";
+import { sendTransactionalEmail } from "../services/emailService";
 
 const router = express.Router();
 
@@ -11,26 +11,18 @@ router.post("/send-reminder", async (req, res) => {
       return res.status(400).json({ success: false, message: "No emails provided" });
     }
 
+    if (emails.length > 10) {
+      return res.status(400).json({ success: false, message: "Select a maximum of 10 alumni before sending email." });
+    }
+
     if (!subject || !message) {
       return res.status(400).json({ success: false, message: "Subject and message are required" });
     }
 
-    if (!process.env.BREVO_API_KEY || !process.env.BREVO_SENDER_EMAIL) {
-      return res.status(500).json({ success: false, message: "Brevo environment variables are missing" });
-    }
-
-    const emailAPI = new TransactionalEmailsClient({
-      apiKey: process.env.BREVO_API_KEY,
-    });
-
-    await emailAPI.sendTransacEmail({
-      sender: {
-        name: process.env.BREVO_SENDER_NAME || "Salay Community College",
-        email: process.env.BREVO_SENDER_EMAIL,
-      },
-      to: emails.map((address: string) => ({ email: address })),
+    await sendTransactionalEmail({
+      to: emails.map((address: string) => String(address).trim().toLowerCase()).filter(Boolean),
       subject: String(subject),
-      htmlContent: `
+      html: `
         <h2>Alumni Reminder</h2>
         <p>${String(message)}</p>
         <br/>

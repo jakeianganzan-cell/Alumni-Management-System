@@ -10,6 +10,10 @@ lerna-debug.log*
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+!server/.env.example
+.vercel
 *.log
 
 # Editor directories and files

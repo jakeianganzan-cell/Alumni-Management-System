@@ -30,6 +30,24 @@ const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || "root";
 const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
 const DEFAULT_PASSWORD = process.env.SEED_PASSWORD || "Password123!";
 
+const parseBooleanEnv = (value: string | undefined) =>
+  ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
+
+const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_ENABLED =
+  parseBooleanEnv(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED) ||
+  Boolean(DB_SSL_CA);
+const DB_SSL_REJECT_UNAUTHORIZED = process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false";
+
+const getSslConfig = () => {
+  if (!DB_SSL_ENABLED) return undefined;
+
+  return {
+    rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED,
+    ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+  };
+};
+
 const escapeIdentifier = (value: string) => `\`${value.replace(/`/g, "``")}\``;
 
 const adminUsers: AdminSeed[] = [
@@ -56,7 +74,7 @@ const alumni: AlumniSeed[] = [
     course: "BTLED",
     batchYear: "2018",
     employmentStatus: "Employed - Public School Teacher",
-    profileImage: "https://ui-avatars.com/api/?name=Jessa+Marie+Cabahug&background=5b1224&color=fff",
+    profileImage: "https://ui-avatars.com/api/?name=Jessa+Marie+Cabahug&background=550000&color=fff",
     contactNumber: "09171230001",
   },
   {
@@ -67,7 +85,7 @@ const alumni: AlumniSeed[] = [
     course: "BS ENTREP",
     batchYear: "2019",
     employmentStatus: "Self-employed - Food Cart Owner",
-    profileImage: "https://ui-avatars.com/api/?name=Mark+Anthony+Paderanga&background=7f1d1d&color=fff",
+    profileImage: "https://ui-avatars.com/api/?name=Mark+Anthony+Paderanga&background=550000&color=fff",
     contactNumber: "09171230002",
   },
   {
@@ -100,7 +118,7 @@ const alumni: AlumniSeed[] = [
     course: "BTLED",
     batchYear: "2022",
     employmentStatus: "Employed - Skills Trainer",
-    profileImage: "https://ui-avatars.com/api/?name=Angelica+Mae+Ybanez&background=5b1224&color=fff",
+    profileImage: "https://ui-avatars.com/api/?name=Angelica+Mae+Ybanez&background=550000&color=fff",
     contactNumber: "09171230005",
   },
   {
@@ -144,7 +162,7 @@ const alumni: AlumniSeed[] = [
     course: "BTLED",
     batchYear: "2017",
     employmentStatus: "Employed - TESDA Assessor",
-    profileImage: "https://ui-avatars.com/api/?name=Ma+Lourdes+Quijano&background=5b1224&color=fff",
+    profileImage: "https://ui-avatars.com/api/?name=Ma+Lourdes+Quijano&background=550000&color=fff",
     contactNumber: "09171230009",
   },
   {
@@ -155,7 +173,7 @@ const alumni: AlumniSeed[] = [
     course: "BS ENTREP",
     batchYear: "2016",
     employmentStatus: "Employed - Cooperative Manager",
-    profileImage: "https://ui-avatars.com/api/?name=Brian+Estrella&background=7f1d1d&color=fff",
+    profileImage: "https://ui-avatars.com/api/?name=Brian+Estrella&background=550000&color=fff",
     contactNumber: "09171230010",
   },
 ];
@@ -171,7 +189,9 @@ const wallPostIds = Array.from({ length: 20 }, (_, index) => 8101 + index);
 const wallCommentIds = Array.from({ length: 50 }, (_, index) => 9001 + index);
 const surveyIds = Array.from({ length: 6 }, (_, index) => 9101 + index);
 const surveyQuestionIds = Array.from({ length: 18 }, (_, index) => 9201 + index);
+const dashboardSlideIds = Array.from({ length: 4 }, (_, index) => 9501 + index);
 const eventCommentIds = Array.from({ length: 24 }, (_, index) => 12001 + index);
+const officerSchoolYearLabels = ["2024 - 2025", "2025 - 2026"];
 
 const image = (slug: string) => `https://images.unsplash.com/${slug}?auto=format&fit=crop&w=1200&q=80`;
 
@@ -181,6 +201,7 @@ async function ensureDatabase() {
     port: DB_PORT,
     user: DB_USER,
     password: DB_PASSWORD,
+    ssl: getSslConfig(),
   });
 
   await connection.query(`CREATE DATABASE IF NOT EXISTS ${escapeIdentifier(DB_NAME)}`);
@@ -333,6 +354,7 @@ async function createTables(conn: PoolConnection) {
       alumni_id VARCHAR(36) NOT NULL,
       response_status VARCHAR(50) NOT NULL,
       attendance_status VARCHAR(50) NOT NULL,
+      verification_status VARCHAR(50) DEFAULT 'Pending',
       checked_in_at DATETIME NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
@@ -355,6 +377,32 @@ async function createTables(conn: PoolConnection) {
       FOREIGN KEY (parent_id) REFERENCES event_comments(id) ON DELETE SET NULL
     )
   `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS dashboard_slides (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      caption TEXT,
+      media_type VARCHAR(30) NOT NULL DEFAULT 'image',
+      image_url LONGTEXT NOT NULL,
+      link_url TEXT,
+      is_highlighted TINYINT(1) NOT NULL DEFAULT 0,
+      display_order INT NOT NULL DEFAULT 0,
+      status VARCHAR(30) NOT NULL DEFAULT 'active',
+      created_by VARCHAR(36) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  try {
+    await conn.query("ALTER TABLE dashboard_slides ADD COLUMN media_type VARCHAR(30) NOT NULL DEFAULT 'image' AFTER caption");
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.toLowerCase().includes("duplicate column")) {
+      throw error;
+    }
+  }
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS achievements (
@@ -563,6 +611,7 @@ async function createTables(conn: PoolConnection) {
   `);
 
   await ensureColumn(conn, "user_roles", "archived", "archived TINYINT(1) NOT NULL DEFAULT 0");
+  await ensureColumn(conn, "event_rsvps", "verification_status", "verification_status VARCHAR(50) DEFAULT 'Pending'");
   await ensureColumn(conn, "announcements", "google_form_link", "google_form_link TEXT NULL");
   await ensureColumn(conn, "announcements", "approval_status", "approval_status VARCHAR(50) NOT NULL DEFAULT 'approved'");
   await ensureColumn(conn, "announcements", "created_by", "created_by VARCHAR(36) NULL");
@@ -596,6 +645,7 @@ async function clearDemoData(conn: PoolConnection) {
   const wallCommentPlaceholders = placeholders(wallCommentIds);
   const surveyPlaceholders = placeholders(surveyIds);
   const surveyQuestionPlaceholders = placeholders(surveyQuestionIds);
+  const dashboardSlidePlaceholders = placeholders(dashboardSlideIds);
   const eventCommentPlaceholders = placeholders(eventCommentIds);
 
   await conn.query("SET FOREIGN_KEY_CHECKS = 0");
@@ -652,11 +702,19 @@ async function clearDemoData(conn: PoolConnection) {
     ...announcementIds,
     ...userIds,
   ]);
+  await conn.query(`DELETE FROM dashboard_slides WHERE id IN (${dashboardSlidePlaceholders}) OR created_by IN (${userPlaceholders})`, [
+    ...dashboardSlideIds,
+    ...userIds,
+  ]);
   await conn.query(`DELETE FROM events WHERE id IN (${eventPlaceholders})`, eventIds);
   await conn.query(`DELETE FROM announcements WHERE id IN (${announcementPlaceholders}) OR created_by IN (${userPlaceholders})`, [
     ...announcementIds,
     ...userIds,
   ]);
+  await conn.query(
+    `DELETE FROM officer_school_year WHERE label IN (${placeholders(officerSchoolYearLabels)})`,
+    officerSchoolYearLabels,
+  );
   await conn.query(`DELETE FROM engagement_metrics WHERE alumni_id IN (${userPlaceholders})`, userIds);
   await conn.query(`DELETE FROM tracer_form WHERE user_id IN (${userPlaceholders})`, userIds);
   await conn.query(`DELETE FROM alumni WHERE id IN (${userPlaceholders}) OR email IN (${emailPlaceholders})`, [
@@ -696,7 +754,7 @@ async function insertUsers(conn: PoolConnection, passwordHash: string) {
       "Administration",
       "2026",
       "088-555-0100",
-      `https://ui-avatars.com/api/?name=${encodeURIComponent(admin.fullName)}&background=5b1224&color=fff`,
+      `https://ui-avatars.com/api/?name=${encodeURIComponent(admin.fullName)}&background=550000&color=fff`,
       "2026-04-01 08:00:00",
     ]);
     await execute(conn, "INSERT INTO user_roles (user_id, role, archived) VALUES (?, ?, 0)", [admin.id, admin.role]);
@@ -795,6 +853,14 @@ async function insertAnnouncementsAndEvents(conn: PoolConnection) {
   ];
 
   for (const [index, row] of records.slice(0, 8).entries()) {
+    const createdBy = row[12] as string;
+    const approvedBy = row[13] as string | null;
+    const adminOwnerId = adminIds.includes(createdBy)
+      ? createdBy
+      : approvedBy && adminIds.includes(approvedBy)
+        ? approvedBy
+        : null;
+
     await execute(
       conn,
       `INSERT INTO events
@@ -814,14 +880,14 @@ async function insertAnnouncementsAndEvents(conn: PoolConnection) {
         row[17] as number,
         row[18] as number,
         row[19] as number,
-        row[12] as string,
-        row[13] as string | null,
+        createdBy,
+        approvedBy,
         row[11] as string,
         row[20] as string,
         row[3] as string,
         row[4] as string | null,
         eventTypeLabels[index],
-        (row[12] as string) || adminUsers[0].id,
+        adminOwnerId,
       ],
     );
   }
@@ -868,12 +934,13 @@ async function insertEventRsvpsAndComments(conn: PoolConnection) {
       "INSERT INTO event_registrations (event_id, alumni_id, status, created_at) VALUES (?, ?, ?, ?)",
       [eventId, alumniId, appStatus, `2026-04-${String(10 + (index % 18)).padStart(2, "0")} 09:00:00`],
     );
-    await execute(conn, "INSERT INTO event_rsvps (id, event_id, alumni_id, response_status, attendance_status, checked_in_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+    await execute(conn, "INSERT INTO event_rsvps (id, event_id, alumni_id, response_status, attendance_status, verification_status, checked_in_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
       6201 + index,
       eventId as number,
       alumniId as string,
       responseStatus as string,
       attendanceStatus as string,
+      index % 5 === 0 ? "Not Verified" : index % 3 === 0 ? "Verified" : "Pending",
       checkedInAt as string | null,
       `2026-04-${String(10 + (index % 18)).padStart(2, "0")} 09:00:00`,
     ]);
@@ -1236,6 +1303,25 @@ async function insertSurveys(conn: PoolConnection) {
   }
 }
 
+async function insertDashboardSlides(conn: PoolConnection) {
+  const slides = [
+    [9501, "Grand Alumni Homecoming", "Registration and batch parade reminders for the 2026 homecoming.", "image", image("photo-1523050854058-8df90110c9f1"), "/alumni/announcements", 1, 1, "active", adminUsers[0].id],
+    [9502, "Scholarship Drive", "Support current SaCC students through the alumni scholarship fund.", "image", image("photo-1523580846011-d3a5bc25702b"), "/alumni/donate", 1, 2, "active", adminUsers[0].id],
+    [9503, "Career Mentorship Night", "Alumni professionals sharing workplace preparation with graduating students.", "youtube", "https://www.youtube.com/embed/ScMzIvxBSi4?autoplay=1&mute=1&playsinline=1&rel=0&enablejsapi=1", "/alumni/announcements", 0, 3, "active", adminUsers[1].id],
+    [9504, "Monthly Alumni Newsletter", "Archived newsletter artwork retained for admin slideshow testing.", "image", image("photo-1504711434969-e33886168f5c"), "/alumni/about", 0, 4, "inactive", adminUsers[1].id],
+  ];
+
+  for (const slide of slides) {
+    await execute(
+      conn,
+      `INSERT INTO dashboard_slides
+        (id, title, caption, media_type, image_url, link_url, is_highlighted, display_order, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      slide as DbValue[],
+    );
+  }
+}
+
 async function insertEngagementMetrics(conn: PoolConnection) {
   for (const item of alumni) {
     const [eventRows] = await conn.query<mysql.RowDataPacket[]>("SELECT COUNT(*) AS count FROM event_registrations WHERE alumni_id = ?", [item.id]);
@@ -1281,6 +1367,77 @@ async function insertEngagementMetrics(conn: PoolConnection) {
   }
 }
 
+async function insertOfficerBundles(conn: PoolConnection) {
+  const bundles = [
+    {
+      startYear: 2024,
+      endYear: 2025,
+      isCurrent: 0,
+      officers: [
+        ["president", alumni[1], 10, null],
+        ["vice_president", alumni[2], 20, null],
+        ["secretary", alumni[3], 30, null],
+        ["treasurer", alumni[4], 40, null],
+        ["auditor", alumni[5], 50, null],
+        ["pio", alumni[6], 60, null],
+        ["assistant_secretary", alumni[7], 70, null],
+        ["assistant_treasurer", alumni[8], 80, null],
+        ["board_member", alumni[9], 90, "Board Member"],
+      ],
+    },
+    {
+      startYear: 2025,
+      endYear: 2026,
+      isCurrent: 1,
+      officers: [
+        ["president", alumni[0], 10, null],
+        ["vice_president", alumni[1], 20, null],
+        ["secretary", alumni[2], 30, null],
+        ["treasurer", alumni[3], 40, null],
+        ["auditor", alumni[4], 50, null],
+        ["pio", alumni[5], 60, null],
+        ["assistant_secretary", alumni[6], 70, null],
+        ["assistant_treasurer", alumni[7], 80, null],
+        ["board_member", alumni[8], 90, "Board Member"],
+        ["board_member", alumni[9], 100, "Board Member"],
+      ],
+    },
+  ] as const;
+
+  await conn.query("UPDATE officer_school_year SET is_current = 0");
+
+  for (const bundle of bundles) {
+    const label = `${bundle.startYear} - ${bundle.endYear}`;
+    const [schoolYearResult] = await conn.query<ResultSetHeader>(
+      `INSERT INTO officer_school_year (start_year, end_year, label, is_current, created_by)
+       VALUES (?, ?, ?, ?, ?)`,
+      [bundle.startYear, bundle.endYear, label, bundle.isCurrent, adminUsers[0].id],
+    );
+
+    for (const [position, officer, displayOrder, customPosition] of bundle.officers) {
+      await execute(
+        conn,
+        `INSERT INTO officers
+          (school_year_id, alumni_id, position, custom_position, display_order, snapshot_name, snapshot_email, snapshot_course, snapshot_batch, snapshot_contact_number, snapshot_photo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          schoolYearResult.insertId,
+          officer.id,
+          position,
+          customPosition,
+          displayOrder,
+          officer.fullName,
+          officer.email,
+          officer.course,
+          officer.batchYear,
+          officer.contactNumber,
+          officer.profileImage,
+        ],
+      );
+    }
+  }
+}
+
 async function seed() {
   await ensureDatabase();
 
@@ -1290,6 +1447,7 @@ async function seed() {
     user: DB_USER,
     password: DB_PASSWORD,
     database: DB_NAME,
+    ssl: getSslConfig(),
     waitForConnections: true,
     connectionLimit: 5,
     queueLimit: 0,
@@ -1311,14 +1469,16 @@ async function seed() {
     await insertAchievements(conn);
     await insertFreedomWall(conn);
     await insertSurveys(conn);
+    await insertDashboardSlides(conn);
     await insertEngagementMetrics(conn);
+    await insertOfficerBundles(conn);
 
     await conn.commit();
 
     console.log("SaCC demo seed complete.");
     console.log(`Admin login: ${adminUsers[0].email} / ${DEFAULT_PASSWORD}`);
     console.log(`Alumni login: ${alumni[0].email} / ${DEFAULT_PASSWORD}`);
-    console.log("Inserted: 10 alumni, 2 admins, 10 achievements, 10 non-event announcements/surveys, 8 events, 30 RSVPs, 20 Freedom Wall posts, 50 wall comments, 80 wall reactions, and engagement metrics for every alumni.");
+    console.log("Inserted: 10 alumni, 2 admins, 10 achievements, 10 non-event announcements/surveys, 8 events, 30 RSVPs, 4 dashboard slideshow images, 20 Freedom Wall posts, 50 wall comments, 80 wall reactions, engagement metrics for every alumni, and 2 officer bundles.");
   } catch (error) {
     await conn.query("SET FOREIGN_KEY_CHECKS = 1");
     await conn.rollback();

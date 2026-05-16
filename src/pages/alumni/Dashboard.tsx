@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Calendar, Bell, Clock3, ExternalLink, MapPin, MessageCircle, Send, CheckCircle } from "lucide-react";
+import { Calendar, Bell, Clock3, MapPin, MessageCircle, Send, CheckCircle, UserCheck, XCircle, ClipboardList } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import salayBackground from "@/assets/salay-background.png";
+import DurationBadge from "@/components/DurationBadge";
+import HomepageSlideshow from "@/components/HomepageSlideshow";
 
 interface CommentData {
   id: string;
@@ -25,6 +27,12 @@ interface AnnouncementData {
   image_url: string | null;
   status: string | null;
   google_form_link?: string | null;
+  start_datetime?: string | null;
+  end_datetime?: string | null;
+  computed_status?: string | null;
+  duration_status?: string | null;
+  remaining_time?: string | null;
+  is_expired?: boolean | null;
 }
 
 interface DashboardCommentResponse {
@@ -37,9 +45,24 @@ interface DashboardCommentResponse {
 
 interface DashboardResponse {
   events?: AnnouncementData[];
+  surveys?: SurveyData[];
   registrations?: string[];
   officers?: { name: string; role: string; positionLabel?: string; photo?: string | null; schoolYear?: string | null }[];
   comments?: DashboardCommentResponse[];
+  slideshow?: SlideData[];
+}
+
+type EventRsvpStatus = "Going" | "Interested" | "Not Going";
+type EventAttendanceStatus = "Pending" | "Attended" | "Absent";
+
+interface EventRsvpState {
+  id?: string | number;
+  event_id?: string | number;
+  alumni_id?: string;
+  response_status: EventRsvpStatus;
+  attendance_status: EventAttendanceStatus;
+  checked_in_at?: string | null;
+  engagement_awarded?: number | boolean;
 }
 
 type DashboardOfficer = {
@@ -49,6 +72,45 @@ type DashboardOfficer = {
   photo?: string | null;
   schoolYear?: string | null;
 };
+
+interface SlideData {
+  id: number;
+  title: string;
+  caption: string;
+  mediaType?: string | null;
+  mediaUrl?: string | null;
+  imageUrl: string | null;
+  linkUrl?: string;
+  isHighlighted: boolean;
+}
+
+interface SurveyQuestion {
+  id: number;
+  questionText: string;
+  questionType: "short_text" | "long_text" | "single_choice" | "multiple_choice" | "rating" | "yes_no";
+  isRequired: boolean;
+  options: string[];
+  minRating?: number | null;
+  maxRating?: number | null;
+  placeholder?: string | null;
+}
+
+interface SurveyData {
+  id: number;
+  title: string;
+  description: string | null;
+  status: string;
+  computed_status?: string | null;
+  duration_status?: string | null;
+  remaining_time?: string | null;
+  is_expired?: boolean | null;
+  start_datetime?: string | null;
+  end_datetime?: string | null;
+  responseCount: number;
+  allowMultipleResponses?: boolean;
+  questions: SurveyQuestion[];
+  userAnswers: Array<{ questionId: number; answerText?: string | null; answerValue?: string | null; answerJson?: string[] | null; ratingValue?: number | null }>;
+}
 
 function OfficerCard({
   name,
@@ -66,9 +128,9 @@ function OfficerCard({
   textTone?: "dark" | "light";
 }) {
   const sizeMap = {
-    sm: { avatar: "w-16 h-16", text: "text-lg", name: "text-xs", badge: "text-[10px] px-2" },
-    md: { avatar: "w-20 h-20", text: "text-xl", name: "text-xs", badge: "text-[10px] px-2" },
-    lg: { avatar: "w-28 h-28", text: "text-3xl", name: "text-sm", badge: "text-xs px-3" },
+    sm: { avatar: "h-12 w-12 md:h-16 md:w-16", text: "text-base md:text-lg", name: "text-[10px] md:text-xs", badge: "text-[9px] px-1.5 md:text-[10px] md:px-2" },
+    md: { avatar: "h-14 w-14 md:h-20 md:w-20", text: "text-lg md:text-xl", name: "text-[10px] md:text-xs", badge: "text-[9px] px-1.5 md:text-[10px] md:px-2" },
+    lg: { avatar: "h-20 w-20 md:h-28 md:w-28", text: "text-2xl md:text-3xl", name: "text-xs md:text-sm", badge: "text-[10px] px-2 md:text-xs md:px-3" },
   };
   const bgMap: Record<string, string> = {
     navy: "bg-navy", gold: "bg-gold", emerald: "bg-emerald-600", teal: "bg-teal-500",
@@ -89,25 +151,42 @@ function OfficerCard({
         )}
       </div>
       <div className="text-center">
-        <p className={`font-bold leading-tight ${s.name} max-w-[100px] ${nameTextClassName}`}>{name}</p>
+        <p className={`max-w-[74px] font-bold leading-tight md:max-w-[100px] ${s.name} ${nameTextClassName}`}>{name}</p>
         <span className={`font-semibold py-0.5 rounded-full mt-0.5 inline-block text-white ${bg} ${s.badge}`}>{role}</span>
       </div>
     </div>
   );
 }
 
-function VConn({ h = 6, className = "bg-border" }: { h?: number; className?: string }) {
-  return <div className={`mx-auto w-0.5 ${className}`} style={{ height: `${h * 4}px` }} />;
+function VConn({ h = 6, mdH, className = "bg-border" }: { h?: number; mdH?: number; className?: string }) {
+  return (
+    <div
+      className={`mx-auto h-[var(--conn-h)] w-0.5 md:h-[var(--conn-md-h)] ${className}`}
+      style={
+        {
+          "--conn-h": `${h * 4}px`,
+          "--conn-md-h": `${(mdH ?? h) * 4}px`,
+        } as React.CSSProperties
+      }
+    />
+  );
 }
 
 export default function AlumniDashboard() {
   const { user, profile } = useAuth();
   const [announcements, setAnnouncements] = useState<AnnouncementData[]>([]);
+  const [surveys, setSurveys] = useState<SurveyData[]>([]);
+  const [slideshow, setSlideshow] = useState<SlideData[]>([]);
   const [comments, setComments] = useState<Record<string, CommentData[]>>({});
   const [registrations, setRegistrations] = useState<Set<string>>(new Set());
+  const [eventRsvps, setEventRsvps] = useState<Record<string, EventRsvpState | null>>({});
+  const [rsvpChoiceOpen, setRsvpChoiceOpen] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [showComments, setShowComments] = useState<Record<string, boolean>>({});
   const [selectedAnnouncement, setSelectedAnnouncement] = useState<AnnouncementData | null>(null);
+  const [selectedSurvey, setSelectedSurvey] = useState<SurveyData | null>(null);
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<number, string | string[]>>({});
+  const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -123,6 +202,8 @@ export default function AlumniDashboard() {
         const data = await readApiResponse<DashboardResponse>(res);
 
         setAnnouncements(data.events || []);
+        setSurveys(data.surveys || []);
+        setSlideshow(data.slideshow || []);
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
           (data.officers || []).map((officer) => ({
@@ -159,16 +240,77 @@ export default function AlumniDashboard() {
     return () => window.clearInterval(interval);
   }, [announcements.length, officers.length, user]);
 
-  const joinEvent = async (eventId: string) => {
+  const loadEventRsvpStatus = async (eventId: string) => {
     if (!user) return;
     try {
-      await fetch(`${API_URL}/events/${eventId}/rsvp`, {
+      const response = await fetch(`${API_URL}/events/${eventId}/rsvp-status`, {
+        headers: getAuthHeaders(),
+      });
+      const payload = await readApiResponse<{ rsvp: EventRsvpState | null }>(response);
+      setEventRsvps((current) => ({ ...current, [eventId]: payload.rsvp }));
+      if (payload.rsvp) {
+        setRegistrations((prev) => new Set(prev).add(eventId));
+      }
+    } catch (err) {
+      console.error("Failed to load RSVP status", err);
+    }
+  };
+
+  const openAnnouncement = (announcement: AnnouncementData) => {
+    setSelectedAnnouncement(announcement);
+    if (announcement.type === "event") {
+      void loadEventRsvpStatus(announcement.id);
+    }
+  };
+
+  const saveEventRsvp = async (eventId: string, responseStatus: EventRsvpStatus) => {
+    if (!user) return;
+    const existing = eventRsvps[eventId];
+    try {
+      const response = await fetch(`${API_URL}/events/${eventId}/rsvp`, {
+        method: existing ? "PUT" : "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ responseStatus }),
+      });
+      const payload = await readApiResponse<{ rsvp: EventRsvpState }>(response);
+      setEventRsvps((current) => ({ ...current, [eventId]: payload.rsvp }));
+      setRegistrations((prev) => new Set(prev).add(eventId));
+      setRsvpChoiceOpen((current) => ({ ...current, [eventId]: false }));
+    } catch (err) {
+      console.error("Failed to save RSVP", err);
+    }
+  };
+
+  const cancelEventRsvp = async (eventId: string) => {
+    if (!user) return;
+    try {
+      const response = await fetch(`${API_URL}/events/${eventId}/rsvp`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      await readApiResponse(response);
+      setEventRsvps((current) => ({ ...current, [eventId]: null }));
+      setRegistrations((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to cancel RSVP", err);
+    }
+  };
+
+  const checkInEvent = async (eventId: string) => {
+    if (!user) return;
+    try {
+      const response = await fetch(`${API_URL}/events/${eventId}/check-in`, {
         method: "POST",
         headers: getAuthHeaders(),
       });
-      setRegistrations((prev) => new Set(prev).add(eventId));
-    } catch (e) {
-      console.error(e);
+      const payload = await readApiResponse<{ rsvp: EventRsvpState }>(response);
+      setEventRsvps((current) => ({ ...current, [eventId]: payload.rsvp }));
+    } catch (err) {
+      console.error("Failed to check in", err);
     }
   };
 
@@ -202,10 +344,79 @@ export default function AlumniDashboard() {
     }
   };
 
+  const openSurvey = (survey: SurveyData) => {
+    const initialAnswers: Record<number, string | string[]> = {};
+    survey.userAnswers.forEach((answer) => {
+      if (answer.answerJson) {
+        initialAnswers[answer.questionId] = answer.answerJson;
+      } else {
+        initialAnswers[answer.questionId] = String(answer.answerValue || answer.answerText || answer.ratingValue || "");
+      }
+    });
+    setSurveyAnswers(initialAnswers);
+    setSelectedSurvey(survey);
+  };
+
+  const updateSurveyAnswer = (question: SurveyQuestion, value: string, checked?: boolean) => {
+    setSurveyAnswers((current) => {
+      if (question.questionType !== "multiple_choice") {
+        return { ...current, [question.id]: value };
+      }
+
+      const existing = Array.isArray(current[question.id]) ? (current[question.id] as string[]) : [];
+      const next = checked ? Array.from(new Set([...existing, value])) : existing.filter((item) => item !== value);
+      return { ...current, [question.id]: next };
+    });
+  };
+
+  const submitSurvey = async () => {
+    if (!selectedSurvey) return;
+    if (selectedSurvey.userAnswers.length > 0 && !selectedSurvey.allowMultipleResponses) return;
+    const missingRequired = selectedSurvey.questions.some((question) => {
+      if (!question.isRequired) return false;
+      const value = surveyAnswers[question.id];
+      return Array.isArray(value) ? value.length === 0 : !String(value || "").trim();
+    });
+    if (missingRequired) return;
+
+    try {
+      setSubmittingSurvey(true);
+      const response = await fetch(`${API_URL}/surveys/${selectedSurvey.id}/responses`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          answers: selectedSurvey.questions.map((question) => {
+            const value = surveyAnswers[question.id];
+            if (question.questionType === "multiple_choice") {
+              return { questionId: question.id, answerJson: Array.isArray(value) ? value : [] };
+            }
+            if (question.questionType === "rating") {
+              return { questionId: question.id, ratingValue: Number(value || 0), answerValue: String(value || "") };
+            }
+            return {
+              questionId: question.id,
+              answerText: question.questionType === "short_text" || question.questionType === "long_text" ? String(value || "") : null,
+              answerValue: question.questionType === "short_text" || question.questionType === "long_text" ? null : String(value || ""),
+            };
+          }),
+        }),
+      });
+      await readApiResponse(response);
+      setSelectedSurvey(null);
+    } catch (err) {
+      console.error("Failed to submit survey", err);
+    } finally {
+      setSubmittingSurvey(false);
+    }
+  };
+
   const getOfficer = (...roles: string[]) =>
     officers.find((officer) => roles.map((role) => role.toLowerCase()).includes(officer.role)) || null;
   const boardMembers = officers.filter((officer) => officer.role === "board_member");
   const currentSchoolYear = officers[0]?.schoolYear || null;
+  const allAnnouncements = announcements.filter((item) => item.type !== "event" && item.type !== "survey");
+  const allEvents = announcements.filter((item) => item.type === "event");
+  const answerableSurveys = surveys.filter((survey) => survey.questions.length > 0);
 
   if (loading) {
     return (
@@ -219,51 +430,53 @@ export default function AlumniDashboard() {
 
   return (
     <AlumniLayout title="Salay Community College" subtitle="SaCC Alumni Association">
+      <HomepageSlideshow slides={slideshow} className="mb-8" />
+
       <div
-        className="relative mb-6 overflow-hidden rounded-2xl border border-border bg-card p-8 shadow-card"
+        className="hidden"
         style={{
-          backgroundImage: `linear-gradient(rgba(26,18,23,0.76), rgba(91,18,36,0.7)), url(${salayBackground})`,
+          backgroundImage: `linear-gradient(rgba(22,22,22,0.76), rgba(85,0,0,0.7)), url(${salayBackground})`,
           backgroundPosition: "center",
           backgroundSize: "cover",
         }}
       >
         <div className="relative z-10">
-          <div className="mb-10 text-center">
-            <h3 className="text-2xl font-display font-bold text-white">Organization Chart</h3>
+          <div className="mb-6 text-center md:mb-10">
+            <h3 className="font-display text-xl font-bold text-white md:text-2xl">Organization Chart</h3>
             <p className="mt-1 text-sm text-white/75">
               SaCC Alumni Association Officers{currentSchoolYear ? ` | ${currentSchoolYear}` : ""}
             </p>
             <div className="mx-auto mt-3 h-1 w-16 rounded-full bg-gold" />
           </div>
-          <div className="overflow-x-auto pb-4">
-            <div className="flex min-w-[600px] flex-col items-center">
+          <div className="overflow-hidden pb-2 md:overflow-x-auto md:pb-4">
+            <div className="flex w-full min-w-0 flex-col items-center md:min-w-[600px]">
               <OfficerCard name={getOfficer("president")?.name || "TBA"} role="President" photo={getOfficer("president")?.photo} size="lg" accent="navy" textTone="light" />
-              <VConn h={7} className="bg-white/35" />
+              <VConn h={4} mdH={7} className="bg-white/35" />
               <OfficerCard name={getOfficer("vice_president")?.name || "TBA"} role="Vice President" photo={getOfficer("vice_president")?.photo} size="md" accent="blue" textTone="light" />
-              <VConn h={7} className="bg-white/35" />
-              <div className="flex items-start gap-16 pt-4">
+              <VConn h={4} mdH={7} className="bg-white/35" />
+              <div className="grid w-full grid-cols-3 items-start gap-2 pt-3 md:flex md:w-auto md:gap-16 md:pt-4">
                 <div className="flex flex-col items-center">
                   <OfficerCard name={getOfficer("secretary")?.name || "TBA"} role="Secretary" photo={getOfficer("secretary")?.photo} size="md" accent="emerald" textTone="light" />
-                  <VConn h={5} className="bg-white/35" />
+                  <VConn h={3} mdH={5} className="bg-white/35" />
                   <OfficerCard name={getOfficer("assistant_secretary")?.name || "TBA"} role="Asst. Secretary" photo={getOfficer("assistant_secretary")?.photo} size="sm" accent="teal" textTone="light" />
                 </div>
                 <div className="flex flex-col items-center">
                   <OfficerCard name={getOfficer("treasurer")?.name || "TBA"} role="Treasurer" photo={getOfficer("treasurer")?.photo} size="md" accent="amber" textTone="light" />
-                  <VConn h={5} className="bg-white/35" />
+                  <VConn h={3} mdH={5} className="bg-white/35" />
                   <OfficerCard name={getOfficer("assistant_treasurer")?.name || "TBA"} role="Asst. Treasurer" photo={getOfficer("assistant_treasurer")?.photo} size="sm" accent="orange" textTone="light" />
                 </div>
                 <OfficerCard name={getOfficer("auditor")?.name || "TBA"} role="Auditor" photo={getOfficer("auditor")?.photo} size="md" accent="orange" textTone="light" />
               </div>
-              <div className="my-6 w-full max-w-xl border-t-2 border-dashed border-white/30" />
+              <div className="my-4 w-full max-w-xl border-t-2 border-dashed border-white/30 md:my-6" />
               <div className="flex items-start gap-10">
                 <OfficerCard name={getOfficer("pio", "pro")?.name || "TBA"} role="PRO" photo={getOfficer("pio", "pro")?.photo} size="md" accent="purple" textTone="light" />
               </div>
               {boardMembers.length > 0 && (
                 <>
-                  <div className="my-6 w-full max-w-xl border-t-2 border-dashed border-white/30" />
+                  <div className="my-4 w-full max-w-xl border-t-2 border-dashed border-white/30 md:my-6" />
                   <div className="text-center">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/70">Board Members</p>
-                    <div className="mt-4 flex flex-wrap justify-center gap-6">
+                    <div className="mt-4 flex flex-wrap justify-center gap-3 md:gap-6">
                       {boardMembers.map((member) => (
                         <OfficerCard
                           key={`${member.role}-${member.name}`}
@@ -294,7 +507,60 @@ export default function AlumniDashboard() {
         </div>
       </div>
 
-      <div className="mb-4 flex items-center justify-between">
+      <div className="space-y-6">
+        <DashboardContentSection
+          title="All Announcements"
+          description="Official notices and alumni updates."
+          count={allAnnouncements.length}
+          emptyText="No announcements are available."
+        >
+          {allAnnouncements.map((announcement) => (
+            <ContentCard key={announcement.id} item={announcement} onOpen={openAnnouncement} />
+          ))}
+        </DashboardContentSection>
+
+        <DashboardContentSection
+          title="All Events"
+          description="Events remain visible after completion until they move to archive."
+          count={allEvents.length}
+          emptyText="No events are available."
+        >
+          {allEvents.map((event) => (
+            <ContentCard key={event.id} item={event} onOpen={openAnnouncement} />
+          ))}
+        </DashboardContentSection>
+
+        <DashboardContentSection
+          title="All Surveys"
+          description="Answer platform surveys directly inside the system."
+          count={answerableSurveys.length}
+          emptyText="No surveys are available."
+        >
+          {answerableSurveys.map((survey) => (
+            <button
+              key={survey.id}
+              type="button"
+              onClick={() => openSurvey(survey)}
+              className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+            >
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>
+                <DurationBadge status={survey.computed_status || survey.duration_status} remainingTime={survey.remaining_time} startDatetime={survey.start_datetime} endDatetime={survey.end_datetime} />
+                {survey.userAnswers.length > 0 && <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Answered</Badge>}
+              </div>
+              <h4 className="line-clamp-2 text-sm font-semibold text-navy-dark">{survey.title}</h4>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{survey.description || "No description provided."}</p>
+              <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                <ClipboardList className="h-3.5 w-3.5" />
+                {survey.questions.length} question{survey.questions.length === 1 ? "" : "s"} | {survey.responseCount} response{survey.responseCount === 1 ? "" : "s"}
+              </p>
+            </button>
+          ))}
+        </DashboardContentSection>
+
+      </div>
+
+      <div className="mb-4 hidden items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-display font-bold text-navy-dark">Announcements, Events & Surveys</h3>
           <p className="text-xs text-muted-foreground">Stay updated with the latest activities, alumni notices, and response requests from SaCC Alumni.</p>
@@ -305,6 +571,7 @@ export default function AlumniDashboard() {
         </div>
       </div>
 
+      <div className="hidden">
       {announcements.length === 0 ? (
         <div className="py-12 text-center text-sm text-muted-foreground">No events or surveys yet.</div>
       ) : (
@@ -318,17 +585,18 @@ export default function AlumniDashboard() {
               <button
                 key={announcement.id}
                 type="button"
-                onClick={() => setSelectedAnnouncement(announcement)}
+                onClick={() => openAnnouncement(announcement)}
                 className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lg"
               >
                 {imageUrl && (
-                  <img src={imageUrl} alt={announcement.title} className="h-36 w-full object-cover" />
+                  <img src={imageUrl} alt={announcement.title} className="h-36 w-full object-contain" />
                 )}
                 <div className="p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className={isSurvey ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : isEvent ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"}>
                       {isSurvey ? "Survey" : isEvent ? "Event" : "Announcement"}
                     </Badge>
+                    <DurationBadge status={announcement.computed_status || announcement.duration_status} remainingTime={announcement.remaining_time} startDatetime={announcement.start_datetime} endDatetime={announcement.end_datetime} />
                     <span className="text-[11px] text-muted-foreground">
                       {announcement.date ? new Date(announcement.date).toLocaleDateString() : "Posted recently"}
                     </span>
@@ -344,6 +612,7 @@ export default function AlumniDashboard() {
           })}
         </div>
       )}
+      </div>
 
       <Dialog open={Boolean(selectedAnnouncement)} onOpenChange={(open) => !open && setSelectedAnnouncement(null)}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
@@ -358,17 +627,19 @@ export default function AlumniDashboard() {
                     {selectedAnnouncement.date ? new Date(selectedAnnouncement.date).toLocaleDateString() : "Posted recently"}
                   </span>
                 </div>
-                <DialogTitle className="text-2xl text-navy-dark">{selectedAnnouncement.title}</DialogTitle>
+                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedAnnouncement.title}</DialogTitle>
                 <DialogDescription>Complete details for the selected post.</DialogDescription>
               </DialogHeader>
 
               <div className="space-y-5">
                 {resolveAssetUrl(selectedAnnouncement.image_url) && (
-                  <img
-                    src={resolveAssetUrl(selectedAnnouncement.image_url) || undefined}
-                    alt={selectedAnnouncement.title}
-                    className="h-56 w-full rounded-2xl border border-border/70 object-cover"
-                  />
+                  <div className="flex h-56 w-full items-center justify-center overflow-hidden rounded-2xl border border-border/70 bg-slate-50 sm:h-72">
+                    <img
+                      src={resolveAssetUrl(selectedAnnouncement.image_url) || undefined}
+                      alt={selectedAnnouncement.title}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
                 )}
 
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -406,6 +677,17 @@ export default function AlumniDashboard() {
                     />
                   )}
                   {selectedAnnouncement.status && <DetailCard label="Status" value={selectedAnnouncement.status} />}
+                  <DetailCard
+                    label="Duration"
+                    value={
+                      <DurationBadge
+                        status={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status}
+                        remainingTime={selectedAnnouncement.remaining_time}
+                        startDatetime={selectedAnnouncement.start_datetime}
+                        endDatetime={selectedAnnouncement.end_datetime}
+                      />
+                    }
+                  />
                 </div>
 
                 <div className="rounded-2xl border border-border/70 bg-muted/15 p-4">
@@ -415,26 +697,29 @@ export default function AlumniDashboard() {
                   </p>
                 </div>
 
-                {selectedAnnouncement.type === "survey" && selectedAnnouncement.google_form_link && (
-                  <a
-                    href={selectedAnnouncement.google_form_link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-navy-dark"
-                    style={{ background: "var(--gradient-gold)" }}
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Open Survey
-                  </a>
+                {selectedAnnouncement.type === "survey" && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+                    Survey responses are now collected through the internal survey cards on the dashboard.
+                  </div>
+                )}
+                {selectedAnnouncement.type === "survey" && selectedAnnouncement.is_expired && (
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm font-medium text-zinc-700">
+                    This survey is archived and no longer accepts answers.
+                  </div>
                 )}
 
                 {selectedAnnouncement.type === "event" && renderEventDialogSection({
                   announcement: selectedAnnouncement,
-                  joined: registrations.has(selectedAnnouncement.id),
+                  rsvp: eventRsvps[selectedAnnouncement.id] || null,
+                  joined: Boolean(eventRsvps[selectedAnnouncement.id]) || registrations.has(selectedAnnouncement.id),
+                  choiceOpen: Boolean(rsvpChoiceOpen[selectedAnnouncement.id]),
                   eventComments: comments[selectedAnnouncement.id] || [],
                   commentsVisible: showComments[selectedAnnouncement.id] ?? false,
                   commentInput: commentInputs[selectedAnnouncement.id] ?? "",
-                  onJoin: () => joinEvent(selectedAnnouncement.id),
+                  onShowChoices: () => setRsvpChoiceOpen((current) => ({ ...current, [selectedAnnouncement.id]: true })),
+                  onSaveRsvp: (responseStatus) => saveEventRsvp(selectedAnnouncement.id, responseStatus),
+                  onCancelRsvp: () => cancelEventRsvp(selectedAnnouncement.id),
+                  onCheckIn: () => checkInEvent(selectedAnnouncement.id),
                   onToggleComments: () =>
                     setShowComments((current) => ({
                       ...current,
@@ -444,6 +729,55 @@ export default function AlumniDashboard() {
                     setCommentInputs((current) => ({ ...current, [selectedAnnouncement.id]: value })),
                   onSubmitComment: () => submitComment(selectedAnnouncement.id),
                 })}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedSurvey)} onOpenChange={(open) => !open && setSelectedSurvey(null)}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          {selectedSurvey && (
+            <>
+              <DialogHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>
+                  <DurationBadge status={selectedSurvey.computed_status || selectedSurvey.duration_status} remainingTime={selectedSurvey.remaining_time} startDatetime={selectedSurvey.start_datetime} endDatetime={selectedSurvey.end_datetime} />
+                </div>
+                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedSurvey.title}</DialogTitle>
+                <DialogDescription>{selectedSurvey.description || "Answer the survey questions below."}</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                {selectedSurvey.questions.map((question) => (
+                  <SurveyQuestionField
+                    key={question.id}
+                    question={question}
+                    value={surveyAnswers[question.id]}
+                    disabled={Boolean(selectedSurvey.is_expired)}
+                    onChange={updateSurveyAnswer}
+                  />
+                ))}
+                {selectedSurvey.is_expired && (
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm font-medium text-zinc-700">
+                    This survey is completed and no longer accepts answers.
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setSelectedSurvey(null)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+                    Close
+                  </button>
+                  {!selectedSurvey.is_expired && (
+                    <button
+                      type="button"
+                      onClick={() => void submitSurvey()}
+                      disabled={submittingSurvey || (selectedSurvey.userAnswers.length > 0 && !selectedSurvey.allowMultipleResponses)}
+                      className="rounded-xl bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                    >
+                      {selectedSurvey.userAnswers.length > 0 && !selectedSurvey.allowMultipleResponses ? "Already Answered" : "Submit Answer"}
+                    </button>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -462,44 +796,254 @@ function DetailCard({ label, value }: { label: string; value: React.ReactNode })
   );
 }
 
+function DashboardContentSection({
+  title,
+  description,
+  count,
+  emptyText,
+  children,
+}: {
+  title: string;
+  description: string;
+  count: number;
+  emptyText: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-navy-dark">{title}</h3>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <Badge variant="outline">{count}</Badge>
+      </div>
+      {count === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">{emptyText}</div>
+      ) : (
+        <div className="space-y-3">{children}</div>
+      )}
+    </section>
+  );
+}
+
+function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: AnnouncementData) => void }) {
+  const imageUrl = resolveAssetUrl(item.image_url);
+  const isEvent = item.type === "event";
+  const isSurvey = item.type === "survey";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(item)}
+      className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+    >
+      <div className="flex flex-col gap-4 md:flex-row md:items-start">
+        {imageUrl && (
+          <div className="flex h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 md:w-36">
+            <img src={imageUrl} alt={item.title} className="h-full w-full object-contain" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Badge className={isSurvey ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : isEvent ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"}>
+              {isSurvey ? "Survey" : isEvent ? "Event" : "Announcement"}
+            </Badge>
+            <DurationBadge status={item.computed_status || item.duration_status} remainingTime={item.remaining_time} startDatetime={item.start_datetime} endDatetime={item.end_datetime} />
+          </div>
+          <h4 className="line-clamp-2 text-sm font-semibold text-navy-dark">{item.title}</h4>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description || "No description provided."}</p>
+          <p className="mt-2 text-xs font-semibold text-muted-foreground">
+            {isEvent ? "Open event details" : "Open full details"}
+          </p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function SurveyQuestionField({
+  question,
+  value,
+  disabled,
+  onChange,
+}: {
+  question: SurveyQuestion;
+  value?: string | string[];
+  disabled?: boolean;
+  onChange: (question: SurveyQuestion, value: string, checked?: boolean) => void;
+}) {
+  const textValue = Array.isArray(value) ? "" : String(value || "");
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-sm font-semibold text-navy-dark">
+        {question.questionText}
+        {question.isRequired ? " *" : ""}
+      </p>
+      <div className="mt-3">
+        {(question.questionType === "short_text" || question.questionType === "long_text") && (
+          <textarea
+            value={textValue}
+            disabled={disabled}
+            rows={question.questionType === "long_text" ? 4 : 2}
+            placeholder={question.placeholder || ""}
+            onChange={(event) => onChange(question, event.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-navy"
+          />
+        )}
+        {question.questionType === "single_choice" && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {question.options.map((option) => (
+              <label key={option} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <input type="radio" disabled={disabled} checked={textValue === option} onChange={() => onChange(question, option)} />
+                {option}
+              </label>
+            ))}
+          </div>
+        )}
+        {question.questionType === "multiple_choice" && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {question.options.map((option) => {
+              const selected = Array.isArray(value) && value.includes(option);
+              return (
+                <label key={option} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <input type="checkbox" disabled={disabled} checked={selected} onChange={(event) => onChange(question, option, event.target.checked)} />
+                  {option}
+                </label>
+              );
+            })}
+          </div>
+        )}
+        {question.questionType === "yes_no" && (
+          <div className="flex flex-wrap gap-2">
+            {["Yes", "No"].map((option) => (
+              <button
+                key={option}
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(question, option)}
+                className={`rounded-xl border px-4 py-2 text-sm font-semibold ${textValue === option ? "border-navy bg-navy text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {question.questionType === "rating" && (
+          <div className="flex flex-wrap gap-2">
+            {Array.from({ length: Number(question.maxRating || 5) - Number(question.minRating || 1) + 1 }, (_, index) => Number(question.minRating || 1) + index).map((rating) => (
+              <button
+                key={rating}
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(question, String(rating))}
+                className={`h-10 w-10 rounded-xl border text-sm font-semibold ${textValue === String(rating) ? "border-navy bg-navy text-white" : "border-slate-200 bg-slate-50 text-slate-700"}`}
+              >
+                {rating}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function renderEventDialogSection({
   announcement,
   joined,
+  rsvp,
+  choiceOpen,
   eventComments,
   commentsVisible,
   commentInput,
-  onJoin,
+  onShowChoices,
+  onSaveRsvp,
+  onCancelRsvp,
+  onCheckIn,
   onToggleComments,
   onChangeComment,
   onSubmitComment,
 }: {
   announcement: AnnouncementData;
   joined: boolean;
+  rsvp: EventRsvpState | null;
+  choiceOpen: boolean;
   eventComments: CommentData[];
   commentsVisible: boolean;
   commentInput: string;
-  onJoin: () => void;
+  onShowChoices: () => void;
+  onSaveRsvp: (responseStatus: EventRsvpStatus) => void;
+  onCancelRsvp: () => void;
+  onCheckIn: () => void;
   onToggleComments: () => void;
   onChangeComment: (value: string) => void;
   onSubmitComment: () => void;
 }) {
+  const status = announcement.computed_status || announcement.duration_status;
+  const rsvpClosed = Boolean(announcement.is_expired) || status === "Archived" || status === "Completed";
+  const canCheckIn = rsvp?.response_status === "Going" && status === "Active" && rsvp.attendance_status !== "Attended";
+
   return (
     <div className="space-y-3">
-      {joined ? (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700">
-          <CheckCircle className="h-4 w-4" />
-          You have joined this event
+      {rsvp ? (
+        <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-emerald-700">
+            <CheckCircle className="h-4 w-4" />
+            RSVP: {rsvp.response_status}
+            <span className="rounded-full bg-white px-2 py-0.5 text-xs text-emerald-700">
+              Attendance: {rsvp.attendance_status}
+            </span>
+          </div>
+          {!rsvpClosed && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onShowChoices}
+                className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-navy transition hover:bg-emerald-100"
+              >
+                Update RSVP
+              </button>
+              <button
+                type="button"
+                onClick={onCancelRsvp}
+                className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Cancel RSVP
+              </button>
+              {canCheckIn && (
+                <button
+                  type="button"
+                  onClick={onCheckIn}
+                  className="inline-flex items-center gap-1 rounded-lg bg-navy px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-navy-light"
+                >
+                  <UserCheck className="h-3.5 w-3.5" />
+                  Check In
+                </button>
+              )}
+            </div>
+          )}
         </div>
+      ) : rsvpClosed ? (
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-700">
+          RSVP is closed for this event.
+        </div>
+      ) : choiceOpen ? (
+        <RsvpChoices onSaveRsvp={onSaveRsvp} />
       ) : (
         <button
-          onClick={onJoin}
+          onClick={() => onSaveRsvp("Interested")}
           className="flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90"
           style={{ background: "var(--gradient-navy)" }}
         >
           <Calendar className="h-4 w-4" />
-          Join Event
+          Interested
         </button>
       )}
+
+      {choiceOpen && joined && !rsvpClosed && <RsvpChoices onSaveRsvp={onSaveRsvp} />}
 
       <button
         onClick={onToggleComments}
@@ -540,6 +1084,24 @@ function renderEventDialogSection({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RsvpChoices({ onSaveRsvp }: { onSaveRsvp: (responseStatus: EventRsvpStatus) => void }) {
+  const choices: EventRsvpStatus[] = ["Going", "Interested", "Not Going"];
+  return (
+    <div className="grid gap-2 rounded-xl border border-border bg-card p-3 sm:grid-cols-3">
+      {choices.map((choice) => (
+        <button
+          key={choice}
+          type="button"
+          onClick={() => onSaveRsvp(choice)}
+          className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs font-semibold text-navy-dark transition hover:border-navy hover:bg-navy hover:text-white"
+        >
+          {choice}
+        </button>
+      ))}
     </div>
   );
 }

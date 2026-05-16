@@ -1,272 +1,582 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { API_URL, getAuthHeaders } from "@/lib/api";
+import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import {
-  Send, Mail, Users, Clock, CheckCircle, XCircle,
-  Eye, Edit3, Loader2, FileText,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  Eye,
+  FileText,
+  Loader2,
+  Mail,
+  Search,
+  Send,
+  UserCheck,
+  XCircle,
 } from "lucide-react";
 
 type ComposeTab = "compose" | "history";
-type RecipientType = "all" | "batch" | "course" | "reminder";
-type NotifStatus = "sent" | "scheduled" | "failed" | "draft";
+type EmailStatus = "sent" | "failed" | "pending";
+type EmailPurpose =
+  | "graduate_tracer_reminder"
+  | "event_invitation"
+  | "important_announcement"
+  | "document_request"
+  | "account_verification_reminder";
 
-interface Notification {
+interface AlumniRecipient {
   id: string;
+  name: string;
+  email: string;
+  student_id?: string | null;
+  course?: string | null;
+  batch?: string | null;
+  reminder_reason?: string | null;
+  reminder_reasons?: string[];
+  tracer_last_updated?: string | null;
+}
+
+interface EmailLog {
+  id: string;
+  alumni_id: string;
+  alumni_name?: string | null;
+  student_id?: string | null;
+  recipient_email: string;
+  email_purpose: EmailPurpose;
   subject: string;
   message: string;
-  type: string | null;
-  status: string | null;
-  recipients: string | null;
-  recipient_count: number | null;
-  sent_at: string | null;
-  scheduled_at: string | null;
-  open_rate: number | null;
+  status: EmailStatus;
+  error_message?: string | null;
+  sent_at?: string | null;
+  created_at: string;
 }
 
-interface ProfileFilterRow {
-  id: string;
-  batch: string | null;
-  course: string | null;
-  role?: string | null;
+interface MailingFilterOptions {
+  courses: string[];
+  batches: string[];
+  reasons: Array<{ value: string; label: string }>;
 }
 
-interface TracerRecipientRow {
-  user_id: string;
-}
-
-const statusConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle }> = {
-  sent: { label: "Sent", color: "bg-emerald-100 text-emerald-700", icon: CheckCircle },
-  scheduled: { label: "Scheduled", color: "bg-blue-100 text-blue-700", icon: Clock },
-  failed: { label: "Failed", color: "bg-red-100 text-red-700", icon: XCircle },
-  draft: { label: "Draft", color: "bg-amber-100 text-amber-700", icon: Edit3 },
+const PURPOSE_LABELS: Record<EmailPurpose, string> = {
+  graduate_tracer_reminder: "Graduate Tracer Reminder",
+  event_invitation: "Event Invitation",
+  important_announcement: "Important Announcement",
+  document_request: "Document Request",
+  account_verification_reminder: "Account Verification Reminder",
 };
 
-const EMAIL_TEMPLATES = [
-  {
-    name: "Welcome New Alumni",
-    subject: "Welcome to SaCC Alumni Community!",
-    message: `Dear Alumni,\n\nWelcome to the Salay Community College Alumni Association! We're thrilled to have you as part of our growing community.\n\nAs a registered alumni, you can:\n• Stay connected with fellow graduates\n• Participate in events and reunions\n• Access exclusive alumni resources\n• Contribute to the growth of SaCC\n\nWe look forward to your active participation!\n\nBest regards,\nSaCC Alumni Association`,
-  },
-  {
-    name: "Event Invitation",
-    subject: "You're Invited! Upcoming SaCC Alumni Event",
-    message: `Dear Alumni,\n\nWe are excited to invite you to our upcoming alumni event!\n\n📅 Date: [Date]\n📍 Venue: [Venue]\n🕐 Time: [Time]\n\nThis is a wonderful opportunity to reconnect with fellow alumni, network, and celebrate our shared experiences at Salay Community College.\n\nPlease confirm your attendance by replying to this email.\n\nWe hope to see you there!\n\nBest regards,\nSaCC Alumni Association`,
-  },
-  {
-    name: "Donation Appeal",
-    subject: "Support SaCC – Your Contribution Matters",
-    message: `Dear Alumni,\n\nSalay Community College has been a cornerstone of education in our community, and your support can make a lasting impact.\n\nYour generous donation will help:\n• Fund scholarships for deserving students\n• Improve campus facilities\n• Support academic programs\n• Strengthen alumni engagement initiatives\n\nEvery contribution, big or small, brings us closer to our goals. You can donate through the alumni portal or via GCash.\n\nThank you for giving back to the institution that shaped your future.\n\nWith gratitude,\nSaCC Alumni Association`,
-  },
-  {
-    name: "Tracer Survey Reminder",
+const MISSING_INFO_PLACEHOLDER = "[Missing information will be filled automatically for each selected alumnus]";
+
+const FOLLOW_UP_REQUIREMENTS_BLOCK =
+  `\n\nOur records show that your alumni profile still needs attention:\n\n${MISSING_INFO_PLACEHOLDER}\n\nPlease log in to the alumni portal and complete or update the missing details.`;
+
+const EMAIL_TEMPLATES: Record<EmailPurpose, { subject: string; message: string }> = {
+  graduate_tracer_reminder: {
     subject: "Reminder: Please Complete Your Graduate Tracer Survey",
-    message: `Dear Alumni,\n\nWe noticed you haven't yet completed the Graduate Tracer Survey. Your response is crucial in helping us:\n\n• Improve our academic programs\n• Understand employment trends\n• Enhance career services for future graduates\n• Maintain accreditation standards\n\nThe survey only takes 5-10 minutes to complete. Please log in to your alumni portal and navigate to the Tracer section.\n\nYour input truly matters. Thank you for your cooperation!\n\nBest regards,\nSaCC Alumni Association`,
+    message:
+      `Dear Alumni,\n\nPlease complete your Graduate Tracer Survey in the alumni portal. Your response helps the school monitor graduate outcomes, improve academic programs, and support future alumni services.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nThank you for your cooperation.\n\nBest regards,\nSaCC Alumni Association`,
   },
-  {
-    name: "General Announcement",
+  event_invitation: {
+    subject: "Invitation: Upcoming Alumni Event",
+    message:
+      "Dear Alumni,\n\nYou are invited to join our upcoming alumni event.\n\nDate: [Date]\nTime: [Time]\nVenue: [Venue]\n\nPlease check the alumni portal or reply to this email for confirmation and event details.\n\nBest regards,\nSaCC Alumni Association",
+  },
+  important_announcement: {
     subject: "Important Announcement from SaCC Alumni Association",
-    message: `Dear Alumni,\n\n[Your announcement here]\n\nFor more details, please visit the alumni portal or contact us directly.\n\nBest regards,\nSaCC Alumni Association`,
+    message:
+      "Dear Alumni,\n\n[Write the important announcement here.]\n\nPlease review the details and contact the alumni office if you have questions.\n\nBest regards,\nSaCC Alumni Association",
   },
-];
+  document_request: {
+    subject: "Document Request from Alumni Office",
+    message:
+      `Dear Alumni,\n\nThe alumni office is requesting the following document or information:\n\n[Document or information needed]${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nPlease submit it through the alumni portal or coordinate with the office as soon as possible.\n\nBest regards,\nSaCC Alumni Association`,
+  },
+  account_verification_reminder: {
+    subject: "Reminder: Verify Your Alumni Portal Account",
+    message:
+      `Dear Alumni,\n\nPlease verify and update your alumni portal account information. Keeping your account current helps the school contact you for tracer, event, and alumni records updates.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nBest regards,\nSaCC Alumni Association`,
+  },
+};
+
+const statusConfig: Record<EmailStatus, { label: string; color: string; icon: typeof CheckCircle }> = {
+  sent: { label: "Sent", color: "bg-emerald-100 text-emerald-700", icon: CheckCircle },
+  failed: { label: "Failed", color: "bg-red-100 text-red-700", icon: XCircle },
+  pending: { label: "Pending", color: "bg-amber-100 text-amber-700", icon: Clock },
+};
+
+const MAX_SELECTED_ALUMNI = 10;
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "Not sent";
+  return new Date(value).toLocaleString();
+};
 
 export default function AdminNotifications() {
-  const [tab, setTab] = useState<ComposeTab>("history");
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [selectedNotif, setSelectedNotif] = useState<Notification | null>(null);
+  const [tab, setTab] = useState<ComposeTab>("compose");
+  const [logs, setLogs] = useState<EmailLog[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
 
-  const [subject, setSubject] = useState("");
-  const [message, setMessage] = useState("");
-  const [recipientType, setRecipientType] = useState<RecipientType>("all");
-  const [selectedBatch, setSelectedBatch] = useState("");
+  const [alumniSearch, setAlumniSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState<AlumniRecipient[]>([]);
+  const [loadingRecipients, setLoadingRecipients] = useState(false);
+  const [selectedAlumni, setSelectedAlumni] = useState<AlumniRecipient[]>([]);
+  const [filterOptions, setFilterOptions] = useState<MailingFilterOptions>({ courses: [], batches: [], reasons: [] });
   const [selectedCourse, setSelectedCourse] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState(false);
+  const [selectedBatch, setSelectedBatch] = useState("");
+  const [selectedReason, setSelectedReason] = useState("");
 
-  const [batches, setBatches] = useState<string[]>([]);
-  const [courses, setCourses] = useState<string[]>([]);
+  const [purpose, setPurpose] = useState<EmailPurpose>("graduate_tracer_reminder");
+  const [subject, setSubject] = useState(EMAIL_TEMPLATES.graduate_tracer_reminder.subject);
+  const [message, setMessage] = useState(EMAIL_TEMPLATES.graduate_tracer_reminder.message);
+  const [confirming, setConfirming] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState("");
+  const [sendError, setSendError] = useState("");
+
+  const fetchLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      const res = await fetchApi(`${API_URL}/admin/mailing/logs`, { headers: getAuthHeaders() });
+      const data = await readApiResponse<EmailLog[]>(res);
+      setLogs(data ?? []);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Unable to load email logs.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  const fetchFilterOptions = async () => {
+    try {
+      const res = await fetchApi(`${API_URL}/admin/mailing/filters`, { headers: getAuthHeaders() });
+      const data = await readApiResponse<MailingFilterOptions>(res);
+      setFilterOptions(data ?? { courses: [], batches: [], reasons: [] });
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Unable to load recipient filters.");
+    }
+  };
 
   useEffect(() => {
-    fetchNotifications();
-    fetchFilters();
+    fetchLogs();
+    fetchFilterOptions();
   }, []);
 
-  const fetchNotifications = async () => {
-    try {
-      const res = await fetch(`${API_URL}/notifications`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(data ?? []);
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setLoadingRecipients(true);
+      try {
+        const params = new URLSearchParams();
+        if (alumniSearch.trim()) params.set("search", alumniSearch.trim());
+        if (selectedCourse) params.set("course", selectedCourse);
+        if (selectedBatch) params.set("batch", selectedBatch);
+        if (selectedReason) params.set("reason", selectedReason);
+        const res = await fetchApi(`${API_URL}/admin/mailing/alumni?${params.toString()}`, {
+          headers: getAuthHeaders(),
+        });
+        const data = await readApiResponse<AlumniRecipient[]>(res);
+        if (!cancelled) setRecipientResults(data ?? []);
+      } catch (error) {
+        if (!cancelled) setSendError(error instanceof Error ? error.message : "Unable to search alumni.");
+      } finally {
+        if (!cancelled) setLoadingRecipients(false);
       }
-    } catch (e) {
-      console.error(e);
-    }
-    setLoading(false);
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [alumniSearch, selectedBatch, selectedCourse, selectedReason]);
+
+  const stats = useMemo(
+    () => ({
+      sent: logs.filter((log) => log.status === "sent").length,
+      failed: logs.filter((log) => log.status === "failed").length,
+      total: logs.length,
+      recent: logs.filter((log) => {
+        const created = new Date(log.created_at).getTime();
+        return Number.isFinite(created) && Date.now() - created <= 24 * 60 * 60 * 1000;
+      }).length,
+    }),
+    [logs]
+  );
+
+  const applyTemplate = (nextPurpose: EmailPurpose) => {
+    setPurpose(nextPurpose);
+    setSubject(EMAIL_TEMPLATES[nextPurpose].subject);
+    setMessage(EMAIL_TEMPLATES[nextPurpose].message);
   };
 
-  const fetchFilters = async () => {
-    try {
-      const res = await fetch(`${API_URL}/profiles`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const profiles: ProfileFilterRow[] = await res.json();
-        setBatches([...new Set(profiles.map((p) => p.batch).filter((value): value is string => Boolean(value)))].sort());
-        setCourses([...new Set(profiles.map((p) => p.course).filter((value): value is string => Boolean(value)))].sort());
-      }
-    } catch (e) { console.error(e); }
-  };
+  const selectedAlumniIds = useMemo(() => new Set(selectedAlumni.map((alumnus) => alumnus.id)), [selectedAlumni]);
 
-  const filtered = notifications.filter(n => {
-    const matchSearch = n.subject.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || n.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
+  const selectAlumnus = (alumnus: AlumniRecipient) => {
+    setSendError("");
+    setSendSuccess("");
 
-  const getRecipientLabel = () => {
-    if (recipientType === "all") return "All Alumni";
-    if (recipientType === "batch") return `Batch ${selectedBatch}`;
-    if (recipientType === "course") return `Course: ${selectedCourse}`;
-    if (recipientType === "reminder") return "Tracer Non-Respondents";
-    return "All Alumni";
-  };
+    setSelectedAlumni((current) => {
+      if (current.some((item) => item.id === alumnus.id)) {
+        return current.filter((item) => item.id !== alumnus.id);
+      }
 
-  const getRecipientCount = async () => {
-    try {
-      const res = await fetch(`${API_URL}/profiles`, { headers: getAuthHeaders() });
-      if (!res.ok) return 0;
-      const profiles: ProfileFilterRow[] = await res.json();
-      if (recipientType === "all") {
-        return profiles.filter((p) => p.role === "alumni").length;
+      if (current.length >= MAX_SELECTED_ALUMNI) {
+        setSendError(`You can select a maximum of ${MAX_SELECTED_ALUMNI} alumni at once.`);
+        return current;
       }
-      if (recipientType === "batch") {
-        return profiles.filter((p) => p.batch === selectedBatch).length;
-      }
-      if (recipientType === "course") {
-        return profiles.filter((p) => p.course === selectedCourse).length;
-      }
-      if (recipientType === "reminder") {
-        const rT = await fetch(`${API_URL}/tracer`, { headers: getAuthHeaders() });
-        if (!rT.ok) return 0;
-        const tracer: TracerRecipientRow[] = await rT.json();
-        const tracerIds = new Set(tracer.map((t) => t.user_id));
-        return profiles.filter((p) => p.role === "alumni" && !tracerIds.has(p.id)).length;
-      }
-    } catch (e) { console.error(e); }
-    return 0;
-  };
 
-  const handleSend = async () => {
-    if (!subject || !message) return;
-    if (recipientType === "batch" && !selectedBatch) return;
-    if (recipientType === "course" && !selectedCourse) return;
-    setSending(true);
-
-    const recipientCount = await getRecipientCount();
-    await fetch(`${API_URL}/notifications/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({
-        subject,
-        message,
-        recipientsLabel: getRecipientLabel(),
-        recipientCount
-      })
+      return [...current, alumnus];
     });
-
-    setSending(false);
-    setSendSuccess(true);
-    setSubject("");
-    setMessage("");
-    setRecipientType("all");
-    setSelectedBatch("");
-    setSelectedCourse("");
-    fetchNotifications();
-    setTimeout(() => { setSendSuccess(false); setTab("history"); }, 2000);
   };
 
-  const applyTemplate = (tpl: typeof EMAIL_TEMPLATES[0]) => {
-    setSubject(tpl.subject);
-    setMessage(tpl.message);
+  const removeAlumnus = (alumniId: string) => {
+    setSelectedAlumni((current) => current.filter((alumnus) => alumnus.id !== alumniId));
   };
 
-  const stats = {
-    sent: notifications.filter(n => n.status === "sent").length,
-    scheduled: notifications.filter(n => n.status === "scheduled").length,
-    failed: notifications.filter(n => n.status === "failed").length,
-    total: notifications.length,
+  const getReasonText = (alumnus: AlumniRecipient) => {
+    const reasons = alumnus.reminder_reasons?.filter(Boolean);
+    return reasons && reasons.length > 0 ? reasons.join(", ") : alumnus.reminder_reason || "Follow-up Required";
+  };
+
+  const validateBeforePreview = () => {
+    setSendError("");
+    setSendSuccess("");
+
+    if (selectedAlumni.length === 0) {
+      setSendError("Select at least one alumnus before sending email.");
+      return false;
+    }
+
+    if (selectedAlumni.length > MAX_SELECTED_ALUMNI) {
+      setSendError(`You can send email to a maximum of ${MAX_SELECTED_ALUMNI} selected alumni at once.`);
+      return false;
+    }
+
+    if (!subject.trim() || !message.trim()) {
+      setSendError("Subject and message are required.");
+      return false;
+    }
+
+    setConfirming(true);
+    return true;
+  };
+
+  const sendEmail = async () => {
+    if (selectedAlumni.length === 0) return;
+
+    setSending(true);
+    setSendError("");
+    setSendSuccess("");
+
+    try {
+      const res = await fetchApi(`${API_URL}/admin/mailing/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          alumniIds: selectedAlumni.map((alumnus) => alumnus.id),
+          purpose,
+          subject: subject.trim(),
+          message: message.trim(),
+          confirmed: true,
+        }),
+      });
+      const result = await readApiResponse<{ message?: string; sentCount?: number; failedCount?: number }>(res);
+      setSendSuccess(result?.message || `Email sent to ${selectedAlumni.length} selected alumni.`);
+      setConfirming(false);
+      setSelectedAlumni([]);
+      setAlumniSearch("");
+      applyTemplate(purpose);
+      await fetchLogs();
+      setTab("history");
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Email was not sent.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
-    <AdminLayout title="Mailing" subtitle="Send emails to alumni">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <AdminLayout title="Mailing" subtitle="Send targeted emails to selected alumni only">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Total Sent", value: stats.sent, icon: CheckCircle, color: "bg-emerald-100 text-emerald-700" },
-          { label: "Scheduled", value: stats.scheduled, icon: Clock, color: "bg-blue-100 text-blue-700" },
+          { label: "Sent", value: stats.sent, icon: CheckCircle, color: "bg-emerald-100 text-emerald-700" },
           { label: "Failed", value: stats.failed, icon: XCircle, color: "bg-red-100 text-red-700" },
-          { label: "Total Mails", value: stats.total, icon: Mail, color: "bg-purple-100 text-purple-700" },
-        ].map((s, i) => (
-          <div key={i} className="bg-card rounded-xl border border-border shadow-sm p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${s.color}`}><s.icon className="w-5 h-5" /></div>
+          { label: "Last 24 Hours", value: stats.recent, icon: Clock, color: "bg-amber-100 text-amber-700" },
+          { label: "Total Logs", value: stats.total, icon: Mail, color: "bg-slate-100 text-slate-700" },
+        ].map((item) => (
+          <div key={item.label} className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 shadow-sm">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${item.color}`}>
+              <item.icon className="h-5 w-5" />
+            </div>
             <div>
-              <p className="text-2xl font-bold text-navy-dark">{loading ? "…" : s.value}</p>
-              <p className="text-xs text-muted-foreground">{s.label}</p>
+              <p className="text-2xl font-bold text-navy-dark">{loadingLogs ? "..." : item.value}</p>
+              <p className="text-xs text-muted-foreground">{item.label}</p>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
         <div className="flex border-b border-border">
           {[
-            { key: "history", label: "History", icon: Mail },
             { key: "compose", label: "Compose", icon: Send },
-          ].map(t => (
-            <button key={t.key} onClick={() => setTab(t.key as ComposeTab)}
-              className={`flex items-center gap-2 px-5 py-3.5 text-sm font-semibold border-b-2 transition-colors ${tab === t.key ? "border-navy text-navy bg-navy/5" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-              <t.icon className="w-4 h-4" />{t.label}
+            { key: "history", label: "Email Logs", icon: Mail },
+          ].map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setTab(item.key as ComposeTab)}
+              className={`flex items-center gap-2 border-b-2 px-5 py-3.5 text-sm font-semibold transition-colors ${
+                tab === item.key
+                  ? "border-navy bg-navy/5 text-navy"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <item.icon className="h-4 w-4" />
+              {item.label}
             </button>
           ))}
         </div>
 
+        {tab === "compose" && (
+          <div className="grid grid-cols-1 gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:p-6">
+            <div className="space-y-5">
+              {sendSuccess && (
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+                  <CheckCircle className="h-5 w-5" />
+                  {sendSuccess}
+                </div>
+              )}
+              {sendError && (
+                <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                  <AlertCircle className="h-5 w-5" />
+                  {sendError}
+                </div>
+              )}
+
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-navy">Selected Alumni</label>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {selectedAlumni.length}/{MAX_SELECTED_ALUMNI} selected
+                  </span>
+                </div>
+
+                {selectedAlumni.length > 0 && (
+                  <div className="space-y-2 rounded-lg border border-navy/20 bg-navy/5 p-3">
+                    {selectedAlumni.map((alumnus) => (
+                      <div key={alumnus.id} className="flex items-center justify-between gap-3 rounded-lg bg-background px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-navy-dark">{alumnus.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{alumnus.email}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {[alumnus.student_id, alumnus.course, alumnus.batch].filter(Boolean).join(" | ") || "Alumni"}
+                          </p>
+                          <p className="truncate text-xs font-semibold text-amber-700">{getReasonText(alumnus)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeAlumnus(alumnus.id)}
+                          className="flex-shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-border">
+                  <div className="grid grid-cols-1 gap-2 border-b border-border p-3 sm:grid-cols-3">
+                    <select
+                      value={selectedCourse}
+                      onChange={(event) => setSelectedCourse(event.target.value)}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                    >
+                      <option value="">All courses</option>
+                      {filterOptions.courses.map((course) => (
+                        <option key={course} value={course}>
+                          {course}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={selectedBatch}
+                      onChange={(event) => setSelectedBatch(event.target.value)}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                    >
+                      <option value="">All batches</option>
+                      {filterOptions.batches.map((batch) => (
+                        <option key={batch} value={batch}>
+                          {batch}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={selectedReason}
+                      onChange={(event) => setSelectedReason(event.target.value)}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                    >
+                      <option value="">All reminder reasons</option>
+                      {filterOptions.reasons.map((reason) => (
+                        <option key={reason.value} value={reason.value}>
+                          {reason.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                    <Search className="h-4 w-4 text-muted-foreground" />
+                    <input
+                      value={alumniSearch}
+                      onChange={(event) => setAlumniSearch(event.target.value)}
+                      placeholder="Search within alumni who need follow-up"
+                      className="w-full bg-transparent py-2 text-sm outline-none"
+                    />
+                    {loadingRecipients && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  </div>
+                  <div className="max-h-72 overflow-y-auto p-2">
+                    {recipientResults.length === 0 && (
+                      <p className="px-3 py-8 text-center text-sm text-muted-foreground">No follow-up recipients match the filters.</p>
+                    )}
+                    {recipientResults.map((alumnus) => {
+                      const isSelected = selectedAlumniIds.has(alumnus.id);
+
+                      return (
+                        <button
+                          key={alumnus.id}
+                          type="button"
+                          onClick={() => selectAlumnus(alumnus)}
+                          className={`flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left ${
+                            isSelected ? "bg-navy/10" : "hover:bg-muted/60"
+                          }`}
+                        >
+                          {isSelected ? <CheckCircle className="mt-0.5 h-4 w-4 text-emerald-600" /> : <UserCheck className="mt-0.5 h-4 w-4 text-navy" />}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-navy-dark">{alumnus.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{alumnus.email}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {[alumnus.student_id, alumnus.course, alumnus.batch].filter(Boolean).join(" | ")}
+                            </span>
+                            <span className="mt-1 block text-xs font-semibold text-amber-700">
+                              {getReasonText(alumnus)}
+                            </span>
+                          </span>
+                          <span className="rounded-full bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+                            {isSelected ? "Selected" : "Select"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Email Purpose</label>
+                  <select
+                    value={purpose}
+                    onChange={(event) => applyTemplate(event.target.value as EmailPurpose)}
+                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                  >
+                    {(Object.keys(PURPOSE_LABELS) as EmailPurpose[]).map((key) => (
+                      <option key={key} value={key}>
+                        {PURPOSE_LABELS[key]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Subject</label>
+                  <input
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    maxLength={255}
+                    placeholder="Email subject"
+                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                  />
+                </div>
+              </section>
+
+              <section>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Message</label>
+                <textarea
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  rows={11}
+                  placeholder="Write the email message"
+                  className="w-full resize-none rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                />
+              </section>
+
+              <button
+                type="button"
+                onClick={validateBeforePreview}
+                disabled={selectedAlumni.length === 0 || selectedAlumni.length > MAX_SELECTED_ALUMNI || !subject.trim() || !message.trim() || sending}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-navy-light disabled:opacity-50"
+              >
+                <Eye className="h-4 w-4" />
+                Preview and Confirm
+              </button>
+            </div>
+
+            <aside className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy">Templates</p>
+              {(Object.keys(PURPOSE_LABELS) as EmailPurpose[]).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => applyTemplate(key)}
+                  className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                    purpose === key ? "border-navy bg-navy/5" : "border-border hover:border-navy/30 hover:bg-muted/40"
+                  }`}
+                >
+                  <div className="mb-1 flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-navy" />
+                    <p className="text-sm font-semibold text-navy-dark">{PURPOSE_LABELS[key]}</p>
+                  </div>
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{EMAIL_TEMPLATES[key].subject}</p>
+                </button>
+              ))}
+            </aside>
+          </div>
+        )}
+
         {tab === "history" && (
           <div className="p-4 lg:p-5">
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search mails…"
-                className="flex-1 px-4 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20" />
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-                className="px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
-                <option value="all">All Status</option>
-                <option value="sent">Sent</option>
-                <option value="scheduled">Scheduled</option>
-                <option value="failed">Failed</option>
-              </select>
-            </div>
+            {loadingLogs && <div className="py-12 text-center text-sm text-muted-foreground">Loading email logs...</div>}
+            {!loadingLogs && logs.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No email logs found.</div>}
             <div className="space-y-2">
-              {loading && <div className="text-center py-12 text-muted-foreground text-sm">Loading…</div>}
-              {!loading && filtered.length === 0 && <div className="text-center py-12 text-muted-foreground text-sm">No mails found.</div>}
-              {filtered.map(n => {
-                const sc = statusConfig[n.status ?? "draft"] ?? statusConfig.draft;
+              {logs.map((log) => {
+                const status = statusConfig[log.status] ?? statusConfig.pending;
                 return (
-                  <div key={n.id} className="border border-border rounded-lg p-4 hover:bg-muted/30 transition-colors">
+                  <div key={log.id} className="rounded-lg border border-border p-4 transition-colors hover:bg-muted/30">
                     <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 bg-navy/10">
-                        <Mail className="w-4 h-4 text-navy" />
+                      <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-navy/10">
+                        <Mail className="h-4 w-4 text-navy" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <p className="font-semibold text-sm truncate flex-1 text-navy-dark">{n.subject}</p>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sc.color}`}>{sc.label}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-navy-dark">{log.subject}</p>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${status.color}`}>{status.label}</span>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{n.message}</p>
-                        <div className="flex items-center gap-4 mt-2 flex-wrap">
-                          <span className="flex items-center gap-1 text-xs text-muted-foreground"><Users className="w-3.5 h-3.5" /> {n.recipients ?? "—"} · {(n.recipient_count ?? 0).toLocaleString()}</span>
-                          {n.sent_at && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="w-3.5 h-3.5" /> {new Date(n.sent_at).toLocaleString()}</span>}
-                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {log.alumni_name || "Selected alumnus"} | {log.recipient_email} | {PURPOSE_LABELS[log.email_purpose] || log.email_purpose}
+                        </p>
+                        <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{log.message}</p>
+                        {log.status === "failed" && log.error_message && (
+                          <p className="mt-2 text-xs font-semibold text-red-700">{log.error_message}</p>
+                        )}
+                        <p className="mt-2 text-xs text-muted-foreground">{formatDate(log.sent_at || log.created_at)}</p>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => setSelectedNotif(n)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"><Eye className="w-4 h-4" /></button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedLog(log)}
+                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label="View email log"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                 );
@@ -274,121 +584,88 @@ export default function AdminNotifications() {
             </div>
           </div>
         )}
-
-        {tab === "compose" && (
-          <div className="p-4 lg:p-6">
-            {sendSuccess && (
-              <div className="p-4 mb-5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-3">
-                <CheckCircle className="w-5 h-5 text-emerald-600" />
-                <p className="text-emerald-700 text-sm font-semibold">Email sent successfully!</p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 space-y-5">
-                <div>
-                  <label className="block text-xs font-semibold mb-2 uppercase tracking-wider text-navy">Send To</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {[
-                      { key: "all", label: "All Alumni", icon: Users },
-                      { key: "batch", label: "By Batch", icon: FileText },
-                      { key: "course", label: "By Course", icon: FileText },
-                      { key: "reminder", label: "Tracer Reminder", icon: Clock },
-                    ].map(opt => (
-                      <button key={opt.key} onClick={() => setRecipientType(opt.key as RecipientType)}
-                        className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border-2 text-xs font-medium transition-all ${recipientType === opt.key
-                          ? "border-navy bg-navy/5 text-navy"
-                          : "border-border hover:border-navy/30 text-muted-foreground"}`}>
-                        <opt.icon className="w-4 h-4" />
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {recipientType === "batch" && (
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 uppercase tracking-wider text-navy">Select Batch</label>
-                    <select value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)}
-                      className="w-full px-4 py-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
-                      <option value="">Choose a batch…</option>
-                      {batches.map(b => <option key={b} value={b}>{b}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {recipientType === "course" && (
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 uppercase tracking-wider text-navy">Select Course</label>
-                    <select value={selectedCourse} onChange={e => setSelectedCourse(e.target.value)}
-                      className="w-full px-4 py-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20">
-                      <option value="">Choose a course…</option>
-                      {courses.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {recipientType === "reminder" && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                    <strong>Tracer Reminder:</strong> This will target all alumni who have not yet submitted their Graduate Tracer Survey response.
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs font-semibold mb-2 uppercase tracking-wider text-navy">Subject</label>
-                  <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Enter email subject…"
-                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20" />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold mb-2 uppercase tracking-wider text-navy">Message</label>
-                  <textarea value={message} onChange={e => setMessage(e.target.value)} rows={10}
-                    placeholder="Write your email message…"
-                    className="w-full px-4 py-3 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-navy/20 resize-none" />
-                </div>
-
-                <button onClick={handleSend}
-                  disabled={!subject || !message || sending || (recipientType === "batch" && !selectedBatch) || (recipientType === "course" && !selectedCourse)}
-                  className="w-full py-3 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-colors bg-navy hover:bg-navy-light">
-                  {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><Send className="w-4 h-4" /> Send Email</>}
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-3 uppercase tracking-wider text-navy">Email Templates</label>
-                <div className="space-y-2">
-                  {EMAIL_TEMPLATES.map((tpl, i) => (
-                    <button key={i} onClick={() => applyTemplate(tpl)}
-                      className="w-full text-left p-3 rounded-lg border border-border hover:border-navy/30 hover:bg-navy/5 transition-all group">
-                      <div className="flex items-center gap-2 mb-1">
-                        <FileText className="w-3.5 h-3.5 text-muted-foreground group-hover:text-navy" />
-                        <p className="text-sm font-semibold text-navy-dark group-hover:text-navy">{tpl.name}</p>
-                      </div>
-                      <p className="text-xs text-muted-foreground line-clamp-2">{tpl.subject}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {selectedNotif && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setSelectedNotif(null)}>
-          <div className="bg-card rounded-2xl shadow-2xl max-w-lg w-full p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <h3 className="font-bold text-base text-navy-dark">{selectedNotif.subject}</h3>
-              <button onClick={() => setSelectedNotif(null)} className="text-muted-foreground hover:text-foreground"><XCircle className="w-5 h-5" /></button>
+      {confirming && selectedAlumni.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirming(false)}>
+          <div className="w-full max-w-2xl rounded-lg bg-card p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-navy">Confirm Email</p>
+                <h3 className="text-lg font-bold text-navy-dark">{subject}</h3>
+              </div>
+              <button type="button" onClick={() => setConfirming(false)} className="text-muted-foreground hover:text-foreground">
+                <XCircle className="h-5 w-5" />
+              </button>
             </div>
-            <div className="bg-muted/40 rounded-lg p-4 mb-4">
-              <p className="text-sm text-foreground whitespace-pre-line">{selectedNotif.message}</p>
+
+            <div className="mb-4 max-h-44 space-y-2 overflow-y-auto rounded-lg border border-border p-4">
+              {selectedAlumni.map((alumnus) => (
+                <div key={alumnus.id} className="rounded-lg bg-muted/30 px-3 py-2">
+                  <p className="text-sm font-semibold text-navy-dark">{alumnus.name}</p>
+                  <p className="text-sm text-muted-foreground">{alumnus.email}</p>
+                  <p className="text-xs font-semibold text-amber-700">{getReasonText(alumnus)}</p>
+                </div>
+              ))}
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-navy">{PURPOSE_LABELS[purpose]}</p>
             </div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-muted-foreground">Recipients</span><span className="font-medium">{selectedNotif.recipients}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Count</span><span className="font-medium">{(selectedNotif.recipient_count ?? 0).toLocaleString()}</span></div>
-              {selectedNotif.sent_at && <div className="flex justify-between"><span className="text-muted-foreground">Sent</span><span className="font-medium">{new Date(selectedNotif.sent_at).toLocaleString()}</span></div>}
+
+            <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-4">
+              <p className="whitespace-pre-line text-sm text-foreground">{message}</p>
             </div>
+
+            {sendError && <p className="mt-4 text-sm font-semibold text-red-700">{sendError}</p>}
+
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={sendEmail}
+                disabled={sending}
+                className="flex items-center justify-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-bold text-white hover:bg-navy-light disabled:opacity-50"
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send to {selectedAlumni.length} Selected Alumni
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSelectedLog(null)}>
+          <div className="w-full max-w-2xl rounded-lg bg-card p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-navy">{PURPOSE_LABELS[selectedLog.email_purpose]}</p>
+                <h3 className="text-lg font-bold text-navy-dark">{selectedLog.subject}</h3>
+              </div>
+              <button type="button" onClick={() => setSelectedLog(null)} className="text-muted-foreground hover:text-foreground">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg border border-border p-4 sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-muted-foreground">Recipient</p>
+                <p className="text-sm font-semibold text-navy-dark">{selectedLog.alumni_name || "Selected alumnus"}</p>
+                <p className="text-xs text-muted-foreground">{selectedLog.recipient_email}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Status</p>
+                <p className="text-sm font-semibold text-navy-dark">{statusConfig[selectedLog.status]?.label || selectedLog.status}</p>
+                <p className="text-xs text-muted-foreground">{formatDate(selectedLog.sent_at || selectedLog.created_at)}</p>
+              </div>
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-4">
+              <p className="whitespace-pre-line text-sm text-foreground">{selectedLog.message}</p>
+            </div>
+            {selectedLog.error_message && <p className="mt-4 text-sm font-semibold text-red-700">{selectedLog.error_message}</p>}
           </div>
         </div>
       )}

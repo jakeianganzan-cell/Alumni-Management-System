@@ -9,7 +9,8 @@ export type AnnouncementStatus =
   | "upcoming"
   | "ongoing"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "archived";
 export type AnnouncementApprovalStatus = "pending_approval" | "approved" | "rejected";
 export type AnnouncementAudienceScope = "all" | "course" | "batch";
 
@@ -25,10 +26,25 @@ export interface Announcement {
   type: AnnouncementType;
   google_form_link?: string;
   status: AnnouncementStatus;
+  start_datetime?: string | null;
+  start_date?: string | null;
+  start_time?: string | null;
+  end_datetime?: string | null;
+  end_date?: string | null;
+  end_time?: string | null;
+  duration_status?: "Upcoming" | "Active" | "Ended" | "Archived";
+  computed_status?: "Upcoming" | "Active" | "Ended" | "Archived";
+  remaining_time?: string;
+  is_expired?: boolean;
+  auto_archive_at?: string | null;
+  archived_at?: string | null;
   capacity?: number;
   views: number;
   success_score?: number;
   registration_count?: number;
+  interestEnabled?: boolean;
+  interestCount?: number;
+  interestPercentage?: number;
   comment_count?: number;
   approvalStatus?: AnnouncementApprovalStatus;
   rejectionReason?: string | null;
@@ -88,7 +104,7 @@ const AnnouncementContext = createContext<AnnouncementContextType | null>(null);
 
 export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
   const { user, profile, loading: authLoading } = useAuth();
-  const alumniId = profile?.student_id || user?.id || "demo-user";
+  const alumniId = user?.id || profile?.student_id || "demo-user";
 
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(false);
@@ -199,7 +215,7 @@ export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
     await fetch(`${API_URL}/events/${announcementId}/rsvp`, {
       method: "POST",
       headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ alumniId }),
+      body: JSON.stringify({ responseStatus: "Going" }),
     });
     setRsvpStatus((prev) => ({ ...prev, [announcementId]: true }));
     await refreshMetrics(announcementId);

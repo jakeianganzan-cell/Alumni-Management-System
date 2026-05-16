@@ -38,7 +38,7 @@ export function StatCard({ title, value, icon: Icon, trend, trendValue, variant 
     const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : Minus;
 
     return (
-        <div className={`rounded-xl p-5 transition-all duration-200 hover:scale-[1.01] animate-scale-in ${variantStyles[variant]}`}>
+        <div className={`animate-scale-in rounded-xl p-4 transition-all duration-200 hover:scale-[1.01] sm:p-5 ${variantStyles[variant]}`}>
             <div className="flex items-start justify-between mb-3">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconStyles[variant]}`}>
                     <Icon className="w-5 h-5" />
@@ -50,7 +50,7 @@ export function StatCard({ title, value, icon: Icon, trend, trendValue, variant 
                     </div>
                 )}
             </div>
-            <p className={`text-2xl font-display font-bold mb-0.5 ${variant === "navy" ? "text-white" : variant === "gold" ? "text-navy-dark" : "text-navy-dark"}`}>
+            <p className={`mb-0.5 font-display text-xl font-bold sm:text-2xl ${variant === "navy" ? "text-white" : variant === "gold" ? "text-navy-dark" : "text-navy-dark"}`}>
                 {value}
             </p>
             <p className={`text-xs font-medium ${variant === "navy" ? "text-white/70" : variant === "gold" ? "text-navy/70" : "text-muted-foreground"}`}>

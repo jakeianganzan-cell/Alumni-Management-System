@@ -59,7 +59,13 @@ const normalizeCourseKey = (value: string) => value.trim().toUpperCase().replace
 export const normalizeCourseCode = (value: unknown): CourseCode | null => {
   const normalized = normalizeCourseKey(String(value || ""));
   if (!normalized) return null;
-  return COURSE_ALIASES[normalized] || null;
+  const directMatch = COURSE_ALIASES[normalized];
+  if (directMatch) return directMatch;
+
+  const labelMatch = COURSE_OPTIONS.find((option) => normalizeCourseKey(option.label) === normalized);
+  if (labelMatch) return labelMatch.code;
+
+  return null;
 };
 
 export const isSupportedCourse = (value: unknown): value is CourseCode => {
