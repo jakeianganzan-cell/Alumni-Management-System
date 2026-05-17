@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { API_URL, ApiError, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import {
   AlertCircle,
   CheckCircle,
@@ -57,6 +57,21 @@ interface MailingFilterOptions {
   reasons: Array<{ value: string; label: string }>;
 }
 
+interface MailingSendFailure {
+  id: string;
+  name?: string | null;
+  email: string;
+  error?: string | null;
+  logId?: string;
+}
+
+interface MailingSendResult {
+  message?: string;
+  sentCount?: number;
+  failedCount?: number;
+  failures?: MailingSendFailure[];
+}
+
 const PURPOSE_LABELS: Record<EmailPurpose, string> = {
   graduate_tracer_reminder: "Graduate Tracer Reminder",
   event_invitation: "Event Invitation",
@@ -109,6 +124,27 @@ const MAX_SELECTED_ALUMNI = 10;
 const formatDate = (value?: string | null) => {
   if (!value) return "Not sent";
   return new Date(value).toLocaleString();
+};
+
+const getMailingSendErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError && error.payload && typeof error.payload === "object") {
+    const payload = error.payload as { error?: unknown; failures?: MailingSendFailure[]; failedCount?: unknown };
+    const baseMessage = typeof payload.error === "string" && payload.error.trim() ? payload.error.trim() : error.message;
+    const firstFailure = Array.isArray(payload.failures)
+      ? payload.failures.find((failure) => String(failure.error || "").trim())
+      : null;
+
+    if (firstFailure?.error) {
+      const failedCount = typeof payload.failedCount === "number" && payload.failedCount > 1
+        ? ` (${payload.failedCount} failed)`
+        : "";
+      return `${baseMessage} ${firstFailure.error}${failedCount}`;
+    }
+
+    return baseMessage;
+  }
+
+  return error instanceof Error ? error.message : "Email was not sent.";
 };
 
 export default function AdminNotifications() {
@@ -280,7 +316,7 @@ export default function AdminNotifications() {
           confirmed: true,
         }),
       });
-      const result = await readApiResponse<{ message?: string; sentCount?: number; failedCount?: number }>(res);
+      const result = await readApiResponse<MailingSendResult>(res);
       setSendSuccess(result?.message || `Email sent to ${selectedAlumni.length} selected alumni.`);
       setConfirming(false);
       setSelectedAlumni([]);
@@ -289,7 +325,8 @@ export default function AdminNotifications() {
       await fetchLogs();
       setTab("history");
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : "Email was not sent.");
+      setSendError(getMailingSendErrorMessage(error));
+      await fetchLogs();
     } finally {
       setSending(false);
     }

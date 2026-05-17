@@ -2209,6 +2209,20 @@ const isMailingReminderReason = (value: unknown): value is MailingReminderReason
 
 const getSafeMailingError = (error: unknown) => {
     const message = getSafeEmailError(error);
+    const lowerMessage = message.toLowerCase();
+
+    if (lowerMessage.includes("missing:")) {
+        return "Email service is missing required environment variables in the running backend. Check the Brevo API key, sender email, sender name, and frontend URL.";
+    }
+
+    if (
+        lowerMessage.includes("key not found") ||
+        lowerMessage.includes("invalid api key") ||
+        lowerMessage.includes("api key is invalid") ||
+        lowerMessage.includes("unauthorized")
+    ) {
+        return "Brevo rejected the configured API key. Update the Brevo API key in the running backend environment.";
+    }
 
     if (/api[-_ ]?key|secret|token|password/i.test(message)) {
         return "Email service is not configured correctly. Ask the system administrator to check the email settings.";
@@ -9429,7 +9443,8 @@ app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req:
         if (sentRecipients.length === 0) {
             return res.status(502).json({
                 error: "Email was not sent to any selected alumnus. Check the email logs for safe error messages.",
-                failedCount: failedRecipients.length
+                failedCount: failedRecipients.length,
+                failures: failedRecipients.map(({ id, name, email, error, logId }) => ({ id, name, email, error, logId }))
             });
         }
 
