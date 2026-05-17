@@ -68,6 +68,7 @@ const normalizeOrigin = (value: string) => {
 const allowedCorsOrigins = new Set(Array.from(configuredCorsOrigins).map(normalizeOrigin));
 
 const corsOptions: CorsOptions = {
+    credentials: true,
     origin(origin, callback) {
         if (!origin) {
             callback(null, true);
