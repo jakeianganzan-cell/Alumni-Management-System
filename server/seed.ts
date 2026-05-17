@@ -1,6 +1,10 @@
+import "./env";
 import mysql, { type PoolConnection } from "mysql2/promise";
 import type { ResultSetHeader } from "mysql2";
 import bcrypt from "bcrypt";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 type DbValue = string | number | boolean | Date | null;
 
@@ -23,6 +27,8 @@ type AdminSeed = {
   role: "president" | "pio";
 };
 
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDirPath = path.dirname(currentFilePath);
 const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || "ustp_alumni";
 const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
 const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
@@ -34,17 +40,43 @@ const parseBooleanEnv = (value: string | undefined) =>
   ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
 
 const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_CA_FILE = process.env.DB_SSL_CA_FILE || process.env.MYSQL_SSL_CA_FILE;
 const DB_SSL_ENABLED =
   parseBooleanEnv(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED) ||
-  Boolean(DB_SSL_CA);
+  Boolean(DB_SSL_CA || DB_SSL_CA_FILE);
 const DB_SSL_REJECT_UNAUTHORIZED = process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false";
+
+const readSslCa = () => {
+  const caValue = DB_SSL_CA?.trim();
+
+  if (caValue) {
+    if (caValue.includes("BEGIN CERTIFICATE")) {
+      return caValue.replace(/\\n/g, "\n");
+    }
+
+    const caPath = path.isAbsolute(caValue) ? caValue : path.resolve(currentDirPath, caValue);
+
+    if (fs.existsSync(caPath)) {
+      return fs.readFileSync(caPath, "utf8");
+    }
+
+    return caValue.replace(/\\n/g, "\n");
+  }
+
+  const caFilePath = DB_SSL_CA_FILE
+    ? path.resolve(currentDirPath, DB_SSL_CA_FILE)
+    : path.resolve(currentDirPath, "cert", "ca.pem");
+
+  return fs.existsSync(caFilePath) ? fs.readFileSync(caFilePath, "utf8") : undefined;
+};
 
 const getSslConfig = () => {
   if (!DB_SSL_ENABLED) return undefined;
+  const ca = readSslCa();
 
   return {
     rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED,
-    ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+    ...(ca ? { ca } : {}),
   };
 };
 

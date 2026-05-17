@@ -15,6 +15,9 @@ dist/
 !server/.env.example
 .vercel
 *.log
+backup.sql
+backup-defaultdb.sql
+backup-aiven.sql
 
 # Editor directories and files
 .vscode/*

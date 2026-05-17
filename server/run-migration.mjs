@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -15,15 +16,42 @@ const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || "root";
 const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
 const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || "ustp_alumni";
 const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_CA_FILE = process.env.DB_SSL_CA_FILE || process.env.MYSQL_SSL_CA_FILE;
 const DB_SSL_ENABLED =
   ["1", "true", "yes", "require", "required"].includes(
     String(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED || "").trim().toLowerCase(),
-  ) || Boolean(DB_SSL_CA);
+  ) || Boolean(DB_SSL_CA || DB_SSL_CA_FILE);
+
+const readSslCa = () => {
+  const caValue = DB_SSL_CA?.trim();
+
+  if (caValue) {
+    if (caValue.includes("BEGIN CERTIFICATE")) {
+      return caValue.replace(/\\n/g, "\n");
+    }
+
+    const caPath = path.isAbsolute(caValue) ? caValue : path.resolve(currentDirPath, caValue);
+
+    if (fs.existsSync(caPath)) {
+      return fs.readFileSync(caPath, "utf8");
+    }
+
+    return caValue.replace(/\\n/g, "\n");
+  }
+
+  const caFilePath = DB_SSL_CA_FILE
+    ? path.resolve(currentDirPath, DB_SSL_CA_FILE)
+    : path.resolve(currentDirPath, "cert", "ca.pem");
+
+  return fs.existsSync(caFilePath) ? fs.readFileSync(caFilePath, "utf8") : undefined;
+};
+
+const ca = readSslCa();
 
 const ssl = DB_SSL_ENABLED
   ? {
       rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
-      ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+      ...(ca ? { ca } : {}),
     }
   : undefined;
 
