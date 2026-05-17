@@ -11,6 +11,7 @@ import {
   Mail,
   Search,
   Send,
+  Trash2,
   UserCheck,
   XCircle,
 } from "lucide-react";
@@ -152,6 +153,8 @@ export default function AdminNotifications() {
   const [logs, setLogs] = useState<EmailLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
+  const [logToDelete, setLogToDelete] = useState<EmailLog | null>(null);
+  const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
 
   const [alumniSearch, setAlumniSearch] = useState("");
   const [recipientResults, setRecipientResults] = useState<AlumniRecipient[]>([]);
@@ -329,6 +332,32 @@ export default function AdminNotifications() {
       await fetchLogs();
     } finally {
       setSending(false);
+    }
+  };
+
+  const confirmDeleteLog = async () => {
+    if (!logToDelete) return;
+
+    setDeletingLogId(logToDelete.id);
+    setSendError("");
+    setSendSuccess("");
+
+    try {
+      const response = await fetchApi(`${API_URL}/admin/mailing/logs/${encodeURIComponent(logToDelete.id)}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      await readApiResponse<{ success: boolean }>(response);
+      if (selectedLog?.id === logToDelete.id) {
+        setSelectedLog(null);
+      }
+      setLogToDelete(null);
+      setSendSuccess("Email log deleted.");
+      await fetchLogs();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : "Unable to delete email log.");
+    } finally {
+      setDeletingLogId(null);
     }
   };
 
@@ -581,6 +610,18 @@ export default function AdminNotifications() {
 
         {tab === "history" && (
           <div className="p-4 lg:p-5">
+            {sendSuccess && (
+              <div className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+                <CheckCircle className="h-5 w-5" />
+                {sendSuccess}
+              </div>
+            )}
+            {sendError && (
+              <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                <AlertCircle className="h-5 w-5" />
+                {sendError}
+              </div>
+            )}
             {loadingLogs && <div className="py-12 text-center text-sm text-muted-foreground">Loading email logs...</div>}
             {!loadingLogs && logs.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No email logs found.</div>}
             <div className="space-y-2">
@@ -606,14 +647,25 @@ export default function AdminNotifications() {
                         )}
                         <p className="mt-2 text-xs text-muted-foreground">{formatDate(log.sent_at || log.created_at)}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedLog(log)}
-                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        aria-label="View email log"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
+                      <div className="flex flex-shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLog(log)}
+                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label="View email log"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLogToDelete(log)}
+                          disabled={deletingLogId === log.id}
+                          className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Delete email log"
+                        >
+                          {deletingLogId === log.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -703,6 +755,44 @@ export default function AdminNotifications() {
               <p className="whitespace-pre-line text-sm text-foreground">{selectedLog.message}</p>
             </div>
             {selectedLog.error_message && <p className="mt-4 text-sm font-semibold text-red-700">{selectedLog.error_message}</p>}
+          </div>
+        </div>
+      )}
+
+      {logToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !deletingLogId && setLogToDelete(null)}>
+          <div className="w-full max-w-md rounded-lg bg-card p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-red-700">Delete Email Log</p>
+                <h3 className="text-lg font-bold text-navy-dark">Are you sure you want to delete this email log?</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {logToDelete.subject} | {logToDelete.recipient_email}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setLogToDelete(null)}
+                disabled={Boolean(deletingLogId)}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteLog()}
+                disabled={Boolean(deletingLogId)}
+                className="flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deletingLogId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete Log
+              </button>
+            </div>
           </div>
         </div>
       )}

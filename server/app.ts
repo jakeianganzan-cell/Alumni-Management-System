@@ -9294,6 +9294,30 @@ app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (_req,
     }
 });
 
+app.delete("/api/admin/mailing/logs/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const logId = String(req.params.id || "").trim();
+
+        if (!logId) {
+            return res.status(400).json({ error: "Email log id is required." });
+        }
+
+        const result = await db.execute(
+            "DELETE FROM email_logs WHERE id = ?",
+            [logId]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Email log was not found." });
+        }
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("DELETE EMAIL LOG ERROR:", err);
+        res.status(500).json({ error: "Unable to delete email log." });
+    }
+});
+
 app.get("/api/admin/mailing/filters", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         const rows = await getEligibleMailingRecipients({ limit: 500 });

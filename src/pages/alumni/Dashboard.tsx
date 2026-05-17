@@ -541,8 +541,14 @@ export default function AlumniDashboard() {
               key={survey.id}
               type="button"
               onClick={() => openSurvey(survey)}
-              className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+              className="relative rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
             >
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-blue-800 sm:hidden">
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-100">
+                  <ClipboardList className="h-5 w-5" />
+                </span>
+                <span className="text-xs font-bold uppercase tracking-wide">Survey</span>
+              </div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>
                 <DurationBadge status={survey.computed_status || survey.duration_status} remainingTime={survey.remaining_time} startDatetime={survey.start_datetime} endDatetime={survey.end_datetime} />
@@ -831,16 +837,27 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
   const imageUrl = resolveAssetUrl(item.image_url);
   const isEvent = item.type === "event";
   const isSurvey = item.type === "survey";
+  const hasImage = Boolean(imageUrl);
 
   return (
     <button
       type="button"
       onClick={() => onOpen(item)}
-      className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+      className={
+        hasImage
+          ? "relative min-h-[220px] overflow-hidden rounded-xl border border-slate-900/20 bg-slate-950 p-0 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md sm:min-h-0 sm:border-slate-200 sm:bg-white sm:p-4"
+          : "rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+      }
     >
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
+      {hasImage && (
+        <>
+          <img src={imageUrl || undefined} alt="" className="absolute inset-0 h-full w-full object-cover sm:hidden" aria-hidden="true" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/55 to-black/20 sm:hidden" />
+        </>
+      )}
+      <div className={hasImage ? "relative flex min-h-[220px] flex-col justify-end p-4 sm:min-h-0 sm:flex sm:flex-col sm:justify-start sm:gap-4 sm:p-0 md:flex-row md:items-start" : "flex flex-col gap-4 md:flex-row md:items-start"}>
         {imageUrl && (
-          <div className="flex h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 md:w-36">
+          <div className="hidden h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 sm:flex md:w-36">
             <img src={imageUrl} alt={item.title} className="h-full w-full object-contain" />
           </div>
         )}
@@ -851,9 +868,9 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
             </Badge>
             <DurationBadge status={item.computed_status || item.duration_status} remainingTime={item.remaining_time} startDatetime={item.start_datetime} endDatetime={item.end_datetime} />
           </div>
-          <h4 className="line-clamp-2 text-sm font-semibold text-navy-dark">{item.title}</h4>
-          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description || "No description provided."}</p>
-          <p className="mt-2 text-xs font-semibold text-muted-foreground">
+          <h4 className={hasImage ? "line-clamp-2 text-base font-semibold text-white drop-shadow-sm sm:text-sm sm:text-navy-dark sm:drop-shadow-none" : "line-clamp-2 text-sm font-semibold text-navy-dark"}>{item.title}</h4>
+          <p className={hasImage ? "mt-2 line-clamp-3 text-xs leading-5 text-white/90 drop-shadow-sm sm:mt-1 sm:line-clamp-2 sm:text-muted-foreground sm:drop-shadow-none" : "mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground"}>{item.description || "No description provided."}</p>
+          <p className={hasImage ? "mt-3 text-xs font-semibold text-white/85 sm:mt-2 sm:text-muted-foreground" : "mt-2 text-xs font-semibold text-muted-foreground"}>
             {isEvent ? "Open event details" : "Open full details"}
           </p>
         </div>
