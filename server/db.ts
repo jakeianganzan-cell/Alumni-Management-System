@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import mysql from 'mysql2/promise';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { Event, RSVP, Comment, Metrics, EngagementOverview } from './types/db';
@@ -14,22 +17,64 @@ const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || 'root';
 const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
 const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'ustp_alumni';
 const DEFAULT_MAX_ALLOWED_PACKET = 64 * 1024 * 1024;
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDirPath = path.dirname(currentFilePath);
 
 const parseBooleanEnv = (value: string | undefined) =>
   ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
 
 const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
+const DB_SSL_CA_FILE = process.env.DB_SSL_CA_FILE || process.env.MYSQL_SSL_CA_FILE;
 const DB_SSL_ENABLED =
   parseBooleanEnv(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED) ||
-  Boolean(DB_SSL_CA);
+  Boolean(DB_SSL_CA || DB_SSL_CA_FILE);
 const DB_SSL_REJECT_UNAUTHORIZED = process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false";
+
+const getErrorMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : "Unknown error";
+};
+
+const getErrorCode = (error: unknown) => {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return String(error.code || "");
+  }
+
+  return "";
+};
+
+const getDatabaseTarget = () => `${DB_HOST}:${DB_PORT}/${DB_NAME}`;
+
+const readSslCa = () => {
+  const caValue = DB_SSL_CA?.trim();
+
+  if (caValue) {
+    if (caValue.includes("BEGIN CERTIFICATE")) {
+      return caValue.replace(/\\n/g, "\n");
+    }
+
+    const caPath = path.isAbsolute(caValue) ? caValue : path.resolve(currentDirPath, caValue);
+
+    if (fs.existsSync(caPath)) {
+      return fs.readFileSync(caPath, "utf8");
+    }
+
+    return caValue.replace(/\\n/g, "\n");
+  }
+
+  const caFilePath = DB_SSL_CA_FILE
+    ? path.resolve(currentDirPath, DB_SSL_CA_FILE)
+    : path.resolve(currentDirPath, "cert", "ca.pem");
+
+  return fs.existsSync(caFilePath) ? fs.readFileSync(caFilePath, "utf8") : undefined;
+};
 
 const getSslConfig = () => {
   if (!DB_SSL_ENABLED) return undefined;
+  const ca = readSslCa();
 
   return {
     rejectUnauthorized: DB_SSL_REJECT_UNAUTHORIZED,
-    ...(DB_SSL_CA ? { ca: DB_SSL_CA.replace(/\\n/g, "\n") } : {}),
+    ...(ca ? { ca } : {}),
   };
 };
 
@@ -64,7 +109,11 @@ const ensureMysqlPacketLimit = async () => {
       console.log(`MySQL max_allowed_packet increased to ${MYSQL_MAX_ALLOWED_PACKET} bytes`);
     }
   } catch (error) {
-    console.warn('Unable to verify or increase MySQL max_allowed_packet:', error);
+    console.warn('Unable to verify or increase MySQL max_allowed_packet:', {
+      target: `${DB_HOST}:${DB_PORT}`,
+      code: getErrorCode(error) || undefined,
+      message: getErrorMessage(error),
+    });
   } finally {
     await connection?.end();
   }
@@ -90,7 +139,11 @@ const pool = mysql.createPool({
     console.log('Connected to MySQL database!');
     conn.release();
   } catch (error) {
-    console.error('Database connection failed:', error);
+    console.error('Database connection failed:', {
+      target: getDatabaseTarget(),
+      code: getErrorCode(error) || undefined,
+      message: getErrorMessage(error),
+    });
   }
 })();
 

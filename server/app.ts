@@ -338,6 +338,14 @@ const getErrorMessage = (error: unknown) => {
     return error instanceof Error ? error.message : "Unknown error";
 };
 
+const getErrorCode = (error: unknown) => {
+    if (typeof error === "object" && error !== null && "code" in error) {
+        return String(error.code || "");
+    }
+
+    return "";
+};
+
 const parseRows = <T extends QueryRow = QueryRow>(result: T[] | T[][] | unknown) => {
     if (Array.isArray(result) && Array.isArray(result[0])) {
         return result[0];
@@ -1276,13 +1284,18 @@ const getAdminDashboardAnalytics = async () => {
     const monthlyRows = monthlySources.length
         ? parseRows<MonthlyEngagementRow>(await db.query<MonthlyEngagementRow>(
             `SELECT
-                DATE_FORMAT(activity_at, '%Y-%m') AS month_key,
+                month_key,
                 activity_type,
                 COUNT(*) AS activity_count
-             FROM (${monthlySources.join(" UNION ALL ")}) activity
-             WHERE activity_at IS NOT NULL
-             AND activity_at >= ?
-             GROUP BY DATE_FORMAT(activity_at, '%Y-%m'), activity_type
+             FROM (
+                SELECT
+                    DATE_FORMAT(activity_at, '%Y-%m') AS month_key,
+                    activity_type
+                FROM (${monthlySources.join(" UNION ALL ")}) activity
+                WHERE activity_at IS NOT NULL
+                AND activity_at >= ?
+             ) monthly_activity
+             GROUP BY month_key, activity_type
              ORDER BY month_key ASC`,
             [startMonth]
         ))
@@ -1551,23 +1564,29 @@ const getAdminDashboardAnalytics = async () => {
 
     const heatmapRows = parseRows<HeatmapRow>(await db.query<HeatmapRow>(
         `SELECT
-            DAYOFWEEK(activity_at) - 1 AS day_index,
-            DATE_FORMAT(activity_at, '%a') AS day_label,
-            HOUR(activity_at) AS hour_block,
+            day_index,
+            day_label,
+            hour_block,
             COUNT(*) AS activity_count
          FROM (
-            SELECT logged_at AS activity_at FROM alumni_login_events
-            UNION ALL SELECT created_at AS activity_at FROM event_comments
-            UNION ALL SELECT interested_at AS activity_at FROM announcement_interests WHERE status = 'interested'
-            UNION ALL SELECT submitted_at AS activity_at FROM survey_responses
-            UNION ALL SELECT created_at AS activity_at FROM freedom_wall_posts WHERE LOWER(COALESCE(status, 'published')) = 'published'
-            UNION ALL SELECT created_at AS activity_at FROM freedom_wall_comments WHERE LOWER(COALESCE(status, 'published')) = 'published'
-            UNION ALL SELECT created_at AS activity_at FROM reactions
-            UNION ALL SELECT created_at AS activity_at FROM donations
-         ) activity
-         WHERE activity_at IS NOT NULL
-           AND activity_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-         GROUP BY DAYOFWEEK(activity_at), DATE_FORMAT(activity_at, '%a'), HOUR(activity_at)
+            SELECT
+                DAYOFWEEK(activity_at) - 1 AS day_index,
+                DATE_FORMAT(activity_at, '%a') AS day_label,
+                HOUR(activity_at) AS hour_block
+            FROM (
+                SELECT logged_at AS activity_at FROM alumni_login_events
+                UNION ALL SELECT created_at AS activity_at FROM event_comments
+                UNION ALL SELECT interested_at AS activity_at FROM announcement_interests WHERE status = 'interested'
+                UNION ALL SELECT submitted_at AS activity_at FROM survey_responses
+                UNION ALL SELECT created_at AS activity_at FROM freedom_wall_posts WHERE LOWER(COALESCE(status, 'published')) = 'published'
+                UNION ALL SELECT created_at AS activity_at FROM freedom_wall_comments WHERE LOWER(COALESCE(status, 'published')) = 'published'
+                UNION ALL SELECT created_at AS activity_at FROM reactions
+                UNION ALL SELECT created_at AS activity_at FROM donations
+            ) activity
+            WHERE activity_at IS NOT NULL
+              AND activity_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+         ) heatmap_activity
+         GROUP BY day_index, day_label, hour_block
          ORDER BY day_index ASC, hour_block ASC`
     ));
     const heatmap = heatmapRows.map((row) => ({
@@ -3642,24 +3661,64 @@ const ensureAnnouncementEventSurveyEngagementTables = async () => {
 /* =========================
    STARTUP INIT
 ========================= */
-ensureDefaultAdmin().catch((error) => {
-    console.error("DEFAULT ADMIN INIT ERROR:", error);
-});
+const getDatabaseTarget = () => {
+    const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
+    const port = process.env.DB_PORT || process.env.MYSQL_PORT || "3306";
+    const name = process.env.DB_NAME || process.env.MYSQL_DATABASE || "ustp_alumni";
 
-ensureChairmanAccounts().catch((error) => {
-    console.error("CHAIRMAN ACCOUNT INIT ERROR:", error);
-});
+    return `${host}:${port}/${name}`;
+};
 
-ensureDatabaseColumns()
-    .then(() => ensureAnnouncementEventSurveyEngagementTables())
-    .then(() => ensureEventRsvpTables())
-    .then(() => ensureDashboardSlideTable())
-    .then(() => ensureAlumniLoginActivityTable())
-    .then(() => ensureAnnouncementInterestTable())
-    .then(() => startDurationAutoArchiveJob())
-    .catch((error) => {
-        console.error("DATABASE COLUMN INIT ERROR:", error);
-    });
+const describeDatabaseStartupFailure = (error: unknown) => {
+    const code = getErrorCode(error);
+    const message = getErrorMessage(error);
+
+    if (code === "ENOTFOUND") {
+        return "DNS cannot resolve DB_HOST. Copy the exact MySQL host from Aiven service details into server/.env.";
+    }
+
+    if (code === "ECONNREFUSED") {
+        return "MySQL refused the connection. Check DB_HOST, DB_PORT, firewall, and whether the database service is running.";
+    }
+
+    if (code === "ETIMEDOUT" || code === "EHOSTUNREACH" || code === "ENETUNREACH") {
+        return "MySQL is unreachable from this network. Check internet access, Aiven allowed IP/network settings, and DB_PORT.";
+    }
+
+    if (message.toLowerCase().includes("access denied")) {
+        return "MySQL rejected the login. Check DB_USER and DB_PASSWORD.";
+    }
+
+    return message;
+};
+
+const initializeDatabaseBackedStartup = async () => {
+    try {
+        await db.query<QueryRow>("SELECT 1 AS ok");
+    } catch (error) {
+        console.error("DATABASE STARTUP ERROR:", {
+            target: getDatabaseTarget(),
+            code: getErrorCode(error) || undefined,
+            message: getErrorMessage(error),
+            action: describeDatabaseStartupFailure(error)
+        });
+        return;
+    }
+
+    await ensureDefaultAdmin();
+    await ensureChairmanAccounts();
+    await ensureDatabaseColumns();
+    await ensureAnnouncementEventSurveyEngagementTables();
+    await ensureEventRsvpTables();
+    await ensureDashboardSlideTable();
+    await ensureAlumniLoginActivityTable();
+    await ensureAnnouncementInterestTable();
+    startDurationAutoArchiveJob();
+};
+
+initializeDatabaseBackedStartup().catch((error) => {
+    console.error("DATABASE STARTUP INIT ERROR:", error);
+});
 
 /* =========================
    HEALTH CHECK
