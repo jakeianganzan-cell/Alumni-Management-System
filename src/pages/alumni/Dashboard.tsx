@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Calendar, Bell, Clock3, MapPin, MessageCircle, Send, CheckCircle, UserCheck, XCircle, ClipboardList } from "lucide-react";
+import { Calendar, Bell, Clock3, MapPin, MessageCircle, Send, CheckCircle, UserCheck, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import salayBackground from "@/assets/salay-background.png";
@@ -543,23 +543,19 @@ export default function AlumniDashboard() {
               onClick={() => openSurvey(survey)}
               className="relative rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
             >
-              <div className="mb-3 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-blue-800 sm:hidden">
-                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-100">
-                  <ClipboardList className="h-5 w-5" />
-                </span>
-                <span className="text-xs font-bold uppercase tracking-wide">Survey</span>
-              </div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>
                 <DurationBadge status={survey.computed_status || survey.duration_status} remainingTime={survey.remaining_time} startDatetime={survey.start_datetime} endDatetime={survey.end_datetime} />
                 {survey.userAnswers.length > 0 && <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Answered</Badge>}
               </div>
-              <h4 className="line-clamp-2 text-sm font-semibold text-navy-dark">{survey.title}</h4>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{survey.description || "No description provided."}</p>
-              <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-                <ClipboardList className="h-3.5 w-3.5" />
+              <h4 className="line-clamp-2 text-base font-semibold leading-tight text-navy-dark md:text-sm">{survey.title}</h4>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground md:mt-1 md:line-clamp-2 md:text-xs md:leading-5">{survey.description || "No description provided."}</p>
+              <p className="mt-3 text-xs font-semibold text-muted-foreground md:mt-2">
                 {survey.questions.length} question{survey.questions.length === 1 ? "" : "s"} | {survey.responseCount} response{survey.responseCount === 1 ? "" : "s"}
               </p>
+              <span className="mt-4 inline-flex rounded-full bg-navy px-3.5 py-2 text-xs font-bold text-white md:hidden">
+                Open survey
+              </span>
             </button>
           ))}
         </DashboardContentSection>

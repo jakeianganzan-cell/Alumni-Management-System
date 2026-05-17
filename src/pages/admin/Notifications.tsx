@@ -629,7 +629,7 @@ export default function AdminNotifications() {
                 const status = statusConfig[log.status] ?? statusConfig.pending;
                 return (
                   <div key={log.id} className="rounded-lg border border-border p-4 transition-colors hover:bg-muted/30">
-                    <div className="flex items-start gap-3">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start">
                       <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-navy/10">
                         <Mail className="h-4 w-4 text-navy" />
                       </div>
@@ -647,23 +647,25 @@ export default function AdminNotifications() {
                         )}
                         <p className="mt-2 text-xs text-muted-foreground">{formatDate(log.sent_at || log.created_at)}</p>
                       </div>
-                      <div className="flex flex-shrink-0 items-center gap-1">
+                      <div className="flex flex-shrink-0 items-center gap-2 md:gap-1">
                         <button
                           type="button"
                           onClick={() => setSelectedLog(log)}
-                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground md:flex-none md:border-0 md:p-1.5"
                           aria-label="View email log"
                         >
                           <Eye className="h-4 w-4" />
+                          <span className="md:hidden">View</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setLogToDelete(log)}
                           disabled={deletingLogId === log.id}
-                          className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 md:flex-none md:border-0 md:p-1.5"
                           aria-label="Delete email log"
                         >
                           {deletingLogId === log.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          <span className="md:hidden">Delete</span>
                         </button>
                       </div>
                     </div>

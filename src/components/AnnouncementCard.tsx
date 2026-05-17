@@ -15,6 +15,7 @@ export function AnnouncementCard({
   className?: string;
 }) {
   const imageUrl = resolveAssetUrl(announcement.image_url);
+  const hasImage = Boolean(imageUrl);
 
   return (
     <article
@@ -28,13 +29,31 @@ export function AnnouncementCard({
         }
       }}
       className={cn(
-        "min-w-0 max-w-full cursor-pointer rounded-xl border border-border/70 bg-white p-4 shadow-sm outline-none transition duration-200 hover:border-navy/30 hover:shadow-md focus-visible:ring-2 focus-visible:ring-navy/30",
+        "relative min-w-0 max-w-full cursor-pointer overflow-hidden rounded-xl border shadow-sm outline-none transition duration-200 hover:border-navy/30 hover:shadow-md focus-visible:ring-2 focus-visible:ring-navy/30 md:min-h-0 md:border-border/70 md:bg-white md:p-4 md:text-foreground",
+        hasImage
+          ? "min-h-[250px] border-slate-900/20 bg-slate-950 p-0 text-white"
+          : "min-h-[230px] border-border/70 bg-white p-4 text-foreground",
         className,
       )}
     >
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
+      {hasImage && (
+        <>
+          <img
+            src={imageUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover md:hidden"
+            aria-hidden="true"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-black/20 md:hidden" />
+        </>
+      )}
+
+      <div className={cn(
+        "relative flex h-full flex-col gap-4 md:flex-row md:items-start",
+        hasImage ? "min-h-[250px] justify-end p-4 md:min-h-0 md:justify-start md:p-0" : "min-h-[198px] justify-between md:min-h-0 md:justify-start",
+      )}>
         {imageUrl && (
-          <div className="flex h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/20 md:w-36">
+          <div className="hidden h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/20 md:flex md:w-36">
             <img
               src={imageUrl}
               alt={announcement.title}
@@ -52,31 +71,41 @@ export function AnnouncementCard({
               startDatetime={announcement.start_datetime}
               endDatetime={announcement.end_datetime}
             />
-            <span className="text-xs text-muted-foreground">
+            <span className={cn("text-xs", hasImage ? "text-white/85 md:text-muted-foreground" : "text-muted-foreground")}>
               {formatPostedDate(announcement.created_at || announcement.date)}
             </span>
           </div>
 
-          <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-navy-dark">{announcement.title}</h3>
-          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+          <h3 className={cn("line-clamp-2 font-semibold leading-tight", hasImage ? "text-lg text-white drop-shadow-sm md:text-sm md:text-navy-dark md:drop-shadow-none" : "text-sm text-navy-dark")}>{announcement.title}</h3>
+          <p className={cn("mt-2 line-clamp-3 text-sm leading-6 md:mt-1 md:line-clamp-2 md:text-xs md:leading-5", hasImage ? "text-white/90 drop-shadow-sm md:text-muted-foreground md:drop-shadow-none" : "text-muted-foreground")}>
             {announcement.description || "No description provided yet."}
           </p>
 
-          <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            <MetaChip icon={<CalendarDays className="h-3.5 w-3.5" />} label={formatDisplayDate(announcement.date)} />
-            {announcement.time && <MetaChip icon={<Clock3 className="h-3.5 w-3.5" />} label={announcement.time} />}
-            {announcement.venue && <MetaChip icon={<MapPin className="h-3.5 w-3.5" />} label={announcement.venue} />}
-            {announcement.audienceLabel && <MetaChip icon={<FileText className="h-3.5 w-3.5" />} label={announcement.audienceLabel} />}
+          <div className={cn("mt-3 flex flex-wrap gap-1.5 text-[11px] md:mt-2.5", hasImage ? "text-white/90 md:text-muted-foreground" : "text-muted-foreground")}>
+            <MetaChip overlay={hasImage} icon={<CalendarDays className="h-3.5 w-3.5" />} label={formatDisplayDate(announcement.date)} />
+            {announcement.time && <MetaChip overlay={hasImage} icon={<Clock3 className="h-3.5 w-3.5" />} label={announcement.time} />}
+            {announcement.venue && <MetaChip overlay={hasImage} icon={<MapPin className="h-3.5 w-3.5" />} label={announcement.venue} />}
+            {announcement.audienceLabel && <MetaChip overlay={hasImage} icon={<FileText className="h-3.5 w-3.5" />} label={announcement.audienceLabel} />}
           </div>
+
+          <span className={cn(
+            "mt-4 inline-flex items-center justify-center rounded-full px-3.5 py-2 text-xs font-bold md:hidden",
+            hasImage ? "bg-white text-slate-950 shadow-sm" : "bg-navy text-white",
+          )}>
+            {announcement.type === "event" ? "View event" : "View details"}
+          </span>
         </div>
       </div>
     </article>
   );
 }
 
-function MetaChip({ icon, label }: { icon: React.ReactNode; label: string }) {
+function MetaChip({ icon, label, overlay = false }: { icon: React.ReactNode; label: string; overlay?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-1">
+    <span className={cn(
+      "inline-flex items-center gap-1 rounded-full border px-2.5 py-1",
+      overlay ? "border-white/25 bg-white/15 text-white backdrop-blur-sm md:border-border md:bg-muted/40 md:text-muted-foreground md:backdrop-blur-0" : "border-border bg-muted/40",
+    )}>
       {icon}
       {label}
     </span>
