@@ -55,6 +55,8 @@ export default function AlumniLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
+  const visibleNavItems = isMobile ? NAV_ITEMS.filter((item) => item.path !== "/alumni/about") : NAV_ITEMS;
+  const mobileHeaderTitle = title === "Salay Community College" ? "" : title;
 
   const handleLogout = () => {
     signOut();
@@ -94,7 +96,7 @@ export default function AlumniLayout({
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const active = isActivePath(location.pathname, item.path);
           return (
             <button
@@ -132,16 +134,41 @@ export default function AlumniLayout({
           className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-4 py-3 shadow-[0_12px_28px_rgba(58,0,0,0.20)]"
           style={{ color: "white" }}
         >
-          <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
-            <Menu className={isMobile ? "h-5 w-5" : "h-6 w-6"} />
-          </button>
+          {isMobile ? (
+            <button
+              type="button"
+              onClick={() => navigate("/alumni")}
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm"
+              aria-label="Go to alumni dashboard"
+            >
+              <img src={ustpLogo} alt="SaCC" className="h-8 w-8 object-contain" />
+            </button>
+          ) : (
+            <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
+              <Menu className="h-6 w-6" />
+            </button>
+          )}
 
           <div className="min-w-0 flex-1">
-            <h1 className={`font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-lg"}`}>{title}</h1>
+            {(!isMobile || mobileHeaderTitle) && (
+              <h1 className={`truncate font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-lg"}`}>
+                {isMobile ? mobileHeaderTitle : title}
+              </h1>
+            )}
             {subtitle && !isMobile && <p className="text-xs text-white">{subtitle}</p>}
           </div>
 
           <div className="flex items-center gap-2">
+            {isMobile && (
+              <button
+                type="button"
+                onClick={() => navigate("/alumni/donate")}
+                className="relative rounded-lg p-2 text-white transition-colors hover:bg-white/15"
+                aria-label="Make a donation"
+              >
+                <Heart className="h-5 w-5 text-white" />
+              </button>
+            )}
             <NotificationBell />
 
             <div className="relative">
@@ -187,6 +214,17 @@ export default function AlumniLayout({
                       >
                         <User className="h-4 w-4 text-muted-foreground" /> My Profile
                       </button>
+                      {isMobile && (
+                        <button
+                          onClick={() => {
+                            navigate("/alumni/about");
+                            setAccountMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
+                        >
+                          <Info className="h-4 w-4 text-muted-foreground" /> About Us
+                        </button>
+                      )}
                       <div className="my-1 border-t border-border" />
                       <button
                         onClick={handleLogout}

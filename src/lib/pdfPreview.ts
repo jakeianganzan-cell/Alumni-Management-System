@@ -141,21 +141,32 @@ export function showPdfPreview(previewWindow: Window | null, blob: Blob, fileNam
   const isPrintableHtml = blob.type.toLowerCase().includes("text/html");
   const previewTitle = isPrintableHtml ? `${title} - Printable Preview` : title;
   const downloadName = isPrintableHtml ? fileName.replace(/\.pdf$/i, ".html") : fileName;
+  const viewerUrl = `${objectUrl}#toolbar=1&navpanes=0`;
+  const useNativeMobilePdfViewer =
+    !isPrintableHtml &&
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 640px)").matches;
 
   if (!previewWindow || previewWindow.closed) {
-    const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+    const opened = window.open(viewerUrl, "_blank", "noopener,noreferrer");
 
     if (!opened) {
-      window.location.assign(objectUrl);
+      window.location.assign(viewerUrl);
     }
 
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 300000);
     return;
   }
 
+  if (useNativeMobilePdfViewer) {
+    previewWindow.location.replace(viewerUrl);
+    previewWindow.focus();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 300000);
+    return;
+  }
+
   const escapedTitle = escapeHtml(previewTitle);
   const escapedFileName = escapeHtml(downloadName);
-  const viewerUrl = `${objectUrl}#toolbar=1&navpanes=0`;
   writePreviewDocument(
     previewWindow,
     `<div class="bar">

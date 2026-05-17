@@ -90,8 +90,8 @@ export default function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(360px,calc(100vw-1.5rem))] p-0" align="end">
-        <div className="border-b border-border px-4 py-3">
+      <PopoverContent className="w-[min(360px,calc(100vw-1.5rem))] p-0 max-[640px]:max-h-[52dvh] max-[640px]:w-[min(17rem,62vw)]" align="end">
+        <div className="border-b border-border px-4 py-3 max-[640px]:px-3 max-[640px]:py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-foreground">Notifications</p>
@@ -102,7 +102,7 @@ export default function NotificationBell() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1 px-2 text-xs"
+              className="h-8 gap-1 px-2 text-xs max-[640px]:h-7 max-[640px]:px-1.5"
               onClick={() => readAllMutation.mutate()}
               disabled={unreadCount === 0 || readAllMutation.isPending}
             >
@@ -112,9 +112,9 @@ export default function NotificationBell() {
           </div>
         </div>
 
-        <div className="max-h-[420px] overflow-y-auto">
+        <div className="max-h-[420px] overflow-y-auto max-[640px]:max-h-[calc(52dvh-58px)]">
           {notifications.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground max-[640px]:px-3 max-[640px]:py-6 max-[640px]:text-xs">
               No notifications yet.
             </div>
           ) : (
@@ -122,16 +122,16 @@ export default function NotificationBell() {
               <button
                 key={notification.id}
                 onClick={() => openNotification(notification)}
-                className={`w-full border-b border-border px-4 py-3 text-left transition hover:bg-muted/40 ${
+                className={`w-full border-b border-border px-4 py-3 text-left transition hover:bg-muted/40 max-[640px]:px-3 max-[640px]:py-2.5 ${
                   notification.isRead ? "bg-background" : "bg-rose-50/40"
                 }`}
                 type="button"
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground">{notification.title}</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{notification.message}</p>
-                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <p className="line-clamp-2 text-sm font-semibold text-foreground max-[640px]:text-xs">{notification.title}</p>
+                    <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground max-[640px]:leading-4">{notification.message}</p>
+                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground max-[640px]:text-[10px]">
                       {notification.category} | {new Date(notification.createdAt).toLocaleString()}
                     </p>
                   </div>

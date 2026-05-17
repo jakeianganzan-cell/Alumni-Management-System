@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -103,7 +103,6 @@ export default function AlumniAchievements() {
   const [sendingComment, setSendingComment] = useState(false);
   const [reactingTo, setReactingTo] = useState<number | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const formRef = useRef<HTMLElement | null>(null);
 
   const loadAchievements = async () => {
     try {
@@ -294,16 +293,24 @@ export default function AlumniAchievements() {
 
   const openAchievementForm = () => {
     setShowForm(true);
-    window.setTimeout(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
   };
 
   return (
     <AlumniLayout title="Achievements" subtitle="Celebrate alumni milestones with real reactions and live discussion">
       <div className="space-y-6">
         {showForm && (
-          <section ref={formRef} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => {
+              if (!saving) {
+                setShowForm(false);
+              }
+            }}
+          >
+          <section
+            className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="mb-4">
               <h2 className="text-base font-semibold text-navy-dark">Submit achievement</h2>
               <p className="text-sm text-muted-foreground">Use clear details and one proof image so the admin team can review it quickly.</p>
@@ -368,6 +375,7 @@ export default function AlumniAchievements() {
               </div>
             </form>
           </section>
+          </div>
         )}
 
         <div className="flex justify-center">
