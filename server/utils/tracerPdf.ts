@@ -50,6 +50,8 @@ const CHED_SEAL_DATA_URI = loadPngDataUri([
 
 const EXECUTABLE_CANDIDATES = [
   process.env.PUPPETEER_EXECUTABLE_PATH || "",
+  process.env.CHROME_BIN || "",
+  process.env.GOOGLE_CHROME_BIN || "",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -884,6 +886,16 @@ const detectExecutablePath = async () => {
     }
   }
 
+  try {
+    const bundledExecutable = puppeteer.executablePath();
+    if (bundledExecutable) {
+      await fs.access(bundledExecutable);
+      return bundledExecutable;
+    }
+  } catch {
+    // Puppeteer can still launch in environments where it resolves the browser lazily.
+  }
+
   return undefined;
 };
 
@@ -902,6 +914,7 @@ export const generateTracerPdfBuffer = async (record: TracerPdfRecord) => {
     const pdf = await page.pdf({
       format: "A4",
       printBackground: true,
+      preferCSSPageSize: true,
       margin: {
         top: "12px",
         right: "12px",

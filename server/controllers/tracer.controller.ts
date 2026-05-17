@@ -10,7 +10,6 @@ import {
   createStoredZipBuffer,
   generateTracerDocxBuffer,
   generateTracerPdfBuffer,
-  generateTracerPortablePdfBuffer,
 } from "../utils/tracerPdf";
 
 interface TracerSummaryRow extends RowDataPacket {
@@ -803,8 +802,8 @@ const buildDownloadPdfBuffer = async (row: TracerSummaryRow) => {
   try {
     return await generateTracerPdfBuffer(toPdfRecord(row));
   } catch (error) {
-    console.warn("PDF DOWNLOAD FALLBACK:", getErrorMessage(error));
-    return generateTracerPortablePdfBuffer(toPdfRecord(row));
+    console.error("TRACER PDF TEMPLATE GENERATION ERROR:", error);
+    throw new Error(`Unable to generate the official Graduate Tracer PDF template: ${getErrorMessage(error)}`);
   }
 };
 
