@@ -12,12 +12,11 @@
     "node": "20.x"
   },
   "dependencies": {
-    "@types/nodemailer": "^8.0.0",
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^22.16.5",
+    "@types/nodemailer": "^8.0.0",
     "@types/uuid": "^10.0.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
@@ -29,8 +28,11 @@
     "nodemailer": "^8.0.7",
     "puppeteer": "^24.42.0",
     "sqlite3": "^5.1.7",
-    "typescript": "^5.8.3",
     "tsx": "^4.7.0",
+    "typescript": "^5.8.3",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0"
   }
 }
