@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     rootDir: server
-    buildCommand: npm ci --include=dev && npm run build && npx puppeteer browsers install chrome
+    buildCommand: rm -rf /opt/render/.cache/puppeteer/chrome && PUPPETEER_SKIP_DOWNLOAD=true npm ci --include=dev && npm run build && npx puppeteer browsers install chrome
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
