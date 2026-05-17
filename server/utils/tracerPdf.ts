@@ -1,7 +1,10 @@
 import fs from "fs/promises";
 import { readFileSync } from "fs";
 import path from "path";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
+
+
 
 export interface TracerPdfRecord {
   id: number | string;
@@ -48,15 +51,7 @@ const CHED_SEAL_DATA_URI = loadPngDataUri([
   path.resolve(process.cwd(), "../server/assets/ched-seal.png"),
 ]);
 
-const EXECUTABLE_CANDIDATES = [
-  process.env.PUPPETEER_EXECUTABLE_PATH || "",
-  process.env.CHROME_BIN || "",
-  process.env.GOOGLE_CHROME_BIN || "",
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-].filter(Boolean);
+
 
 const escapeHtml = (value: unknown) =>
   String(value ?? "")
@@ -876,36 +871,17 @@ export const generateTracerDocxBuffer = (record: TracerPdfRecord) => {
   ]);
 };
 
-const detectExecutablePath = async () => {
-  for (const candidate of EXECUTABLE_CANDIDATES) {
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch {
-      // Continue to next candidate.
-    }
-  }
 
-  try {
-    const bundledExecutable = puppeteer.executablePath();
-    if (bundledExecutable) {
-      await fs.access(bundledExecutable);
-      return bundledExecutable;
-    }
-  } catch {
-    // Puppeteer can still launch in environments where it resolves the browser lazily.
-  }
-
-  return undefined;
-};
 
 export const generateTracerPdfBuffer = async (record: TracerPdfRecord) => {
-  const executablePath = await detectExecutablePath();
   const browser = await puppeteer.launch({
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    ...(executablePath ? { executablePath } : {}),
   });
+
+
+
 
   try {
     const page = await browser.newPage();

@@ -127,7 +127,7 @@ Only run `npm run seed` on a staging database you are willing to reset, because 
 2. Use these settings:
    - Root Directory: `server`
    - Runtime: Node
-   - Build Command: `npm install && npx puppeteer browsers install chrome`
+   - Build Command: `npm install && npm run build`
    - Start Command: `npm start`
    - Health Check Path: `/api/health`
 3. Add all backend environment variables listed above.
@@ -206,7 +206,7 @@ After both deployments are online:
 - Render port error: do not hardcode a port in Render. The server reads `process.env.PORT`.
 - Database connection refused: verify DB host, port, username, password, database name, and SSL setting.
 - Aiven SSL failure: copy the CA certificate text into `DB_SSL_CA`, preserving line breaks or using escaped `\n`.
-- PDF generation failure: keep the Render build command that installs Puppeteer Chrome and set `PUPPETEER_CACHE_DIR`.
+- PDF generation failure: keep the server `postinstall` script that installs Puppeteer Chrome, redeploy with a cleared Render build cache, and set `PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer`.
 - Emails show success but inbox is empty: check Brevo transactional logs, sender verification, and spam folder.
 - Page refresh 404 on Vercel: confirm `vercel.json` is deployed from the project root.
 

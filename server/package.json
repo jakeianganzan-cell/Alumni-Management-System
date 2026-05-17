@@ -6,6 +6,9 @@
     "dev": "tsx watch index.ts",
     "start": "tsx index.ts",
     "build": "tsc --noEmit",
+    "install:chrome": "echo 'Skipping puppeteer browser install (using @sparticuz/chromium).'",
+
+    "postinstall": "npm run install:chrome",
     "seed": "tsx seed.ts"
   },
   "engines": {
@@ -26,7 +29,9 @@
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.22.0",
     "nodemailer": "^8.0.7",
-    "puppeteer": "^24.42.0",
+    "puppeteer-core": "^25.0.3",
+    "@sparticuz/chromium": "^148.0.0",
+
     "sqlite3": "^5.1.7",
     "tsx": "^4.7.0",
     "typescript": "^5.8.3",
