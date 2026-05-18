@@ -1,10 +1,7 @@
-import fs from "fs/promises";
 import { readFileSync } from "fs";
 import path from "path";
-import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
-
-
+import puppeteer from "puppeteer-core";
 
 export interface TracerPdfRecord {
   id: number | string;
@@ -50,8 +47,6 @@ const CHED_SEAL_DATA_URI = loadPngDataUri([
   path.resolve(process.cwd(), "assets/ched-seal.png"),
   path.resolve(process.cwd(), "../server/assets/ched-seal.png"),
 ]);
-
-
 
 const escapeHtml = (value: unknown) =>
   String(value ?? "")
@@ -871,36 +866,45 @@ export const generateTracerDocxBuffer = (record: TracerPdfRecord) => {
   ]);
 };
 
-
-
 export const generateTracerPdfBuffer = async (record: TracerPdfRecord) => {
+  const args = await puppeteer.defaultArgs({ args: chromium.args, headless: "shell" });
   const browser = await puppeteer.launch({
-    args: chromium.args,
+    args,
+    defaultViewport: {
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      height: 1080,
+      isLandscape: false,
+      isMobile: false,
+      width: 1920,
+    },
     executablePath: await chromium.executablePath(),
-    headless: true,
+    headless: "shell",
   });
 
-
-
-
   try {
-    const page = await browser.newPage();
-    await page.setContent(renderTracerPdfHtml(record), { waitUntil: "networkidle0" });
-    await page.emulateMediaType("screen");
-    const pdf = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      preferCSSPageSize: true,
-      margin: {
-        top: "12px",
-        right: "12px",
-        bottom: "12px",
-        left: "12px",
-      },
-    });
+  const page = await browser.newPage();
 
-    return Buffer.from(pdf);
+  await page.setContent(renderTracerPdfHtml(record), {
+    waitUntil: "load",
+  });
+
+  await page.emulateMediaType("screen");
+
+  const pdf = await page.pdf({
+    format: "A4",
+    printBackground: true,
+    preferCSSPageSize: true,
+    margin: {
+      top: "12px",
+      right: "12px",
+      bottom: "12px",
+      left: "12px",
+    },
+  });
+
+  return Buffer.from(pdf);
   } finally {
-    await browser.close();
+  await browser.close();
   }
 };
