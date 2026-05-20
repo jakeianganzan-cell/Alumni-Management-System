@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEPARTMENT_LABELS, Department } from "@/lib/rbac";
 import {
   LayoutDashboard, Users, LogOut, Menu, X, LineChart,
-  ChevronDown, User
+  ChevronDown, User, Megaphone, Award, MessageSquare
 } from "lucide-react";
 import ustpLogo from "@/assets/salay.png";
 
@@ -16,8 +16,11 @@ interface ChairmanLayoutProps {
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/chairman" },
-  { icon: Users, label: "My Alumni", path: "/chairman/alumni" },
+  { icon: Users, label: "Alumni Records", path: "/chairman/alumni" },
   { icon: LineChart, label: "Engagement", path: "/chairman/engagement" },
+  { icon: Megaphone, label: "Announcements", path: "/chairman/announcements" },
+  { icon: Award, label: "Achievements", path: "/chairman/achievements" },
+  { icon: MessageSquare, label: "Freedom Wall", path: "/chairman/community" },
 ] as const;
 
 export default function ChairmanLayout({ children, title, subtitle }: ChairmanLayoutProps) {
@@ -69,7 +72,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
 
       <nav className="flex-1 px-2 pb-3 space-y-0.5 overflow-y-auto">
         {NAV_ITEMS.map(item => {
-          const active = location.pathname === item.path;
+          const active = location.pathname === item.path || (item.path !== "/chairman" && location.pathname.startsWith(item.path));
           return (
             <button
               key={item.path}

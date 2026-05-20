@@ -81,6 +81,8 @@ interface SurveyData {
   userAnswers: Array<{ questionId: number; answerText?: string | null; answerValue?: string | null; answerJson?: string[] | null; ratingValue?: number | null }>;
 }
 
+type AnnouncementTab = "announcements" | "events" | "surveys";
+
 const BLANK_FORM: AlumniAnnouncementForm = {
   title: "",
   description: "",
@@ -108,6 +110,7 @@ export default function AlumniAnnouncements() {
   const [submittingComment, setSubmittingComment] = useState(false);
   const [interestStatus, setInterestStatus] = useState<Record<string, AnnouncementInterest | null>>({});
   const [submittingInterest, setSubmittingInterest] = useState(false);
+  const [activeTab, setActiveTab] = useState<AnnouncementTab>("announcements");
 
   const loadAnnouncements = async () => {
     try {
@@ -184,6 +187,27 @@ export default function AlumniAnnouncements() {
   const surveyItems = useMemo(
     () => surveys.filter((survey) => survey.questions.length > 0),
     [surveys],
+  );
+
+  const tabItems = useMemo(
+    () => [
+      {
+        id: "announcements" as const,
+        label: "All Announcements",
+        count: announcementItems.length,
+      },
+      {
+        id: "events" as const,
+        label: "All Events",
+        count: eventItems.length,
+      },
+      {
+        id: "surveys" as const,
+        label: "All Surveys",
+        count: surveyItems.length,
+      },
+    ],
+    [announcementItems.length, eventItems.length, surveyItems.length],
   );
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -396,7 +420,29 @@ export default function AlumniAnnouncements() {
 
   return (
     <AlumniLayout title="Announcements" subtitle="Browse published updates and submit alumni announcements for admin approval">
-      <div className="space-y-5">
+      <div className="mx-auto max-w-4xl space-y-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+          <div className="grid gap-2 sm:grid-cols-3">
+            {tabItems.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex min-h-12 items-center justify-between rounded-lg px-4 py-3 text-left text-sm font-semibold transition ${
+                  activeTab === tab.id
+                    ? "bg-navy text-white shadow-sm"
+                    : "bg-slate-50 text-navy-dark hover:bg-slate-100"
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${activeTab === tab.id ? "bg-white/20 text-white" : "bg-white text-muted-foreground"}`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <Loader2 className="mb-2 h-8 w-8 animate-spin" />
@@ -404,30 +450,38 @@ export default function AlumniAnnouncements() {
           </div>
         ) : (
           <>
-            <AnnouncementSection
-              title="All Announcements"
-              description="Official updates and alumni notices."
-              count={announcementItems.length}
-              emptyText="No announcements are available right now."
-              items={announcementItems}
-              onOpen={setSelectedAnnouncement}
-            />
-            <AnnouncementSection
-              title="All Events"
-              description="Alumni activities, gatherings, and event schedules."
-              count={eventItems.length}
-              emptyText="No events are available right now."
-              items={eventItems}
-              onOpen={setSelectedAnnouncement}
-            />
-            <SurveySection
-              title="All Surveys"
-              description="Answer available alumni surveys directly inside the system."
-              count={surveyItems.length}
-              emptyText="No surveys are available right now."
-              items={surveyItems}
-              onOpen={openSurvey}
-            />
+            {activeTab === "announcements" && (
+              <AnnouncementSection
+                title="All Announcements"
+                description="Official updates and alumni notices."
+                count={announcementItems.length}
+                emptyText="No announcements available."
+                items={announcementItems}
+                onOpen={setSelectedAnnouncement}
+              />
+            )}
+
+            {activeTab === "events" && (
+              <AnnouncementSection
+                title="All Events"
+                description="Alumni activities, gatherings, and event schedules."
+                count={eventItems.length}
+                emptyText="No events available."
+                items={eventItems}
+                onOpen={setSelectedAnnouncement}
+              />
+            )}
+
+            {activeTab === "surveys" && (
+              <SurveySection
+                title="All Surveys"
+                description="Answer available alumni surveys directly inside the system."
+                count={surveyItems.length}
+                emptyText="No surveys available."
+                items={surveyItems}
+                onOpen={openSurvey}
+              />
+            )}
           </>
         )}
       </div>
@@ -665,7 +719,7 @@ function AnnouncementSection({
               key={announcement.id}
               announcement={announcement}
               onOpen={onOpen}
-              className="min-w-0 max-w-none"
+              className="min-h-[250px] min-w-0 max-w-none md:min-h-[160px]"
             />
           ))}
         </div>
@@ -710,7 +764,7 @@ function SurveySection({
               key={survey.id}
               type="button"
               onClick={() => onOpen(survey)}
-              className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+              className="min-h-[190px] w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md md:min-h-[160px]"
             >
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>

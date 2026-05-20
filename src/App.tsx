@@ -33,6 +33,9 @@ import ChairmanDashboard from "./pages/chairman/Dashboard";
 import ChairmanAlumni from "./pages/chairman/Alumni";
 import ChairmanAccount from "./pages/chairman/Account";
 import ChairmanEngagement from "./pages/chairman/Engagement";
+import ChairmanAnnouncements from "./pages/chairman/Announcements";
+import ChairmanAchievements from "./pages/chairman/Achievements";
+import ChairmanCommunity from "./pages/chairman/Community";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -131,6 +134,9 @@ function AppRoutes() {
       <Route path="/chairman/alumni" element={<ChairmanRoute><ChairmanAlumni /></ChairmanRoute>} />
       <Route path="/chairman/account" element={<ChairmanRoute><ChairmanAccount /></ChairmanRoute>} />
       <Route path="/chairman/engagement" element={<ChairmanRoute><ChairmanEngagement /></ChairmanRoute>} />
+      <Route path="/chairman/announcements" element={<ChairmanRoute><ChairmanAnnouncements /></ChairmanRoute>} />
+      <Route path="/chairman/achievements" element={<ChairmanRoute><ChairmanAchievements /></ChairmanRoute>} />
+      <Route path="/chairman/community" element={<ChairmanRoute><ChairmanCommunity /></ChairmanRoute>} />
 
       <Route path="*" element={<NotFound />} />
     </Routes>

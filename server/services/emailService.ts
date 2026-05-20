@@ -90,11 +90,10 @@ export const validateEmailEnvironment = (): EmailEnvironment => {
     };
 };
 
-const getLoginUrl = (frontendUrl = process.env.FRONTEND_URL || process.env.APP_LOGIN_URL || process.env.APP_BASE_URL || "") => {
-    const configuredUrl = frontendUrl;
-    const trimmedUrl = configuredUrl.replace(/\/+$/, "");
-
-    return /\/login$/i.test(trimmedUrl) ? trimmedUrl : `${trimmedUrl}/login`;
+const getPortalUrl = (frontendUrl = process.env.FRONTEND_URL || process.env.APP_BASE_URL || "") => {
+    const explicitLoginUrl = String(process.env.APP_LOGIN_URL || "").trim();
+    const configuredUrl = explicitLoginUrl || frontendUrl;
+    return configuredUrl.replace(/\/+$/, "");
 };
 
 const getBrevoErrorDetails = async (response: Response) => {
@@ -185,12 +184,12 @@ export const sendTargetedAlumniEmail = async ({
     message
 }: TargetedAlumniEmailParams) => {
     const { senderName, frontendUrl } = validateEmailEnvironment();
-    const loginUrl = getLoginUrl(frontendUrl);
+    const portalUrl = getPortalUrl(frontendUrl);
     const safeName = escapeHtml(name || "Alumni");
     const safePurpose = escapeHtml(purposeLabels[purpose] || "Alumni Email");
     const safeMessage = escapeHtml(message).replace(/\n/g, "<br />");
     const safeSenderName = escapeHtml(senderName);
-    const safeLoginUrl = escapeHtml(loginUrl);
+    const safePortalUrl = escapeHtml(portalUrl);
 
     return sendTransactionalEmail({
         to,
@@ -199,14 +198,14 @@ export const sendTargetedAlumniEmail = async ({
             `Hello ${name || "Alumni"},\n\n` +
             `${message}\n\n` +
             `Purpose: ${purposeLabels[purpose] || "Alumni Email"}\n` +
-            `Alumni Portal: ${loginUrl}\n\n` +
+            `Alumni Portal: ${portalUrl}\n\n` +
             `Thank you,\n${senderName}`,
         html: `
             <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.6;">
                 <p>Hello ${safeName},</p>
                 <p>${safeMessage}</p>
                 <p><strong>Purpose:</strong> ${safePurpose}</p>
-                <p><a href="${safeLoginUrl}">Open Alumni Portal</a></p>
+                <p><a href="${safePortalUrl}">Open Alumni Portal</a></p>
                 <p>Thank you,<br/>${safeSenderName}</p>
             </div>
         `
@@ -219,13 +218,14 @@ export const sendAlumniCredentialsEmail = async ({
     alumniId,
     temporaryPassword
 }: AlumniCredentialsParams) => {
-    const { senderName } = validateEmailEnvironment();
-    const loginUrl = getLoginUrl();
+    const { senderName, frontendUrl } = validateEmailEnvironment();
+    const portalUrl = getPortalUrl(frontendUrl);
     const safeName = escapeHtml(name);
     const safeEmail = escapeHtml(to);
     const safeAlumniId = escapeHtml(alumniId);
     const safePassword = escapeHtml(temporaryPassword);
     const safeSenderName = escapeHtml(senderName);
+    const safePortalUrl = escapeHtml(portalUrl);
 
     return sendTransactionalEmail({
         to,
@@ -233,7 +233,7 @@ export const sendAlumniCredentialsEmail = async ({
         text:
             `Hello ${name},\n\n` +
             "Your alumni account has been created.\n\n" +
-            `Login URL: ${loginUrl}\n` +
+            `Alumni Portal: ${portalUrl}\n` +
             `Email: ${to}\n` +
             `Alumni ID: ${alumniId}\n` +
             `Temporary Password: ${temporaryPassword}\n\n` +
@@ -244,8 +244,8 @@ export const sendAlumniCredentialsEmail = async ({
                 <p>Your alumni account has been created.</p>
                 <table style="border-collapse: collapse; width: 100%; max-width: 520px;">
                     <tr>
-                        <td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Login URL</strong></td>
-                        <td style="padding: 8px; border: 1px solid #e5e7eb;"><a href="${loginUrl}">${loginUrl}</a></td>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Alumni Portal</strong></td>
+                        <td style="padding: 8px; border: 1px solid #e5e7eb;"><a href="${safePortalUrl}">${safePortalUrl}</a></td>
                     </tr>
                     <tr>
                         <td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Email</strong></td>

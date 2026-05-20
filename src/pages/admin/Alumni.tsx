@@ -47,6 +47,7 @@ interface NewAlumniForm {
   course: string;
   batch: string;
   email: string;
+  studentId: string;
   contactNumber: string;
 }
 
@@ -95,7 +96,7 @@ interface ImportResponse {
   }>;
 }
 
-const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", contactNumber: "" };
+const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "" };
 
 const normalizeImageSrc = (value: string | null) => resolveAssetUrl(value);
 
@@ -104,6 +105,49 @@ const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCas
 const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g, "").trim();
 const normalizeYear = (value: unknown) => String(value || "").trim();
 const normalizeHeader = (value: unknown) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+const EMAIL_PATTERN = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const ALLOWED_ALUMNI_EMAIL_DOMAINS = ["gmail.com", "email.com"];
+
+const getAlumniEmailError = (value: unknown) => {
+  const email = normalizeEmail(value);
+
+  if (!email) return "Email address is required.";
+  if (!EMAIL_PATTERN.test(email)) return "Enter a valid email address using an allowed domain.";
+
+  const [localPart, domain = ""] = email.split("@");
+
+  if (
+    !localPart ||
+    !domain ||
+    localPart.startsWith(".") ||
+    localPart.endsWith(".") ||
+    localPart.includes("..") ||
+    domain.startsWith(".") ||
+    domain.endsWith(".") ||
+    domain.includes("..")
+  ) {
+    return "Enter a valid email address using an allowed domain.";
+  }
+
+  const allowedDomain = ALLOWED_ALUMNI_EMAIL_DOMAINS.includes(domain) || domain === "edu.ph" || domain.endsWith(".edu.ph");
+
+  if (!allowedDomain) {
+    return "Email must use @gmail.com, @email.com, or an .edu.ph school domain.";
+  }
+
+  return "";
+};
+
+const getStudentIdError = (value: unknown) => {
+  const studentId = normalizeText(value);
+
+  if (!studentId) return "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{2,49}$/.test(studentId)) {
+    return "Student/Alumni ID must be 3-50 characters and may use letters, numbers, and hyphens.";
+  }
+
+  return "";
+};
 const normalizeProgram = (value: unknown) => {
   const text = normalizeText(value);
   const normalized = text.toUpperCase().replace(/\s+/g, " ");
@@ -153,8 +197,9 @@ const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: S
       errors.push("Graduation Year must be a 4-digit year.");
     }
 
-    if (!row.emailAddress || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.emailAddress)) {
-      errors.push("Email Address is invalid.");
+    const emailError = getAlumniEmailError(row.emailAddress);
+    if (emailError) {
+      errors.push(emailError);
     }
 
     if (!row.program) {
@@ -402,6 +447,29 @@ export default function AdminAlumni() {
     () => new Set(alumni.map((profile) => normalizeEmail(profile.email)).filter(Boolean)),
     [alumni]
   );
+  const existingStudentIds = useMemo(
+    () => new Set(alumni.map((profile) => normalizeText(profile.student_id).toLowerCase()).filter(Boolean)),
+    [alumni]
+  );
+  const trimmedName = normalizeText(form.name);
+  const normalizedAddEmail = normalizeEmail(form.email);
+  const normalizedAddStudentId = normalizeText(form.studentId);
+  const emailValidationError = form.email ? getAlumniEmailError(form.email) : "Email address is required.";
+  const studentIdValidationError = getStudentIdError(form.studentId);
+  const duplicateEmailError = normalizedAddEmail && existingEmails.has(normalizedAddEmail)
+    ? "This alumni account already exists."
+    : "";
+  const duplicateStudentIdError = normalizedAddStudentId && existingStudentIds.has(normalizedAddStudentId.toLowerCase())
+    ? "This Student/Alumni ID already exists."
+    : "";
+  const addFormErrors = {
+    name: trimmedName ? "" : "Full name is required.",
+    batch: /^\d{4}$/.test(form.batch) ? "" : "Batch year must be a 4-digit year.",
+    course: SYSTEM_COURSES.includes(form.course as typeof SYSTEM_COURSES[number]) ? "" : "Select a valid course/program.",
+    email: duplicateEmailError || emailValidationError,
+    studentId: duplicateStudentIdError || studentIdValidationError,
+  };
+  const canCreateAlumni = Object.values(addFormErrors).every((message) => !message);
 
   const filtered = useMemo(() => {
     return alumni
@@ -513,13 +581,14 @@ export default function AdminAlumni() {
 
     try {
       const normalizedEmail = normalizeEmail(form.email);
+      const normalizedStudentId = normalizeText(form.studentId);
 
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-        throw new Error("Enter a valid email address before creating the alumni account.");
+      if (!canCreateAlumni) {
+        throw new Error(Object.values(addFormErrors).find(Boolean) || "Complete all required fields before creating the alumni account.");
       }
 
       if (existingEmails.has(normalizedEmail)) {
-        throw new Error("This email address already exists in the database.");
+        throw new Error("This alumni account already exists.");
       }
 
       const res = await fetch(`${API_URL}/profiles`, {
@@ -533,6 +602,7 @@ export default function AdminAlumni() {
           email: normalizedEmail,
           course: form.course,
           batch: form.batch,
+          studentId: normalizedStudentId || null,
           contactNumber: form.contactNumber,
           photoBase64: photoPreview,
           sendEmail: true,
@@ -543,6 +613,7 @@ export default function AdminAlumni() {
         success: boolean;
         alumniId: string;
         emailSent: boolean;
+        emailStatus?: string;
         emailError: string | null;
       }>(res);
 
@@ -554,9 +625,9 @@ export default function AdminAlumni() {
       await fetchAlumni();
 
       if (!data.emailSent && data.emailError) {
-        setAddError(`Alumni created, but email was not sent: ${data.emailError}`);
+        toast.error(`Alumni account created, but the credentials email was not sent: ${data.emailError}`);
       } else {
-        toast.success("Alumni account created");
+        toast.success("Alumni account created successfully.");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create alumni account";
@@ -846,7 +917,7 @@ export default function AdminAlumni() {
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <h3 className="font-display text-lg font-bold text-navy-dark">Add New Alumni</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">Alumni ID and a temporary password will be auto-generated</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">A temporary password will be generated securely. Alumni ID is auto-generated if not provided.</p>
               </div>
               <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="h-5 w-5" />
@@ -872,8 +943,10 @@ export default function AdminAlumni() {
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                   placeholder="e.g. Juan dela Cruz"
+                  aria-invalid={Boolean(addFormErrors.name)}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-navy focus:outline-none"
                 />
+                {form.name && addFormErrors.name && <p className="mt-1 text-xs text-rose-600">{addFormErrors.name}</p>}
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -882,6 +955,7 @@ export default function AdminAlumni() {
                   <select
                     value={form.batch}
                     onChange={(event) => setForm((current) => ({ ...current, batch: event.target.value }))}
+                    aria-invalid={Boolean(addFormErrors.batch)}
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-navy focus:outline-none"
                   >
                     {["2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"].map((year) => (
@@ -894,6 +968,7 @@ export default function AdminAlumni() {
                   <select
                     value={form.course}
                     onChange={(event) => setForm((current) => ({ ...current, course: event.target.value }))}
+                    aria-invalid={Boolean(addFormErrors.course)}
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-navy focus:outline-none"
                   >
                     {COURSE_OPTIONS.map((option) => (
@@ -913,8 +988,29 @@ export default function AdminAlumni() {
                   value={form.email}
                   onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
                   placeholder="e.g. jdelacruz@gmail.com"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-navy focus:outline-none"
+                  aria-invalid={Boolean(addFormErrors.email)}
+                  className={`w-full rounded-lg border bg-background px-3 py-2.5 text-sm focus:outline-none ${addFormErrors.email && form.email ? "border-rose-300 focus:border-rose-500" : "border-border focus:border-navy"}`}
                 />
+                {form.email ? (
+                  <p className={`mt-1 text-xs ${addFormErrors.email ? "text-rose-600" : "text-emerald-700"}`}>
+                    {addFormErrors.email || "Email format and domain are valid."}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">Allowed domains: @gmail.com, @email.com, and .edu.ph school email domains.</p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-navy">Student/Alumni ID <span className="text-muted-foreground">(if available)</span></label>
+                <input
+                  type="text"
+                  value={form.studentId}
+                  onChange={(event) => setForm((current) => ({ ...current, studentId: event.target.value }))}
+                  placeholder="Leave blank to auto-generate"
+                  aria-invalid={Boolean(addFormErrors.studentId)}
+                  className={`w-full rounded-lg border bg-background px-3 py-2.5 text-sm focus:outline-none ${addFormErrors.studentId && form.studentId ? "border-rose-300 focus:border-rose-500" : "border-border focus:border-navy"}`}
+                />
+                {form.studentId && addFormErrors.studentId && <p className="mt-1 text-xs text-rose-600">{addFormErrors.studentId}</p>}
               </div>
 
               <div>
@@ -938,7 +1034,7 @@ export default function AdminAlumni() {
                 <button type="button" onClick={() => setShowAdd(false)} className="flex-1 rounded-lg border border-border py-2.5 text-sm font-medium text-navy hover:bg-muted">
                   Cancel
                 </button>
-                <button type="submit" disabled={addLoading} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:opacity-50">
+                <button type="submit" disabled={addLoading || !canCreateAlumni} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:cursor-not-allowed disabled:opacity-50">
                   {addLoading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -947,7 +1043,7 @@ export default function AdminAlumni() {
                   ) : (
                     <>
                       <Mail className="h-4 w-4" />
-                      Add Alumni
+                      Create Account
                     </>
                   )}
                 </button>

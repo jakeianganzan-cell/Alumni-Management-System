@@ -2004,7 +2004,39 @@ const getUserSettings = async (userId: string) => {
     };
 };
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_REGEX = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const ALLOWED_ALUMNI_EMAIL_DOMAINS = ["gmail.com", "email.com"];
+
+const getEmailValidationMessage = (emailAddress: string) => {
+    const email = normalizeEmail(emailAddress);
+
+    if (!email || !EMAIL_REGEX.test(email)) {
+        return "Enter a valid email address using an allowed domain.";
+    }
+
+    const [localPart, domain = ""] = email.split("@");
+
+    if (
+        !localPart ||
+        !domain ||
+        localPart.startsWith(".") ||
+        localPart.endsWith(".") ||
+        localPart.includes("..") ||
+        domain.startsWith(".") ||
+        domain.endsWith(".") ||
+        domain.includes("..")
+    ) {
+        return "Enter a valid email address using an allowed domain.";
+    }
+
+    const allowedDomain = ALLOWED_ALUMNI_EMAIL_DOMAINS.includes(domain) || domain === "edu.ph" || domain.endsWith(".edu.ph");
+
+    if (!allowedDomain) {
+        return "Email must use @gmail.com, @email.com, or an .edu.ph school domain.";
+    }
+
+    return "";
+};
 
 const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
     const fullName = normalizeText(row.fullName || row.name);
@@ -2021,8 +2053,9 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
         return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Year must be a 4-digit year", category: "invalid" as const } };
     }
 
-    if (!emailAddress || !EMAIL_REGEX.test(emailAddress)) {
-        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Email is invalid", category: "invalid" as const } };
+    const emailValidationMessage = getEmailValidationMessage(emailAddress);
+    if (emailValidationMessage) {
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: emailValidationMessage, category: "invalid" as const } };
     }
 
     if (!courseValidation.ok || !courseValidation.course) {
@@ -2468,6 +2501,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
     email,
     course,
     batch,
+    studentId,
     contactNumber,
     photoBase64,
     temporaryPassword
@@ -2476,11 +2510,12 @@ const createAlumniAccount = async (conn: PoolConnection, {
     email: string;
     course?: string | null;
     batch?: string | null;
+    studentId?: string | null;
     contactNumber?: string | null;
     photoBase64?: string | null;
     temporaryPassword: string;
 }) => {
-    const alumniId = await generateUniqueAlumniId(conn, batch);
+    const alumniId = normalizeText(studentId) || await generateUniqueAlumniId(conn, batch);
     const userId = uuidv4();
     const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
@@ -4150,6 +4185,9 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             batch,
             year,
             program,
+            studentId,
+            student_id,
+            alumniId: requestedAlumniId,
             contactNumber,
             photoBase64,
             sendEmail: shouldSend
@@ -4158,6 +4196,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
         const normalizedName = normalizeText(name);
         const normalizedEmail = normalizeEmail(email);
         const normalizedBatch = normalizeBatch(batch || year);
+        const normalizedStudentId = normalizeText(studentId || student_id || requestedAlumniId);
         const normalizedContactNumber = normalizePhone(contactNumber) || null;
         const courseValidation = validateSupportedCourse(course || program);
 
@@ -4165,8 +4204,9 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             return res.status(400).json({ error: "Name is required." });
         }
 
-        if (!normalizedEmail || !EMAIL_REGEX.test(normalizedEmail)) {
-            return res.status(400).json({ error: "A valid email address is required." });
+        const emailValidationMessage = getEmailValidationMessage(normalizedEmail);
+        if (emailValidationMessage) {
+            return res.status(400).json({ error: emailValidationMessage });
         }
 
         if (!normalizedBatch || !/^\d{4}$/.test(normalizedBatch)) {
@@ -4178,12 +4218,27 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
         }
 
         const [existing] = await conn.query<RowDataPacket[]>(
-            "SELECT id FROM users WHERE email = ?",
-            [normalizedEmail]
+            `SELECT u.id
+             FROM users u
+             LEFT JOIN profiles p ON p.id = u.id
+             WHERE LOWER(u.email) = ? OR LOWER(p.email) = ?
+             LIMIT 1`,
+            [normalizedEmail, normalizedEmail]
         );
 
         if (Array.isArray(existing) && existing.length > 0) {
-            return res.status(400).json({ error: "Email already exists" });
+            return res.status(409).json({ error: "This alumni account already exists." });
+        }
+
+        if (normalizedStudentId) {
+            const [existingStudentId] = await conn.query<RowDataPacket[]>(
+                "SELECT id FROM profiles WHERE student_id = ? LIMIT 1",
+                [normalizedStudentId]
+            );
+
+            if (Array.isArray(existingStudentId) && existingStudentId.length > 0) {
+                return res.status(409).json({ error: "This Student/Alumni ID already exists." });
+            }
         }
 
         await conn.beginTransaction();
@@ -4194,6 +4249,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             email: normalizedEmail,
             course: courseValidation.course,
             batch: normalizedBatch,
+            studentId: normalizedStudentId || null,
             contactNumber: normalizedContactNumber,
             photoBase64: photoBase64 || null,
             temporaryPassword
@@ -4229,9 +4285,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
 
         res.status(201).json({
             success: true,
-            message: emailSent
-                ? "Alumni account created and credentials email sent."
-                : "Alumni account created. Credentials email was not sent.",
+            message: "Alumni account created successfully.",
             alumniId,
             emailSent,
             emailStatus: emailSent ? "sent" : shouldSend === false ? "pending" : "failed",
@@ -4241,6 +4295,9 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
     } catch (err: unknown) {
         await conn.rollback();
         console.error("CREATE ALUMNI ERROR:", err);
+        if (getErrorMessage(err).toLowerCase().includes("duplicate")) {
+            return res.status(409).json({ error: "This alumni account already exists." });
+        }
         res.status(500).json({ error: getErrorMessage(err) });
     } finally {
         conn.release();
@@ -4879,6 +4936,7 @@ app.get("/api/chairman/engagement", authenticateToken, requireChairman, async (r
             })
             .map((entry) => ({
                 batch: entry.batch,
+                alumni: entry.alumni,
                 score: entry.alumni ? Math.min(100, Math.round((entry.engagementScore / (entry.alumni * 4)) * 100)) : 0,
                 participants: entry.active,
                 events: entry.event_count,
@@ -4951,31 +5009,99 @@ app.get("/api/chairman/engagement", authenticateToken, requireChairman, async (r
         const employedCount = alumni.filter((item) =>
             ["Employed", "Self-Employed"].includes(item.employment_status || "")
         ).length;
+        const eventParticipants = alumni.filter((item) => item.event_count > 0).length;
+        const tracerRespondents = alumni.filter((item) => item.tracer_count > 0).length;
+        const activeAlumni = alumni.filter((item) => item.engagementScore > 0).length;
         const avgEngagementScore = topBatches.length
             ? Number((topBatches.reduce((sum, item) => sum + item.score, 0) / topBatches.length).toFixed(1))
             : 0;
+        const achievementRows = parseRows(await db.query(
+            `SELECT LOWER(COALESCE(a.status, 'pending')) AS status, COUNT(*) AS count, COUNT(DISTINCT a.alumni_id) AS alumni_count
+             FROM achievements a
+             INNER JOIN profiles p ON p.id = a.alumni_id
+             WHERE p.course = ?
+             GROUP BY LOWER(COALESCE(a.status, 'pending'))`,
+            [course]
+        ));
+        const achievementCounts = {
+            pending: 0,
+            approved: 0,
+            rejected: 0,
+            archived: 0,
+        };
+        let alumniWithAchievements = 0;
+
+        achievementRows.forEach((row) => {
+            const key = normalizeStatus(String(row.status || "pending"), "pending") as keyof typeof achievementCounts;
+            if (key in achievementCounts) {
+                achievementCounts[key] += Number(row.count || 0);
+            }
+
+            alumniWithAchievements += Number(row.alumni_count || 0);
+        });
+
+        const buildCourseMetric = async (targetCourse: string) => {
+            const courseAlumni = targetCourse === course ? alumni : await getChairmanAlumniData(targetCourse);
+            const courseBatchMetrics = new Map<string, { alumni: number; engagementScore: number }>();
+
+            courseAlumni.forEach((item) => {
+                const batch = item.batch || "Unspecified";
+                const existing = courseBatchMetrics.get(batch) || { alumni: 0, engagementScore: 0 };
+                existing.alumni += 1;
+                existing.engagementScore += item.engagementScore;
+                courseBatchMetrics.set(batch, existing);
+            });
+
+            const scores = Array.from(courseBatchMetrics.values()).map((entry) =>
+                entry.alumni ? Math.min(100, Math.round((entry.engagementScore / (entry.alumni * 4)) * 100)) : 0
+            );
+            const engagementScore = scores.length
+                ? Number((scores.reduce((sum, item) => sum + item, 0) / scores.length).toFixed(1))
+                : 0;
+
+            return {
+                department: targetCourse,
+                label: COURSE_LABELS[targetCourse as keyof typeof COURSE_LABELS] || targetCourse,
+                alumni: courseAlumni.length,
+                active: courseAlumni.filter((item) => item.engagementScore > 0).length,
+                engagementScore,
+                tracerRespondents: courseAlumni.filter((item) => item.tracer_count > 0).length,
+                isCurrent: targetCourse === course,
+            };
+        };
+        const departmentMetrics = await Promise.all(SYSTEM_COURSES.map((item) => buildCourseMetric(item)));
 
         res.json({
             course,
             courseLabel: COURSE_LABELS[course],
             summary: {
                 avgEngagementScore,
-                eventParticipants: alumni.filter((item) => item.event_count > 0).length,
-                tracerRespondents: alumni.filter((item) => item.tracer_count > 0).length,
+                totalAlumni: alumni.length,
+                activeAlumni,
+                eventParticipants,
+                tracerRespondents,
                 employedCount,
+                alumniWithAchievements,
             },
+            engagementOverview: [
+                { label: "Active Alumni", value: activeAlumni },
+                { label: "Event Participants", value: eventParticipants },
+                { label: "Tracer Updated", value: tracerRespondents },
+                { label: "With Achievements", value: alumniWithAchievements },
+            ],
+            tracerStatus: [
+                { label: "Updated", value: tracerRespondents },
+                { label: "Pending", value: Math.max(0, alumni.length - tracerRespondents) },
+            ],
+            achievementSummary: [
+                { label: "Approved", value: achievementCounts.approved },
+                { label: "Pending", value: achievementCounts.pending },
+                { label: "Rejected", value: achievementCounts.rejected },
+                { label: "Archived", value: achievementCounts.archived },
+            ],
             monthlyEngagement,
             topBatches,
-            departmentMetrics: [
-                {
-                    department: course,
-                    label: COURSE_LABELS[course],
-                    alumni: alumni.length,
-                    active: alumni.filter((item) => item.engagementScore > 0).length,
-                    engagementScore: avgEngagementScore,
-                    tracerRespondents: alumni.filter((item) => item.tracer_count > 0).length,
-                },
-            ],
+            departmentMetrics,
         });
     } catch (err: unknown) {
         console.error("GET CHAIRMAN ENGAGEMENT ERROR:", err);

@@ -150,7 +150,7 @@ export default function ChairmanAlumni() {
   return (
     <ChairmanLayout
       title="Department Alumni"
-      subtitle={data ? `MySQL-backed alumni records for ${data.courseLabel}` : "MySQL-backed alumni records"}
+      subtitle="Alumni records"
     >
       {loading ? (
         <div className="flex min-h-[360px] items-center justify-center rounded-2xl border border-border bg-card shadow-card">

@@ -92,12 +92,6 @@ export default function ChairmanDashboard() {
         </div>
       ) : (
         <div className="space-y-6">
-          <div className="rounded-2xl bg-gradient-to-r from-navy to-navy-light p-6 text-white shadow-card">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">Assigned Department</p>
-            <h2 className="mt-2 text-2xl font-bold">{data.courseLabel}</h2>
-            <p className="mt-1 text-sm text-white/75">All figures below are loaded from the MySQL-backed alumni and tracer records.</p>
-          </div>
-
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { label: "Total Alumni", value: data.summary.totalAlumni, icon: Users, color: "bg-navy text-white" },
