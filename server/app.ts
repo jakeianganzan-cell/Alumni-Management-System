@@ -5906,6 +5906,42 @@ app.get("/api/settings/donation", authenticateToken, async (_req, res) => {
     }
 });
 
+app.post("/api/settings/donation/verify-password", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) {
+            return res.sendStatus(401);
+        }
+
+        const { password } = req.body || {};
+        const normalizedPassword = String(password || "");
+
+        if (!normalizedPassword) {
+            return res.status(400).json({ error: "Password is required." });
+        }
+
+        const account = await getSingleRow(
+            `SELECT password_hash
+             FROM users
+             WHERE id = ?`,
+            [req.user.id]
+        );
+
+        if (!account?.password_hash) {
+            return res.status(404).json({ error: "User account not found." });
+        }
+
+        const matches = await bcrypt.compare(normalizedPassword, String(account.password_hash));
+        if (!matches) {
+            return res.status(401).json({ error: "Incorrect password. Please try again." });
+        }
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("VERIFY DONATION SETTINGS PASSWORD ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
 app.post("/api/settings/donation", authenticateToken, requireAdmin, async (req, res) => {
     try {
         const {

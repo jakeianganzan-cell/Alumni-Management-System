@@ -13,9 +13,11 @@ import {
   Clock3,
   Download,
   Eye,
+  EyeOff,
   Filter,
   Heart,
   Loader2,
+  LockKeyhole,
   Pencil,
   QrCode,
   Search,
@@ -113,10 +115,16 @@ export default function AdminDonations() {
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
   const [summary, setSummary] = useState<DonationSummary>(EMPTY_SUMMARY);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  const [showSettingsVerify, setShowSettingsVerify] = useState(false);
+  const [settingsPassword, setSettingsPassword] = useState("");
+  const [showSettingsPassword, setShowSettingsPassword] = useState(false);
+  const [verifyingSettings, setVerifyingSettings] = useState(false);
+  const [settingsVerifyError, setSettingsVerifyError] = useState("");
   const qrInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void Promise.all([fetchDonations(), fetchDonationSummary(), fetchSettings()]);
+    void Promise.all([fetchDonations(), fetchDonationSummary()]);
   }, []);
 
   const fetchDonations = async () => {
@@ -208,6 +216,48 @@ export default function AdminDonations() {
       toast.error("Failed to save payment settings");
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const openSettingsAccess = async () => {
+    if (settingsUnlocked) {
+      await fetchSettings();
+      setShowSettings(true);
+      return;
+    }
+
+    setSettingsPassword("");
+    setSettingsVerifyError("");
+    setShowSettingsPassword(false);
+    setShowSettingsVerify(true);
+  };
+
+  const verifySettingsPassword = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!settingsPassword.trim()) {
+      setSettingsVerifyError("Enter your current admin password.");
+      return;
+    }
+
+    try {
+      setVerifyingSettings(true);
+      setSettingsVerifyError("");
+      const response = await fetch(`${API_URL}/settings/donation/verify-password`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ password: settingsPassword }),
+      });
+      await readApiResponse(response);
+      setSettingsUnlocked(true);
+      setShowSettingsVerify(false);
+      setSettingsPassword("");
+      await fetchSettings();
+      setShowSettings(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Incorrect password. Please try again.";
+      setSettingsVerifyError(message === "Unauthorized" ? "Incorrect password. Please try again." : message);
+    } finally {
+      setVerifyingSettings(false);
     }
   };
 
@@ -368,7 +418,7 @@ export default function AdminDonations() {
                   ))}
                 </div>
 
-                <Button type="button" variant="outline" onClick={() => setShowSettings(true)}>
+                <Button type="button" variant="outline" onClick={() => void openSettingsAccess()}>
                   <Settings className="mr-2 h-4 w-4" />
                   Payment Settings
                 </Button>
@@ -553,6 +603,71 @@ export default function AdminDonations() {
               </div>
             </>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSettingsVerify} onOpenChange={(open) => !verifyingSettings && setShowSettingsVerify(open)}>
+        <DialogContent className="max-w-md border-slate-200 bg-white shadow-2xl">
+          <DialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-navy text-white">
+              <LockKeyhole className="h-5 w-5" />
+            </div>
+            <DialogTitle className="pr-8 text-xl text-navy-dark">Verify Admin Password</DialogTitle>
+            <DialogDescription>
+              Enter your current admin account password before opening Donation Settings.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={verifySettingsPassword} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="donation-settings-password" className="text-sm font-medium text-navy-dark">
+                Current Password
+              </Label>
+              <div className="relative">
+                <Input
+                  id="donation-settings-password"
+                  type={showSettingsPassword ? "text" : "password"}
+                  value={settingsPassword}
+                  onChange={(event) => {
+                    setSettingsPassword(event.target.value);
+                    setSettingsVerifyError("");
+                  }}
+                  autoComplete="current-password"
+                  className="border-slate-300 bg-white pr-11"
+                  aria-invalid={Boolean(settingsVerifyError)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsPassword((current) => !current)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition hover:bg-slate-100 hover:text-navy"
+                  aria-label={showSettingsPassword ? "Hide password" : "Show password"}
+                >
+                  {showSettingsPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {settingsVerifyError && (
+                <p className="text-sm font-medium text-rose-600">
+                  {settingsVerifyError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setShowSettingsVerify(false)} disabled={verifyingSettings}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={verifyingSettings || !settingsPassword.trim()} className="bg-navy text-white hover:bg-navy/90">
+                {verifyingSettings ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  "Confirm"
+                )}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
