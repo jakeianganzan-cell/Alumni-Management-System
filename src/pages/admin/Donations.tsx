@@ -612,16 +612,16 @@ export default function AdminDonations() {
             <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-navy text-white">
               <LockKeyhole className="h-5 w-5" />
             </div>
-            <DialogTitle className="pr-8 text-xl text-navy-dark">Verify Admin Password</DialogTitle>
+            <DialogTitle className="pr-8 text-xl text-navy-dark">Enter Verification Password</DialogTitle>
             <DialogDescription>
-              Enter your current admin account password before opening Donation Settings.
+              Verification is required before opening Donation Settings.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={verifySettingsPassword} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="donation-settings-password" className="text-sm font-medium text-navy-dark">
-                Current Password
+                Password
               </Label>
               <div className="relative">
                 <Input
@@ -663,7 +663,7 @@ export default function AdminDonations() {
                     Verifying...
                   </>
                 ) : (
-                  "Confirm"
+                  "Enter"
                 )}
               </Button>
             </div>
