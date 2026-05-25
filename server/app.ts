@@ -124,6 +124,15 @@ interface PendingDonationRow extends QueryRow {
     name: string | null;
 }
 
+interface RecentDonationRow extends QueryRow {
+    id: number;
+    amount: number;
+    purpose: string | null;
+    message: string | null;
+    created_at: string | null;
+    name: string | null;
+}
+
 interface UpcomingEventRow extends QueryRow {
     image_url: string | null;
     status: string | null;
@@ -4593,6 +4602,21 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
             LIMIT 5`
         ));
 
+        const recentDonors = parseRows<RecentDonationRow>(await db.query<RecentDonationRow>(
+            `SELECT
+                d.id,
+                d.amount,
+                d.purpose,
+                d.message,
+                d.created_at,
+                p.name
+            FROM donations d
+            LEFT JOIN profiles p ON p.id = d.user_id
+            WHERE ${donationStatusSql("d.status")} IN ('approved', 'approve')
+            ORDER BY d.created_at DESC
+            LIMIT 5`
+        ));
+
         const upcomingEvents = parseRows<UpcomingEventRow>(await db.query<UpcomingEventRow>(
             `SELECT 
                 e.id,
@@ -4645,6 +4669,14 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
             courseContributions: analytics.courseContributions,
             courseComparisons: analytics.courseComparisons,
             donationTrends: analytics.donationTrends,
+            recentDonors: recentDonors.map((donation) => ({
+                id: String(donation.id),
+                donorName: donation.name || "Alumni donor",
+                amount: Number(donation.amount || 0),
+                donatedAt: donation.created_at,
+                purpose: donation.purpose || "General donation",
+                message: donation.message || null
+            })),
             heatmap: analytics.heatmap,
             topAlumni: analytics.topAlumni,
             predictionCounts: analytics.predictionCounts,
@@ -5159,10 +5191,10 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         );
 
         const donationUpdates = parseRows(await db.query(
-            `SELECT d.id, d.amount, d.method, d.status, d.purpose, d.created_at, p.name
+            `SELECT d.id, d.amount, d.method, d.status, d.purpose, d.message, d.created_at, p.name
              FROM donations d
              LEFT JOIN profiles p ON p.id = d.user_id
-             WHERE LOWER(COALESCE(d.status, 'pending_review')) IN ('approved', 'pending_review', 'pending')
+             WHERE ${donationStatusSql("d.status")} IN ('approved', 'approve')
              ORDER BY d.created_at DESC
              LIMIT 6`
         ));
@@ -5362,6 +5394,7 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
                 method: donation.method || "",
                 status: formatStatusLabel(normalizeDonationStatus(donation.status), "pending_review"),
                 purpose: donation.purpose || "General donation",
+                message: donation.message || null,
                 created_at: donation.created_at,
                 donorName: donation.name || "Alumni donor"
             })),

@@ -144,12 +144,6 @@ export default function AlumniAnnouncements() {
   useEffect(() => {
     void loadAnnouncements();
     void loadSurveys();
-    const interval = window.setInterval(() => {
-      void loadAnnouncements();
-      void loadSurveys();
-    }, 10000);
-
-    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -159,15 +153,6 @@ export default function AlumniAnnouncements() {
     if (canShowInterestButton(selectedAnnouncement)) {
       void loadInterestStatus(selectedAnnouncement.id);
     }
-
-    const interval = window.setInterval(() => {
-      void loadComments(selectedAnnouncement.id);
-      if (canShowInterestButton(selectedAnnouncement)) {
-        void loadInterestStatus(selectedAnnouncement.id);
-      }
-    }, 7000);
-
-    return () => window.clearInterval(interval);
   }, [selectedAnnouncement?.id, selectedAnnouncement?.type]);
 
   const publicAnnouncements = useMemo(() => {

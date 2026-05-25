@@ -135,7 +135,8 @@ export default function AdminAnnouncements() {
       });
       return readApiResponse<Announcement[]>(response);
     },
-    refetchInterval: 10000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   const { data: interestSummary, isLoading: interestsLoading } = useQuery<AdminInterestSummary>({
@@ -150,7 +151,8 @@ export default function AdminAnnouncements() {
       });
       return readApiResponse<AdminInterestSummary>(response);
     },
-    refetchInterval: 10000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   const createMutation = useMutation({

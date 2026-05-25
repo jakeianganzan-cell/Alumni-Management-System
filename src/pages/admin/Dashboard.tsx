@@ -75,6 +75,15 @@ interface DonationTrendPoint {
   donatedAmount: number;
 }
 
+interface RecentDonor {
+  id: string;
+  donorName: string;
+  amount: number;
+  donatedAt: string | null;
+  purpose?: string | null;
+  message?: string | null;
+}
+
 interface DashboardResponse {
   totalAlumni?: number;
   tracerCount?: number;
@@ -85,7 +94,7 @@ interface DashboardResponse {
   monthlyEngagement?: MonthlyEngagementPoint[];
   courseContributions?: CourseContributionPoint[];
   donationTrends?: DonationTrendPoint[];
-  insightSummaries?: string[];
+  recentDonors?: RecentDonor[];
 }
 
 const formatCurrency = (value: number) =>
@@ -120,16 +129,11 @@ export default function AdminDashboard() {
   const [monthlyEngagement, setMonthlyEngagement] = useState<MonthlyEngagementPoint[]>([]);
   const [courseContributions, setCourseContributions] = useState<CourseContributionPoint[]>([]);
   const [donationTrends, setDonationTrends] = useState<DonationTrendPoint[]>([]);
-  const [insightSummaries, setInsightSummaries] = useState<string[]>([]);
+  const [recentDonors, setRecentDonors] = useState<RecentDonor[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void fetchDashboard();
-    const interval = window.setInterval(() => {
-      void fetchDashboard(true);
-    }, 15000);
-
-    return () => window.clearInterval(interval);
   }, []);
 
   const fetchDashboard = async (silent = false) => {
@@ -157,7 +161,7 @@ export default function AdminDashboard() {
       setMonthlyEngagement(data.monthlyEngagement || []);
       setCourseContributions(data.courseContributions || []);
       setDonationTrends(data.donationTrends || []);
-      setInsightSummaries(data.insightSummaries || []);
+      setRecentDonors((data.recentDonors || []).slice(0, 5));
     } catch (err) {
       console.error("Dashboard error:", err);
     } finally {
@@ -325,16 +329,28 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 gap-4 mb-4 xl:grid-cols-2">
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="text-xs font-bold text-navy-dark">AI Engagement Insights</h3>
-            <p className="text-[10px] text-muted-foreground">Logic-based summaries generated from live alumni activity, donations, surveys, and event data.</p>
+            <h3 className="font-bold text-sm text-navy-dark">Recent Donors</h3>
+            <p className="text-[11px] text-muted-foreground">Latest approved donation activity.</p>
           </div>
-          <div className="grid gap-3 p-4 md:grid-cols-2">
-            {(insightSummaries.length ? insightSummaries : ["No AI insights are available until alumni activity is recorded."]).map((insight, index) => (
-              <div key={`${insight}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-navy">Insight {index + 1}</p>
-                <p className="mt-1.5 text-xs leading-5 text-slate-700">{insight}</p>
+          <div className="divide-y divide-border">
+            {recentDonors.length > 0 ? (
+              recentDonors.map((donor) => (
+                <div key={donor.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-navy-dark">{donor.donorName}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donor.purpose || donor.message || "General donation"}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{formatDate(donor.donatedAt)}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
+                    {formatCurrency(donor.amount)}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No recent donor activity yet.
               </div>
-            ))}
+            )}
           </div>
         </section>
 

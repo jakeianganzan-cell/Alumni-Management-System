@@ -93,11 +93,6 @@ export default function Community() {
 
   useEffect(() => {
     void loadPosts();
-    const interval = window.setInterval(() => {
-      void loadPosts();
-    }, 10000);
-
-    return () => window.clearInterval(interval);
   }, []);
 
   const filteredPosts = useMemo(() => {

@@ -145,23 +145,12 @@ export default function AlumniAchievements() {
 
   useEffect(() => {
     void loadAchievements();
-    const interval = window.setInterval(() => {
-      void loadAchievements();
-    }, 8000);
-
-    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (!selected) return;
 
     void loadComments(selected.id);
-    const interval = window.setInterval(() => {
-      void loadComments(selected.id);
-      void loadAchievements();
-    }, 6000);
-
-    return () => window.clearInterval(interval);
   }, [selected?.id]);
 
   const approvedAchievements = useMemo(

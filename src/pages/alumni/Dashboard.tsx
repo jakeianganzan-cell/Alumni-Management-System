@@ -43,6 +43,15 @@ interface DashboardCommentResponse {
   profile_name: string | null;
 }
 
+interface DonationActivity {
+  id: string;
+  amount: number;
+  purpose?: string | null;
+  message?: string | null;
+  created_at: string | null;
+  donorName: string;
+}
+
 interface DashboardResponse {
   events?: AnnouncementData[];
   surveys?: SurveyData[];
@@ -50,6 +59,7 @@ interface DashboardResponse {
   officers?: { name: string; role: string; positionLabel?: string; photo?: string | null; schoolYear?: string | null }[];
   comments?: DashboardCommentResponse[];
   slideshow?: SlideData[];
+  donationUpdates?: DonationActivity[];
 }
 
 type EventRsvpStatus = "Going" | "Interested" | "Not Going";
@@ -172,6 +182,16 @@ function VConn({ h = 6, mdH, className = "bg-border" }: { h?: number; mdH?: numb
   );
 }
 
+const formatDonationAmount = (value: number) =>
+  `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+const formatActivityDate = (value: string | null) => {
+  if (!value) return "Recently";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
+
 export default function AlumniDashboard() {
   const { user, profile } = useAuth();
   const [announcements, setAnnouncements] = useState<AnnouncementData[]>([]);
@@ -188,6 +208,7 @@ export default function AlumniDashboard() {
   const [surveyAnswers, setSurveyAnswers] = useState<Record<number, string | string[]>>({});
   const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
+  const [donationActivity, setDonationActivity] = useState<DonationActivity[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -204,6 +225,7 @@ export default function AlumniDashboard() {
         setAnnouncements(data.events || []);
         setSurveys(data.surveys || []);
         setSlideshow(data.slideshow || []);
+        setDonationActivity((data.donationUpdates || []).slice(0, 4));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
           (data.officers || []).map((officer) => ({
@@ -233,12 +255,7 @@ export default function AlumniDashboard() {
     };
 
     void fetchData();
-    const interval = window.setInterval(() => {
-      void fetchData();
-    }, 10000);
-
-    return () => window.clearInterval(interval);
-  }, [announcements.length, officers.length, user]);
+  }, [user]);
 
   const loadEventRsvpStatus = async (eventId: string) => {
     if (!user) return;
@@ -431,6 +448,38 @@ export default function AlumniDashboard() {
   return (
     <AlumniLayout title="Salay Community College" subtitle="SaCC Alumni Association">
       <HomepageSlideshow slides={slideshow} className="mb-8" />
+
+      <section className="mb-6 overflow-hidden rounded-xl border border-border bg-card shadow-card">
+        <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-bold text-navy-dark">Donation Activity</h3>
+            <p className="text-[11px] text-muted-foreground">Recent alumni donors.</p>
+          </div>
+          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">
+            {donationActivity.length}
+          </span>
+        </div>
+        <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+          {donationActivity.length > 0 ? (
+            donationActivity.map((donation) => (
+              <div key={donation.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-navy-dark">{donation.donorName}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donation.purpose || donation.message || "General donation"}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{formatActivityDate(donation.created_at)}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
+                  {formatDonationAmount(donation.amount)}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="px-4 py-5 text-center text-sm text-muted-foreground md:col-span-2">
+              No recent donor activity yet.
+            </div>
+          )}
+        </div>
+      </section>
 
       <div
         className="hidden"
