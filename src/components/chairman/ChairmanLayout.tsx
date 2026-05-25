@@ -109,15 +109,15 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
       <div className="portal-layout-body">
         {/* Top Nav */}
         <header
-          className="portal-header sticky top-0 z-40 px-4 py-3 flex items-center gap-3 flex-shrink-0 border-b border-white/15 shadow-[0_12px_28px_rgba(58,0,0,0.20)]"
+          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-3 py-2.5 shadow-[0_12px_28px_rgba(58,0,0,0.20)] sm:px-4 sm:py-3"
           style={{ color: "white" }}
         >
           <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
             <Menu className="w-6 h-6" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="font-bold text-lg leading-tight text-white truncate">{title}</h1>
-            {subtitle && <p className="hidden text-white text-xs sm:block">{subtitle}</p>}
+            <h1 className="truncate text-base font-bold leading-tight text-white">{title}</h1>
+            {subtitle && <p className="hidden text-xs text-white sm:block">{subtitle}</p>}
           </div>
 
           <div className="flex items-center gap-3">

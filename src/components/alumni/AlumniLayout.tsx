@@ -131,7 +131,7 @@ export default function AlumniLayout({
 
       <div className="portal-layout-body">
         <header
-          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-4 py-3 shadow-[0_12px_28px_rgba(58,0,0,0.20)]"
+          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-3 py-2.5 shadow-[0_12px_28px_rgba(58,0,0,0.20)] sm:px-4 sm:py-3"
           style={{ color: "white" }}
         >
           {isMobile ? (
@@ -151,7 +151,7 @@ export default function AlumniLayout({
 
           <div className="min-w-0 flex-1">
             {(!isMobile || mobileHeaderTitle) && (
-              <h1 className={`truncate font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-lg"}`}>
+              <h1 className={`truncate font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-base"}`}>
                 {isMobile ? mobileHeaderTitle : title}
               </h1>
             )}

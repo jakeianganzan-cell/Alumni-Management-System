@@ -15,7 +15,6 @@ import {
   XCircle,
 } from "lucide-react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AdminPageIntro } from "@/components/admin/AdminPageIntro";
 import type { Announcement, AnnouncementApprovalStatus, AnnouncementAudienceScope, AnnouncementStatus, AnnouncementType } from "@/context/AnnouncementContext";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -423,18 +422,14 @@ export default function AdminAnnouncements() {
   return (
     <AdminLayout title="Announcements" subtitle="Review alumni submissions, publish content, and keep the public feed clean">
       <div className="space-y-6">
-        <AdminPageIntro
-          eyebrow="Content Management"
-          title="Content workspace"
-          action={
-            activeWorkspace === "survey" ? null : (
-              <Button onClick={openCreate}>
-                <Plus className="mr-2 h-4 w-4" />
-                {activeWorkspace === "event" ? "Add event" : "Add announcement"}
-              </Button>
-            )
-          }
-        />
+        {activeWorkspace !== "survey" && (
+          <div className="flex justify-end">
+            <Button onClick={openCreate}>
+              <Plus className="mr-2 h-4 w-4" />
+              {activeWorkspace === "event" ? "Add event" : "Add announcement"}
+            </Button>
+          </div>
+        )}
 
         <div className="grid gap-3 md:grid-cols-3">
           {contentWorkspaces.map((workspace) => {

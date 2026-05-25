@@ -181,7 +181,7 @@ export default function AdminLayout({
 
       <div className="portal-layout-body">
         <header
-          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-4 py-3 shadow-[0_12px_28px_rgba(58,0,0,0.20)]"
+          className="portal-header sticky top-0 z-40 flex flex-shrink-0 items-center gap-3 border-b border-white/15 px-3 py-2.5 shadow-[0_12px_28px_rgba(58,0,0,0.20)] sm:px-4 sm:py-3"
           style={{ color: "white" }}
         >
           <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
@@ -189,7 +189,7 @@ export default function AdminLayout({
           </button>
 
           <div className="min-w-0 flex-1">
-            <h1 className={`font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-lg"}`}>{title}</h1>
+            <h1 className={`font-bold leading-tight text-white ${isMobile ? "text-sm" : "text-base"}`}>{title}</h1>
             {subtitle && !isMobile && <p className="text-xs text-white">{subtitle}</p>}
           </div>
 
