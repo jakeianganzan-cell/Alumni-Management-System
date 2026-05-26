@@ -26,8 +26,6 @@ const formatGeneratedDate = () =>
     minute: "2-digit",
   });
 
-const toCsvCell = (value: string | number | null | undefined) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -50,42 +48,6 @@ const getLogoDataUrl = async () => {
 };
 
 const sanitizeSheetName = (value: string) => value.replace(/[\\/*?:[\]]/g, " ").slice(0, 31) || "Report";
-
-const buildCsvRows = <T extends Record<string, string | number | null | undefined>>({
-  title,
-  columns,
-  rows,
-  preparedBy,
-  summary,
-}: ReportExportOptions<T>) => {
-  const metadata = [
-    [SCHOOL_NAME],
-    [title],
-    ["Date Generated", formatGeneratedDate()],
-    ["Prepared By", preparedBy || "System Administrator"],
-  ];
-
-  if (summary?.length) {
-    metadata.push([]);
-    metadata.push(["Summary"]);
-    summary.forEach((item) => metadata.push([item.label, item.value]));
-  }
-
-  const table = [
-    columns.map((column) => column.label),
-    ...rows.map((row) => columns.map((column) => row[column.key] ?? "")),
-  ];
-
-  return [...metadata, [], ...table];
-};
-
-export const downloadBrandedCsv = <T extends Record<string, string | number | null | undefined>>(options: ReportExportOptions<T>) => {
-  const csv = buildCsvRows(options)
-    .map((row) => row.map((cell) => toCsvCell(cell)).join(","))
-    .join("\n");
-
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${options.filename}.csv`);
-};
 
 export const downloadBrandedExcel = async <T extends Record<string, string | number | null | undefined>>(options: ReportExportOptions<T>) => {
   const workbook = new ExcelJS.Workbook();

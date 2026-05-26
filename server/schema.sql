@@ -806,6 +806,23 @@ CREATE TABLE IF NOT EXISTS user_notifications (
     INDEX idx_user_notifications_created (created_at)
 );
 
+CREATE TABLE IF NOT EXISTS concerns (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    alumni_id VARCHAR(36) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+    admin_reply TEXT NULL,
+    replied_at DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_concerns_alumni (alumni_id),
+    INDEX idx_concerns_status (status),
+    INDEX idx_concerns_created (created_at),
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 
 CREATE TABLE IF NOT EXISTS user_settings (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

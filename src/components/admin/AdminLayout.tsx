@@ -10,7 +10,6 @@ import {
   BarChart3,
   Calendar,
   ChevronDown,
-  ClipboardList,
   FileText,
   Heart,
   LayoutDashboard,
@@ -47,7 +46,6 @@ function getMobileBottomTabs(role: AppRole | null) {
     { icon: LayoutDashboard, label: "Home", path: "/admin", module: "dashboard" },
     { icon: Users, label: "Alumni", path: "/admin/alumni", module: "alumni" },
     { icon: Calendar, label: "News", path: "/admin/announcements", module: "events" },
-    { icon: ClipboardList, label: "Reports", path: "/admin/account?section=reports", module: "reports" },
   ];
   if (!isOfficerRole(role)) return [];
   return tabs.filter((tab) => canAccessNavItem(role, tab.module, tab.path));
@@ -237,17 +235,6 @@ export default function AdminLayout({
                       >
                         <User className="h-4 w-4 text-muted-foreground" /> My Profile
                       </button>
-                      {isOfficerRole(role) && canAccessModule(role, "reports") && (
-                        <button
-                          onClick={() => {
-                            navigate("/admin/account?section=reports");
-                            setAccountMenuOpen(false);
-                          }}
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
-                        >
-                          <ClipboardList className="h-4 w-4 text-muted-foreground" /> Reports
-                        </button>
-                      )}
                       {isOfficerRole(role) && canAccessModule(role, "officers") && (
                         <button
                           onClick={() => {

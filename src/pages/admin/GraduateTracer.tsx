@@ -176,7 +176,6 @@ export default function AdminGraduateTracer() {
           preview.document.write(html);
           preview.document.close();
           preview.focus();
-          preview.print();
         }
         return;
       }
@@ -331,14 +330,6 @@ export default function AdminGraduateTracer() {
         <p className="text-sm font-semibold text-navy-dark">Report Exports</p>
         <p className="mt-1 text-xs text-muted-foreground">Download tracer analytics for defense presentations, institutional review, and CHED-ready reporting.</p>
         <div className="mt-4 grid gap-2">
-          <button
-            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=csv`, `graduate-tracer-report.csv`, "report-csv")}
-            disabled={downloading !== null}
-            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span className="text-sm font-medium text-slate-700">{downloading === "report-csv" ? "Preparing CSV export..." : "CSV Summary Export"}</span>
-            {downloading === "report-csv" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <Download className="h-4 w-4 text-slate-500" />}
-          </button>
           <button
             onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
             disabled={downloading !== null}

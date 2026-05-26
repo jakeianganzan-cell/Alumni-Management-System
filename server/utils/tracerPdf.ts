@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import path from "path";
 import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
@@ -23,6 +23,64 @@ export interface TracerPdfRecord {
 }
 
 const SCHOOL_NAME = "Salay Community College";
+
+const isUsableExecutable = (candidate?: string | null) => {
+  if (!candidate) {
+    return false;
+  }
+
+  try {
+    return existsSync(candidate) && statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const getLocalBrowserCandidates = () => {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+  ];
+
+  if (process.platform === "win32") {
+    candidates.push(
+      process.env.PROGRAMFILES
+        ? path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe")
+        : undefined,
+      process.env["PROGRAMFILES(X86)"]
+        ? path.join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe")
+        : undefined,
+      process.env.LOCALAPPDATA
+        ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")
+        : undefined,
+      process.env.PROGRAMFILES
+        ? path.join(process.env.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe")
+        : undefined,
+      process.env["PROGRAMFILES(X86)"]
+        ? path.join(process.env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe")
+        : undefined,
+    );
+  }
+
+  return candidates.filter(Boolean) as string[];
+};
+
+const resolveBrowserExecutable = async () => {
+  for (const candidate of getLocalBrowserCandidates()) {
+    if (isUsableExecutable(candidate)) {
+      return { executablePath: candidate, useServerlessChromiumArgs: false };
+    }
+  }
+
+  const chromiumExecutablePath = await chromium.executablePath();
+  if (isUsableExecutable(chromiumExecutablePath)) {
+    return { executablePath: chromiumExecutablePath, useServerlessChromiumArgs: true };
+  }
+
+  throw new Error(
+    `No usable Chrome/Chromium executable found. Checked local browser paths and @sparticuz/chromium returned "${chromiumExecutablePath}".`,
+  );
+};
 
 const loadPngDataUri = (candidates: string[]) => {
   for (const candidate of candidates) {
@@ -867,7 +925,13 @@ export const generateTracerDocxBuffer = (record: TracerPdfRecord) => {
 };
 
 export const generateTracerPdfBuffer = async (record: TracerPdfRecord) => {
-  const args = await puppeteer.defaultArgs({ args: chromium.args, headless: "shell" });
+  const { executablePath, useServerlessChromiumArgs } = await resolveBrowserExecutable();
+  const args = await puppeteer.defaultArgs({
+    args: useServerlessChromiumArgs
+      ? chromium.args
+      : ["--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"],
+    headless: "shell",
+  });
   const browser = await puppeteer.launch({
     args,
     defaultViewport: {
@@ -878,7 +942,7 @@ export const generateTracerPdfBuffer = async (record: TracerPdfRecord) => {
       isMobile: false,
       width: 1920,
     },
-    executablePath: await chromium.executablePath(),
+    executablePath,
     headless: "shell",
   });
 

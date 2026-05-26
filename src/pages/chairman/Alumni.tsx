@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
-import { Download, Loader2, Search } from "lucide-react";
+import { FileSpreadsheet, Loader2, Search } from "lucide-react";
+import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
 
 interface ChairmanAlumniRecord {
   id: string;
@@ -36,11 +37,6 @@ const engagementColors: Record<ChairmanAlumniRecord["engagement"], string> = {
 };
 
 const ALL_BATCHES = "All Batches";
-
-const toCsvCell = (value: string) => {
-  const escaped = value.replace(/"/g, "\"\"");
-  return /[",\n]/.test(value) ? `"${escaped}"` : value;
-};
 
 export default function ChairmanAlumni() {
   const [data, setData] = useState<ChairmanAlumniResponse | null>(null);
@@ -120,31 +116,42 @@ export default function ChairmanAlumni() {
     setSortAsc(true);
   };
 
-  const exportCsv = () => {
-    const headers = ["Alumni ID", "Name", "Batch", "Email", "Employment Status", "Company", "Job Title", "Location", "Engagement"];
-    const rows = filtered.map((item) => [
-      item.student_id || "",
-      item.name,
-      item.batch || "",
-      item.email,
-      item.employment_status || "",
-      item.company || "",
-      item.job_title || "",
-      item.work_location || "",
-      item.engagement,
-    ]);
+  const exportExcel = async () => {
+    type ChairmanExportRow = Record<string, string | number>;
+    const columns: Array<ReportColumn<ChairmanExportRow>> = [
+      { key: "alumniId", label: "Alumni ID" },
+      { key: "name", label: "Name" },
+      { key: "batch", label: "Batch" },
+      { key: "email", label: "Email" },
+      { key: "employmentStatus", label: "Employment Status" },
+      { key: "company", label: "Company" },
+      { key: "jobTitle", label: "Job Title" },
+      { key: "location", label: "Location" },
+      { key: "engagement", label: "Engagement" },
+    ];
+    const rows = filtered.map((item) => ({
+      alumniId: item.student_id || "",
+      name: item.name,
+      batch: item.batch || "",
+      email: item.email,
+      employmentStatus: item.employment_status || "",
+      company: item.company || "",
+      jobTitle: item.job_title || "",
+      location: item.work_location || "",
+      engagement: item.engagement,
+    }));
 
-    const csv = [headers, ...rows]
-      .map((row) => row.map((value) => toCsvCell(String(value))).join(","))
-      .join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${data?.course || "chairman"}_alumni.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    await downloadBrandedExcel({
+      title: `${data?.courseLabel || "Department"} Alumni Report`,
+      filename: `${data?.course || "chairman"}_alumni`,
+      columns,
+      rows,
+      summary: [
+        { label: "Displayed Records", value: filtered.length },
+        { label: "Employed", value: filtered.filter((item) => item.employment_status === "Employed").length },
+        { label: "Tracer Submitted", value: filtered.filter((item) => item.employment_status || item.company || item.job_title).length },
+      ],
+    });
   };
 
   return (
@@ -211,11 +218,11 @@ export default function ChairmanAlumni() {
 
               <button
                 type="button"
-                onClick={exportCsv}
+                onClick={() => void exportExcel()}
                 className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-navy hover:bg-muted"
               >
-                <Download className="h-4 w-4" />
-                Export CSV
+                <FileSpreadsheet className="h-4 w-4" />
+                Export Excel
               </button>
             </div>
 

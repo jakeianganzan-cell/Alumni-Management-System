@@ -91,6 +91,8 @@ const BLANK_FORM: AlumniAnnouncementForm = {
   image_url: "",
 };
 
+const LIST_PAGE_SIZE = 10;
+
 export default function AlumniAnnouncements() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [surveys, setSurveys] = useState<SurveyData[]>([]);
@@ -111,6 +113,7 @@ export default function AlumniAnnouncements() {
   const [interestStatus, setInterestStatus] = useState<Record<string, AnnouncementInterest | null>>({});
   const [submittingInterest, setSubmittingInterest] = useState(false);
   const [activeTab, setActiveTab] = useState<AnnouncementTab>("announcements");
+  const [activePage, setActivePage] = useState(1);
 
   const loadAnnouncements = async () => {
     try {
@@ -145,6 +148,10 @@ export default function AlumniAnnouncements() {
     void loadAnnouncements();
     void loadSurveys();
   }, []);
+
+  useEffect(() => {
+    setActivePage(1);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!selectedAnnouncement) return;
@@ -442,6 +449,8 @@ export default function AlumniAnnouncements() {
                 count={announcementItems.length}
                 emptyText="No announcements available."
                 items={announcementItems}
+                page={activePage}
+                onPageChange={setActivePage}
                 onOpen={setSelectedAnnouncement}
               />
             )}
@@ -453,6 +462,8 @@ export default function AlumniAnnouncements() {
                 count={eventItems.length}
                 emptyText="No events available."
                 items={eventItems}
+                page={activePage}
+                onPageChange={setActivePage}
                 onOpen={setSelectedAnnouncement}
               />
             )}
@@ -464,6 +475,8 @@ export default function AlumniAnnouncements() {
                 count={surveyItems.length}
                 emptyText="No surveys available."
                 items={surveyItems}
+                page={activePage}
+                onPageChange={setActivePage}
                 onOpen={openSurvey}
               />
             )}
@@ -674,6 +687,8 @@ function AnnouncementSection({
   count,
   emptyText,
   items,
+  page,
+  onPageChange,
   onOpen,
 }: {
   title: string;
@@ -681,8 +696,18 @@ function AnnouncementSection({
   count: number;
   emptyText: string;
   items: Announcement[];
+  page: number;
+  onPageChange: (page: number) => void;
   onOpen: (announcement: Announcement) => void;
 }) {
+  const totalPages = Math.max(1, Math.ceil(items.length / LIST_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginatedItems = items.slice((safePage - 1) * LIST_PAGE_SIZE, safePage * LIST_PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > totalPages) onPageChange(totalPages);
+  }, [onPageChange, page, totalPages]);
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -699,7 +724,7 @@ function AnnouncementSection({
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((announcement) => (
+          {paginatedItems.map((announcement) => (
             <AnnouncementCard
               key={announcement.id}
               announcement={announcement}
@@ -707,6 +732,13 @@ function AnnouncementSection({
               className="min-h-[250px] min-w-0 max-w-none md:min-h-[160px]"
             />
           ))}
+          <PaginationControls
+            page={safePage}
+            pageSize={LIST_PAGE_SIZE}
+            totalItems={items.length}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+          />
         </div>
       )}
     </section>
@@ -719,6 +751,8 @@ function SurveySection({
   count,
   emptyText,
   items,
+  page,
+  onPageChange,
   onOpen,
 }: {
   title: string;
@@ -726,8 +760,18 @@ function SurveySection({
   count: number;
   emptyText: string;
   items: SurveyData[];
+  page: number;
+  onPageChange: (page: number) => void;
   onOpen: (survey: SurveyData) => void;
 }) {
+  const totalPages = Math.max(1, Math.ceil(items.length / LIST_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginatedItems = items.slice((safePage - 1) * LIST_PAGE_SIZE, safePage * LIST_PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > totalPages) onPageChange(totalPages);
+  }, [onPageChange, page, totalPages]);
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -744,7 +788,7 @@ function SurveySection({
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((survey) => (
+          {paginatedItems.map((survey) => (
             <button
               key={survey.id}
               type="button"
@@ -766,9 +810,54 @@ function SurveySection({
               </span>
             </button>
           ))}
+          <PaginationControls
+            page={safePage}
+            pageSize={LIST_PAGE_SIZE}
+            totalItems={items.length}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+          />
         </div>
       )}
     </section>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>
+          Previous
+        </Button>
+        <span className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-navy-dark">
+          Page {page} of {totalPages}
+        </span>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
+          Next
+        </Button>
+      </div>
+    </div>
   );
 }
 

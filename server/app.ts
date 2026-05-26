@@ -7,7 +7,6 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { v4 as uuidv4 } from "uuid";
 import ExcelJS from "exceljs";
-import { Readable } from "stream";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import db from "./db.ts";
@@ -195,6 +194,33 @@ interface UserSettingsRow extends QueryRow {
     allow_survey_reminders: number | boolean | null;
     allow_email_notifications: number | boolean | null;
     allow_in_app_notifications: number | boolean | null;
+}
+
+interface ConcernRow extends QueryRow {
+    id: number;
+    alumni_id: string;
+    alumni_name?: string | null;
+    alumni_email?: string | null;
+    subject: string;
+    category: string;
+    message: string;
+    status: string;
+    admin_reply: string | null;
+    replied_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+interface AccountPostItem {
+    id: string;
+    type: "announcement" | "achievement" | "freedom_wall";
+    typeLabel: string;
+    title: string;
+    preview: string;
+    status: string | null;
+    datePosted: string | null;
+    updatedAt: string | null;
+    details: Record<string, unknown>;
 }
 
 interface MonthlyEngagementRow extends QueryRow {
@@ -1979,6 +2005,29 @@ const normalizeBatch = (value: unknown) => String(value || "").trim();
 
 const normalizeSupportedCourse = (value: unknown) => normalizeCourseCode(normalizeText(value));
 
+const CONCERN_CATEGORIES = new Set([
+    "Account",
+    "Event",
+    "Donation",
+    "Document Request",
+    "Technical Issue",
+    "General Concern"
+]);
+
+const CONCERN_STATUSES = new Set(["Pending", "Read", "Replied", "Resolved"]);
+
+const normalizeConcernCategory = (value: unknown) => {
+    const category = normalizeText(value);
+    return CONCERN_CATEGORIES.has(category) ? category : "";
+};
+
+const normalizeConcernStatus = (value: unknown) => {
+    const status = normalizeText(value);
+    return CONCERN_STATUSES.has(status) ? status : "";
+};
+
+const normalizeConcernDetails = (value: unknown) => String(value || "").trim();
+
 const validateSupportedCourse = (value: unknown) => {
     const normalizedCourse = normalizeSupportedCourse(value);
 
@@ -2195,15 +2244,13 @@ const parseAlumniImportFile = async (buffer: Buffer, fileName = "", contentType 
     const normalizedType = contentType.toLowerCase();
     let worksheet: ExcelJS.Worksheet | undefined;
 
-    if (normalizedName.endsWith(".csv") || normalizedType.includes("csv") || normalizedType.includes("text/plain")) {
-        worksheet = await workbook.csv.read(Readable.from([buffer]));
-    } else if (normalizedName.endsWith(".xlsx") || normalizedType.includes("spreadsheetml")) {
+    if (normalizedName.endsWith(".xlsx") || normalizedType.includes("spreadsheetml")) {
         await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
         worksheet = workbook.worksheets[0];
     } else if (normalizedName.endsWith(".xls")) {
-        throw new Error("Legacy .xls files are not supported. Save the file as .xlsx or .csv before importing.");
+        throw new Error("Legacy .xls files are not supported. Save the file as .xlsx before importing.");
     } else {
-        throw new Error("Only .xlsx and .csv alumni import files are supported.");
+        throw new Error("Only .xlsx alumni import files are supported.");
     }
 
     if (!worksheet) {
@@ -2818,6 +2865,29 @@ const ensureDatabaseColumns = async () => {
 
     try {
         await db.execute(`
+            CREATE TABLE IF NOT EXISTS concerns (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                alumni_id VARCHAR(36) NOT NULL,
+                subject VARCHAR(255) NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+                admin_reply TEXT NULL,
+                replied_at DATETIME NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_concerns_alumni (alumni_id),
+                INDEX idx_concerns_status (status),
+                INDEX idx_concerns_created (created_at),
+                FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+    } catch (error) {
+        console.error("SCHEMA UPDATE ERROR: CREATE TABLE concerns", error);
+    }
+
+    try {
+        await db.execute(`
             CREATE TABLE IF NOT EXISTS user_settings (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 user_id VARCHAR(36) NOT NULL,
@@ -3277,6 +3347,9 @@ const createUserNotifications = async ({
         })
     ));
 };
+
+const DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_TITLE = "New survey response";
+const DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_CATEGORY = "survey";
 
 const STALE_TRACER_NOTIFICATION_TITLE = "Graduate tracer update needed";
 const STALE_TRACER_NOTIFICATION_CATEGORY = "tracer";
@@ -4154,6 +4227,540 @@ app.patch("/api/account/notifications", authenticateToken, async (req: Authentic
     }
 });
 
+app.get("/api/concerns/me", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const role = await getRoleForUser(req.user.id);
+        if (role !== "alumni") {
+            return res.status(403).json({ error: "Alumni access required" });
+        }
+
+        const concerns = parseRows<ConcernRow>(await db.query<ConcernRow>(
+            `SELECT id, alumni_id, subject, category, message, status, admin_reply, replied_at, created_at, updated_at
+             FROM concerns
+             WHERE alumni_id = ?
+             ORDER BY created_at DESC, id DESC`,
+            [req.user.id]
+        ));
+
+        res.json(concerns);
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.post("/api/concerns", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const role = await getRoleForUser(req.user.id);
+        if (role !== "alumni") {
+            return res.status(403).json({ error: "Alumni access required" });
+        }
+
+        const subject = normalizeText(req.body?.subject);
+        const category = normalizeConcernCategory(req.body?.category);
+        const message = normalizeConcernDetails(req.body?.message);
+
+        if (!subject || !category || !message) {
+            return res.status(400).json({ error: "Subject, category, and concern details are required." });
+        }
+
+        const result = await db.execute(
+            `INSERT INTO concerns (alumni_id, subject, category, message, status)
+             VALUES (?, ?, ?, ?, 'Pending')`,
+            [req.user.id, subject, category, message]
+        ) as ResultSetHeader;
+
+        const concern = await getSingleRow<ConcernRow>(
+            `SELECT id, alumni_id, subject, category, message, status, admin_reply, replied_at, created_at, updated_at
+             FROM concerns
+             WHERE id = ? AND alumni_id = ?`,
+            [result.insertId, req.user.id]
+        );
+
+        const adminUserIds = await getAdminUserIds();
+        await createUserNotifications({
+            userIds: adminUserIds,
+            title: "New problem report",
+            message: `${category}: ${subject}`,
+            category: "concern",
+            linkUrl: "/admin/account?section=reports",
+            actorId: req.user.id
+        });
+
+        res.status(201).json({
+            message: "Concern submitted successfully.",
+            concern
+        });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.get("/api/admin/concerns", authenticateToken, requireAdmin, async (_req: AuthenticatedRequest, res) => {
+    try {
+        const concerns = parseRows<ConcernRow>(await db.query<ConcernRow>(
+            `SELECT
+                c.id,
+                c.alumni_id,
+                COALESCE(p.name, u.email) AS alumni_name,
+                COALESCE(p.email, u.email) AS alumni_email,
+                c.subject,
+                c.category,
+                c.message,
+                c.status,
+                c.admin_reply,
+                c.replied_at,
+                c.created_at,
+                c.updated_at
+             FROM concerns c
+             LEFT JOIN profiles p ON p.id = c.alumni_id
+             LEFT JOIN users u ON u.id = c.alumni_id
+             ORDER BY c.created_at DESC, c.id DESC`
+        ));
+
+        res.json(concerns);
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.patch("/api/admin/concerns/:id/reply", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const concernId = Number(req.params.id);
+        const reply = normalizeConcernDetails(req.body?.admin_reply || req.body?.reply);
+        const requestedStatus = normalizeConcernStatus(req.body?.status);
+        const status = requestedStatus || "Replied";
+
+        if (!Number.isInteger(concernId) || concernId <= 0) {
+            return res.status(400).json({ error: "Invalid concern ID." });
+        }
+
+        if (!reply) {
+            return res.status(400).json({ error: "Admin reply is required." });
+        }
+
+        const result = await db.execute(
+            `UPDATE concerns
+             SET admin_reply = ?, replied_at = NOW(), status = ?
+             WHERE id = ?`,
+            [reply, status, concernId]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Concern not found." });
+        }
+
+        const concern = await getSingleRow<ConcernRow>(
+            `SELECT
+                c.id,
+                c.alumni_id,
+                COALESCE(p.name, u.email) AS alumni_name,
+                COALESCE(p.email, u.email) AS alumni_email,
+                c.subject,
+                c.category,
+                c.message,
+                c.status,
+                c.admin_reply,
+                c.replied_at,
+                c.created_at,
+                c.updated_at
+             FROM concerns c
+             LEFT JOIN profiles p ON p.id = c.alumni_id
+             LEFT JOIN users u ON u.id = c.alumni_id
+             WHERE c.id = ?`,
+            [concernId]
+        );
+
+        res.json({
+            message: "Reply saved successfully.",
+            concern
+        });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.patch("/api/admin/concerns/:id/status", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const concernId = Number(req.params.id);
+        const status = normalizeConcernStatus(req.body?.status);
+
+        if (!Number.isInteger(concernId) || concernId <= 0) {
+            return res.status(400).json({ error: "Invalid concern ID." });
+        }
+
+        if (!status) {
+            return res.status(400).json({ error: "Status must be Pending, Read, Replied, or Resolved." });
+        }
+
+        const result = await db.execute(
+            "UPDATE concerns SET status = ? WHERE id = ?",
+            [status, concernId]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Concern not found." });
+        }
+
+        const concern = await getSingleRow<ConcernRow>(
+            `SELECT
+                c.id,
+                c.alumni_id,
+                COALESCE(p.name, u.email) AS alumni_name,
+                COALESCE(p.email, u.email) AS alumni_email,
+                c.subject,
+                c.category,
+                c.message,
+                c.status,
+                c.admin_reply,
+                c.replied_at,
+                c.created_at,
+                c.updated_at
+             FROM concerns c
+             LEFT JOIN profiles p ON p.id = c.alumni_id
+             LEFT JOIN users u ON u.id = c.alumni_id
+             WHERE c.id = ?`,
+            [concernId]
+        );
+
+        res.json({
+            message: "Concern status updated successfully.",
+            concern
+        });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.get("/api/account/my-posts", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const role = await getRoleForUser(req.user.id);
+        if (role !== "alumni") {
+            return res.status(403).json({ error: "Alumni access required" });
+        }
+
+        const announcementTable = await getAnnouncementTableName();
+        const hasCreatedBy = await columnExists(announcementTable, "created_by");
+        const hasApprovalStatus = await columnExists(announcementTable, "approval_status");
+        const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+        const hasGoogleFormLink = await columnExists(announcementTable, "google_form_link");
+
+        const announcementRows = hasCreatedBy
+            ? parseRows<QueryRow>(await db.query<QueryRow>(
+                `SELECT
+                    id,
+                    title,
+                    description,
+                    date,
+                    organizer,
+                    image_url,
+                    status,
+                    type,
+                    ${hasApprovalStatus ? "approval_status" : "NULL AS approval_status"},
+                    ${hasGoogleFormLink ? "google_form_link" : "NULL AS google_form_link"},
+                    created_at,
+                    updated_at
+                 FROM ${announcementTable}
+                 WHERE created_by = ?
+                   AND LOWER(COALESCE(type, 'announcement')) = 'announcement'
+                   AND LOWER(COALESCE(status, '')) <> 'archived'
+                   ${hasArchivedAt ? "AND archived_at IS NULL" : ""}
+                 ORDER BY created_at DESC`,
+                [req.user.id]
+            ))
+            : [];
+
+        const achievementRows = parseRows<QueryRow>(await db.query<QueryRow>(
+            `SELECT id, title, description, achievement_date, category, organization, image_url, status, created_at, updated_at
+             FROM achievements
+             WHERE alumni_id = ? AND LOWER(COALESCE(status, '')) <> 'archived'
+             ORDER BY created_at DESC`,
+            [req.user.id]
+        ));
+
+        const freedomWallRows = parseRows<QueryRow>(await db.query<QueryRow>(
+            `SELECT id, content, category, image_url, status, created_at, updated_at
+             FROM freedom_wall_posts
+             WHERE user_id = ? AND LOWER(COALESCE(status, '')) <> 'deleted'
+             ORDER BY created_at DESC`,
+            [req.user.id]
+        ));
+
+        const posts: AccountPostItem[] = [
+            ...announcementRows.map((row) => ({
+                id: String(row.id),
+                type: "announcement" as const,
+                typeLabel: "Announcement",
+                title: String(row.title || "Untitled announcement"),
+                preview: String(row.description || ""),
+                status: String(row.approval_status || row.status || "pending_approval"),
+                datePosted: row.created_at ? String(row.created_at) : null,
+                updatedAt: row.updated_at ? String(row.updated_at) : null,
+                details: {
+                    title: row.title || "",
+                    description: row.description || "",
+                    date: row.date || "",
+                    organizer: row.organizer || "",
+                    imageUrl: normalizeStoredMedia(row.image_url ? String(row.image_url) : null) || "",
+                    status: row.status || "",
+                    approvalStatus: row.approval_status || null,
+                    googleFormLink: row.google_form_link || null
+                }
+            })),
+            ...achievementRows.map((row) => ({
+                id: String(row.id),
+                type: "achievement" as const,
+                typeLabel: "Achievement",
+                title: String(row.title || "Untitled achievement"),
+                preview: String(row.description || ""),
+                status: String(row.status || "pending"),
+                datePosted: row.created_at ? String(row.created_at) : null,
+                updatedAt: row.updated_at ? String(row.updated_at) : null,
+                details: {
+                    title: row.title || "",
+                    description: row.description || "",
+                    date: row.achievement_date || "",
+                    category: row.category || "",
+                    organization: row.organization || "",
+                    proofImage: normalizeStoredMedia(row.image_url ? String(row.image_url) : null) || "",
+                    status: row.status || ""
+                }
+            })),
+            ...freedomWallRows.map((row) => ({
+                id: String(row.id),
+                type: "freedom_wall" as const,
+                typeLabel: "Freedom Wall",
+                title: "Freedom Wall Post",
+                preview: String(row.content || ""),
+                status: String(row.status || "published"),
+                datePosted: row.created_at ? String(row.created_at) : null,
+                updatedAt: row.updated_at ? String(row.updated_at) : null,
+                details: {
+                    content: row.content || "",
+                    category: row.category || "Discussion",
+                    imageUrl: normalizeStoredMedia(row.image_url ? String(row.image_url) : null) || "",
+                    status: row.status || ""
+                }
+            }))
+        ].sort((a, b) => {
+            const aTime = a.datePosted ? new Date(a.datePosted).getTime() : 0;
+            const bTime = b.datePosted ? new Date(b.datePosted).getTime() : 0;
+            return bTime - aTime;
+        });
+
+        res.json(posts);
+    } catch (error: unknown) {
+        console.error("GET MY POSTS ERROR:", error);
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.patch("/api/account/my-posts/announcements/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const announcementId = Number(req.params.id);
+        const announcementTable = await getAnnouncementTableName();
+        const hasCreatedBy = await columnExists(announcementTable, "created_by");
+        const hasApprovalStatus = await columnExists(announcementTable, "approval_status");
+        const hasApprovedBy = await columnExists(announcementTable, "approved_by");
+        const hasRejectionReason = await columnExists(announcementTable, "rejection_reason");
+
+        if (!announcementId || !hasCreatedBy) {
+            return res.status(400).json({ error: "Invalid announcement id." });
+        }
+
+        const current = await getSingleRow<QueryRow>(
+            `SELECT * FROM ${announcementTable}
+             WHERE id = ? AND created_by = ? AND LOWER(COALESCE(type, 'announcement')) = 'announcement'`,
+            [announcementId, req.user.id]
+        );
+
+        if (!current) {
+            return res.status(404).json({ error: "Announcement post not found." });
+        }
+
+        const title = normalizeText(req.body?.title);
+        const description = String(req.body?.description || "").trim();
+        const date = normalizeDateOnly(req.body?.date);
+        const organizer = normalizeText(req.body?.organizer);
+        const imageUrl = normalizeStoredMedia(typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null) || null;
+
+        if (!title || !date) {
+            return res.status(400).json({ error: "Title and date are required." });
+        }
+
+        await db.execute(
+            `UPDATE ${announcementTable}
+             SET title = ?,
+                 description = ?,
+                 date = ?,
+                 organizer = ?,
+                 image_url = ?,
+                 status = 'active'
+                 ${hasApprovalStatus ? ", approval_status = 'pending_approval'" : ""}
+                 ${hasApprovedBy ? ", approved_by = NULL" : ""}
+                 ${hasRejectionReason ? ", rejection_reason = NULL" : ""}
+             WHERE id = ? AND created_by = ?`,
+            [title, description || null, date, organizer || null, imageUrl, announcementId, req.user.id]
+        );
+
+        res.json({ success: true, message: "Announcement updated and sent for admin review." });
+    } catch (error: unknown) {
+        console.error("UPDATE OWN ANNOUNCEMENT ERROR:", error);
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.patch("/api/account/my-posts/achievements/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const achievementId = Number(req.params.id);
+        if (!achievementId) {
+            return res.status(400).json({ error: "Invalid achievement id." });
+        }
+
+        const current = await getSingleRow<QueryRow>(
+            "SELECT * FROM achievements WHERE id = ? AND alumni_id = ? AND LOWER(COALESCE(status, '')) <> 'archived'",
+            [achievementId, req.user.id]
+        );
+
+        if (!current) {
+            return res.status(404).json({ error: "Achievement post not found." });
+        }
+
+        const title = normalizeText(req.body?.title);
+        const description = String(req.body?.description || "").trim();
+        const date = normalizeDateOnly(req.body?.date);
+        const category = normalizeText(req.body?.category);
+        const organization = normalizeText(req.body?.organization);
+        const proofImage = normalizeStoredMedia(typeof req.body?.proofImage === "string" ? req.body.proofImage : null) || null;
+
+        if (!title || !category || !date) {
+            return res.status(400).json({ error: "Title, category, and date are required." });
+        }
+
+        await db.execute(
+            `UPDATE achievements
+             SET title = ?,
+                 description = ?,
+                 achievement_date = ?,
+                 category = ?,
+                 organization = ?,
+                 image_url = ?,
+                 status = 'pending',
+                 featured = 0,
+                 approved_by = NULL,
+                 rejection_reason = NULL
+             WHERE id = ? AND alumni_id = ?`,
+            [title, description || null, date, category, organization || null, proofImage, achievementId, req.user.id]
+        );
+
+        res.json({ success: true, message: "Achievement updated and sent for admin review." });
+    } catch (error: unknown) {
+        console.error("UPDATE OWN ACHIEVEMENT ERROR:", error);
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.patch("/api/account/my-posts/freedom-wall/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const postId = Number(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: "Invalid Freedom Wall post id." });
+        }
+
+        const current = await getSingleRow<QueryRow>(
+            "SELECT * FROM freedom_wall_posts WHERE id = ? AND user_id = ? AND LOWER(COALESCE(status, '')) <> 'deleted'",
+            [postId, req.user.id]
+        );
+
+        if (!current) {
+            return res.status(404).json({ error: "Freedom Wall post not found." });
+        }
+
+        const content = String(req.body?.content || "").trim();
+        const category = normalizeText(req.body?.category) || "Discussion";
+        const imageUrl = normalizeStoredMedia(typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null) || null;
+
+        if (!content) {
+            return res.status(400).json({ error: "Post content is required." });
+        }
+
+        await db.execute(
+            `UPDATE freedom_wall_posts
+             SET content = ?, category = ?, image_url = ?, edited_at = NOW()
+             WHERE id = ? AND user_id = ?`,
+            [content, category, imageUrl, postId, req.user.id]
+        );
+
+        res.json({ success: true, message: "Freedom Wall post updated successfully." });
+    } catch (error: unknown) {
+        console.error("UPDATE OWN FREEDOM WALL POST ERROR:", error);
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.delete("/api/account/my-posts/:type/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const postId = Number(req.params.id);
+        const postType = String(req.params.type || "");
+        if (!postId) {
+            return res.status(400).json({ error: "Invalid post id." });
+        }
+
+        let result: ResultSetHeader;
+
+        if (postType === "announcements") {
+            const announcementTable = await getAnnouncementTableName();
+            const hasCreatedBy = await columnExists(announcementTable, "created_by");
+            const hasArchivedAt = await columnExists(announcementTable, "archived_at");
+
+            if (!hasCreatedBy) {
+                return res.status(400).json({ error: "Announcement ownership is not available." });
+            }
+
+            result = await db.execute(
+                `UPDATE ${announcementTable}
+                 SET status = 'archived' ${hasArchivedAt ? ", archived_at = NOW()" : ""}
+                 WHERE id = ? AND created_by = ? AND LOWER(COALESCE(type, 'announcement')) = 'announcement'`,
+                [postId, req.user.id]
+            ) as ResultSetHeader;
+        } else if (postType === "achievements") {
+            result = await db.execute(
+                "UPDATE achievements SET status = 'archived' WHERE id = ? AND alumni_id = ?",
+                [postId, req.user.id]
+            ) as ResultSetHeader;
+        } else if (postType === "freedom-wall") {
+            result = await db.execute(
+                "UPDATE freedom_wall_posts SET status = 'deleted' WHERE id = ? AND user_id = ?",
+                [postId, req.user.id]
+            ) as ResultSetHeader;
+        } else {
+            return res.status(400).json({ error: "Invalid post type." });
+        }
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Post not found." });
+        }
+
+        res.json({ success: true, message: "Post removed successfully." });
+    } catch (error: unknown) {
+        console.error("DELETE OWN POST ERROR:", error);
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
+
 /* =========================
    PROFILES / ALUMNI
 ========================= */
@@ -4315,10 +4922,6 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
 
 const alumniImportFileParser = express.raw({
     type: [
-        "text/csv",
-        "text/plain",
-        "application/csv",
-        "application/vnd.ms-excel",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/octet-stream"
     ],
@@ -8900,16 +9503,6 @@ app.post("/api/surveys/:id/responses", authenticateToken, async (req: Authentica
 
         await conn.commit();
         res.json({ success: true });
-
-        const adminUserIds = await getAdminUserIds();
-        await createUserNotifications({
-            userIds: adminUserIds,
-            title: "New survey response",
-            message: survey?.title ? `A new response was submitted for ${survey.title}.` : "A new survey response was submitted.",
-            category: "survey",
-            linkUrl: "/admin/announcements",
-            actorId: req.user.id
-        });
     } catch (err: unknown) {
         await conn.rollback();
         console.error("SUBMIT SURVEY RESPONSE ERROR:", err);
@@ -9367,16 +9960,27 @@ app.get("/api/user-notifications", authenticateToken, async (req: AuthenticatedR
             `SELECT *
              FROM user_notifications
              WHERE user_id = ?
+               AND NOT (title = ? AND COALESCE(category, '') = ?)
              ORDER BY created_at DESC
              LIMIT 30`,
-            [req.user.id]
+            [
+                req.user.id,
+                DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_TITLE,
+                DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_CATEGORY
+            ]
         ));
 
         const unreadRow = await getSingleRow(
             `SELECT COUNT(*) AS unreadCount
              FROM user_notifications
-             WHERE user_id = ? AND is_read = 0`,
-            [req.user.id]
+             WHERE user_id = ?
+               AND is_read = 0
+               AND NOT (title = ? AND COALESCE(category, '') = ?)`,
+            [
+                req.user.id,
+                DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_TITLE,
+                DEPRECATED_SURVEY_RESPONSE_NOTIFICATION_CATEGORY
+            ]
         );
 
         res.json({

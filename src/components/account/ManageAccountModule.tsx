@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bell, Camera, Film, GripVertical, ImagePlus, Lock, LogOut, Pencil, Save, Shield, Trash2, User, X, Youtube } from "lucide-react";
+import { Bell, Camera, ClipboardList, Film, GripVertical, ImagePlus, Lock, LogOut, MessageSquareWarning, Pencil, Save, Shield, Trash2, User, X, Youtube } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { canAccessModule, getRoleLabel, type OfficerRole } from "@/lib/rbac";
@@ -17,9 +17,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import ReportExportsPanel from "@/components/account/ReportExportsPanel";
+import ReportProblemPanel from "@/components/account/ReportProblemPanel";
+import MyPostsPanel from "@/components/account/MyPostsPanel";
 
 type ModuleMode = "alumni" | "admin";
-type SectionKey = "profile" | "security" | "notifications" | "reports";
+type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports";
 
 interface ManageAccountModuleProps {
   mode: ModuleMode;
@@ -45,16 +47,6 @@ interface SecurityState {
   currentPassword: string;
   newPassword: string;
   confirmPassword: string;
-}
-
-interface UserNotification {
-  id: string;
-  title: string;
-  message: string;
-  category: string;
-  linkUrl: string | null;
-  isRead: boolean;
-  createdAt: string;
 }
 
 interface HomepageSlide {
@@ -148,16 +140,6 @@ function ToggleRow({
   );
 }
 
-function formatNotificationTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
 function getUploadTitle(file: File) {
   return file.name.replace(/\.[^/.]+$/, "").trim() || "Homepage advertisement";
 }
@@ -198,8 +180,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   const [notificationMessage, setNotificationMessage] = useState("");
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(true);
-  const [notifications, setNotifications] = useState<UserNotification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [homepageSlides, setHomepageSlides] = useState<HomepageSlide[]>([]);
   const [homepageSlideForm, setHomepageSlideForm] = useState<HomepageSlideForm>(EMPTY_HOMEPAGE_SLIDE);
   const [editingHomepageSlideId, setEditingHomepageSlideId] = useState<number | string | null>(null);
@@ -256,24 +236,13 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     const loadNotificationData = async () => {
       setLoadingNotifications(true);
       try {
-        const [settingsResponse, notificationsResponse] = await Promise.all([
-          fetch(`${API_URL}/account/settings`, {
-            headers: getAuthHeaders(),
-          }),
-          fetch(`${API_URL}/user-notifications`, {
-            headers: getAuthHeaders(),
-          }),
-        ]);
+        const settingsResponse = await fetch(`${API_URL}/account/settings`, {
+          headers: getAuthHeaders(),
+        });
 
         const settingsData = await readApiResponse<{ settings: NotificationSettings }>(settingsResponse);
-        const notificationData = await readApiResponse<{
-          notifications: UserNotification[];
-          unreadCount: number;
-        }>(notificationsResponse);
 
         setNotificationSettings(settingsData.settings);
-        setNotifications(notificationData.notifications);
-        setUnreadCount(notificationData.unreadCount);
       } catch (error) {
         setNotificationMessage(error instanceof Error ? error.message : "Failed to load notifications.");
       } finally {
@@ -296,6 +265,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     { key: "profile" as SectionKey, label: "Profile", icon: User },
     { key: "security" as SectionKey, label: "Account Settings", icon: Lock },
     { key: "notifications" as SectionKey, label: "Notifications", icon: Bell },
+    ...(canViewReports ? [{ key: "reports" as SectionKey, label: "Reports", icon: ClipboardList }] : []),
+    ...(!isAdminView ? [{ key: "problem" as SectionKey, label: "Report a Problem", icon: MessageSquareWarning }] : []),
   ];
 
   const selectSection = (section: SectionKey) => {
@@ -432,39 +403,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       setNotificationMessage(error instanceof Error ? error.message : "Failed to update notifications.");
     } finally {
       setSavingNotifications(false);
-    }
-  };
-
-  const markNotificationAsRead = async (notificationId: string) => {
-    try {
-      const response = await fetch(`${API_URL}/user-notifications/${notificationId}/read`, {
-        method: "PATCH",
-        headers: getAuthHeaders(),
-      });
-
-      await readApiResponse<{ success: true }>(response);
-      setNotifications((current) =>
-        current.map((item) => (item.id === notificationId ? { ...item, isRead: true } : item))
-      );
-      setUnreadCount((current) => Math.max(0, current - 1));
-    } catch (error) {
-      setNotificationMessage(error instanceof Error ? error.message : "Failed to update notification.");
-    }
-  };
-
-  const markAllNotificationsAsRead = async () => {
-    try {
-      const response = await fetch(`${API_URL}/user-notifications/read-all`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-      });
-
-      await readApiResponse<{ success: true }>(response);
-      setNotifications((current) => current.map((item) => ({ ...item, isRead: true })));
-      setUnreadCount(0);
-      setNotificationMessage("All notifications marked as read.");
-    } catch (error) {
-      setNotificationMessage(error instanceof Error ? error.message : "Failed to update notifications.");
     }
   };
 
@@ -825,6 +763,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
             )}
           </div>
 
+          {!isAdminView && <MyPostsPanel />}
+
           {isAdminView && (
             <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
               <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
@@ -1107,17 +1047,12 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Notification Settings</p>
-                <h3 className="font-display text-2xl font-bold text-navy-dark">Alerts & Recent Activity</h3>
+                <h3 className="font-display text-2xl font-bold text-navy-dark">Alerts & Preferences</h3>
               </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => void markAllNotificationsAsRead()} disabled={!unreadCount}>
-                  Mark All Read
-                </Button>
-                <Button type="button" onClick={() => void saveNotificationSettings()} disabled={savingNotifications || loadingNotifications}>
-                  <Save className="mr-2 h-4 w-4" />
-                  {savingNotifications ? "Saving..." : "Save Preferences"}
-                </Button>
-              </div>
+              <Button type="button" onClick={() => void saveNotificationSettings()} disabled={savingNotifications || loadingNotifications}>
+                <Save className="mr-2 h-4 w-4" />
+                {savingNotifications ? "Saving..." : "Save Preferences"}
+              </Button>
             </div>
 
             <div className="mt-6 space-y-3">
@@ -1159,47 +1094,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
               />
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-navy-dark">Recent Notifications</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {loadingNotifications ? (
-                  <p className="text-sm text-muted-foreground">Loading notifications...</p>
-                ) : notifications.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No notifications available.</p>
-                ) : (
-                  notifications.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`rounded-2xl border px-4 py-3 ${
-                        item.isRead ? "border-border bg-background" : "border-amber-200 bg-amber-50/50"
-                      }`}
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-navy-dark">{item.title}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">{item.message}</p>
-                          <p className="mt-2 text-xs text-muted-foreground">{formatNotificationTime(item.createdAt)}</p>
-                        </div>
-                        {!item.isRead && (
-                          <Button type="button" size="sm" variant="outline" onClick={() => void markNotificationAsRead(item.id)}>
-                            Mark Read
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
             {notificationMessage && (
               <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                 {notificationMessage}
@@ -1207,6 +1101,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
             )}
           </div>
         )}
+
+        {activeSection === "problem" && !isAdminView && <ReportProblemPanel />}
 
         {activeSection === "reports" && canViewReports && <ReportExportsPanel />}
       </section>

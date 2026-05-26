@@ -78,6 +78,8 @@ const BLANK_FORM = {
   questions: [blankQuestion()],
 };
 
+const LIST_PAGE_SIZE = 10;
+
 export default function SurveyStudio() {
   const [surveys, setSurveys] = useState<SurveyRecord[]>([]);
   const [responses, setResponses] = useState<SurveyResponseRow[]>([]);
@@ -86,6 +88,7 @@ export default function SurveyStudio() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [surveyPage, setSurveyPage] = useState(1);
 
   const loadSurveys = async () => {
     try {
@@ -100,6 +103,16 @@ export default function SurveyStudio() {
   useEffect(() => {
     void loadSurveys();
   }, []);
+
+  const totalSurveyPages = Math.max(1, Math.ceil(surveys.length / LIST_PAGE_SIZE));
+  const paginatedSurveys = useMemo(() => {
+    const start = (surveyPage - 1) * LIST_PAGE_SIZE;
+    return surveys.slice(start, start + LIST_PAGE_SIZE);
+  }, [surveyPage, surveys]);
+
+  useEffect(() => {
+    setSurveyPage((current) => Math.min(current, totalSurveyPages));
+  }, [totalSurveyPages]);
 
   const loadResponses = async (survey: SurveyRecord) => {
     setSelectedSurvey(survey);
@@ -210,13 +223,13 @@ export default function SurveyStudio() {
             <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">{surveys.length}</span>
           </div>
 
-          <div className="max-h-[760px] space-y-3 overflow-y-auto pr-1">
+          <div className="space-y-3">
           {loading ? (
             <div className="flex min-h-[220px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading surveys...</div>
           ) : surveys.length === 0 ? (
             <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-muted-foreground">No internal surveys yet.</div>
           ) : (
-            surveys.map((survey) => (
+            paginatedSurveys.map((survey) => (
               <article key={survey.id} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-col gap-3">
                   <div className="min-w-0">
@@ -238,6 +251,13 @@ export default function SurveyStudio() {
             ))
           )}
           </div>
+          <PaginationControls
+            page={surveyPage}
+            pageSize={LIST_PAGE_SIZE}
+            totalItems={surveys.length}
+            totalPages={totalSurveyPages}
+            onPageChange={setSurveyPage}
+          />
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -345,5 +365,43 @@ export default function SurveyStudio() {
         </DialogContent>
       </Dialog>
     </section>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>
+          Previous
+        </Button>
+        <span className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-navy-dark">
+          Page {page} of {totalPages}
+        </span>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
+          Next
+        </Button>
+      </div>
+    </div>
   );
 }

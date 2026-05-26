@@ -1,5 +1,4 @@
 import AlumniLayout from "@/components/alumni/AlumniLayout";
-import ustpLogo from "@/assets/salay.png";
 import { Eye, Target, Zap, Users, FileText, Heart, Bell, BarChart2 } from "lucide-react";
 import OrganizationChart from "@/components/alumni/OrganizationChart";
 
@@ -40,20 +39,6 @@ export default function AboutUs() {
   return (
     <AlumniLayout title="About Us" subtitle="SaCC Alumni Portal">
       <div className="max-w-4xl mx-auto space-y-8">
-
-        {/* Header Card */}
-        <div className="bg-navy rounded-2xl p-8 flex flex-col sm:flex-row items-center gap-6 shadow-lg">
-          <img src={ustpLogo} alt="SaCC" className="w-28 h-auto object-contain flex-shrink-0" />
-          <div className="text-center sm:text-left">
-            <h2 className="text-white text-2xl font-display font-bold leading-tight">
-              Salay Community College
-            </h2>
-            <p className="text-white/60 text-sm mt-1 font-medium tracking-wide">SaCC · Alumni Portal</p>
-            <p className="text-white/50 text-xs mt-3 leading-relaxed max-w-xl">
-              Connecting SaCC graduates through a unified platform for engagement, contribution, and career tracking.
-            </p>
-          </div>
-        </div>
 
         <OrganizationChart />
 

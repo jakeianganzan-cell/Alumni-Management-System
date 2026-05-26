@@ -8,7 +8,6 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
-  Download,
   Eye,
   EyeOff,
   FileSpreadsheet,
@@ -24,7 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { ALL_COURSES_OPTION, COURSE_OPTIONS, SYSTEM_COURSES, formatCourseLabel } from "@/lib/courseCatalog";
 import { useAuth } from "@/hooks/useAuth";
-import { downloadBrandedCsv, type ReportColumn } from "@/lib/reportExport";
+import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
 
 const COURSES = [ALL_COURSES_OPTION, ...SYSTEM_COURSES];
 const BATCHES = ["All Batches", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"];
@@ -246,32 +245,6 @@ const getCellText = (cell: ExcelJS.Cell) => {
   return normalizeText(value);
 };
 
-const parseCsvLine = (line: string) => {
-  const cells: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
-
-    if (char === "\"" && inQuotes && nextChar === "\"") {
-      cell += "\"";
-      index += 1;
-    } else if (char === "\"") {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      cells.push(cell);
-      cell = "";
-    } else {
-      cell += char;
-    }
-  }
-
-  cells.push(cell);
-  return cells;
-};
-
 const normalizeImportValue = (key: keyof Omit<ImportRow, "rowNumber" | "errors">, value: unknown) => {
   if (key === "emailAddress") {
     return normalizeEmail(value);
@@ -358,50 +331,19 @@ const worksheetToRows = (worksheet: ExcelJS.Worksheet) => {
 const parseImportFile = async (file: File) => {
   const extension = file.name.split(".").pop()?.toLowerCase();
   const buffer = await file.arrayBuffer();
-  let parsedRows: Omit<ImportRow, "errors">[] = [];
-
-  if (extension === "csv") {
-    const text = new TextDecoder().decode(buffer);
-    const lines = text.split(/\r?\n/).filter((line) => line.trim());
-    const headerCells = parseCsvLine(lines[0] || "");
-    const headerIndexes = headerCells.map((header) => IMPORT_HEADER_MAP[normalizeHeader(header)]);
-
-    if (!headerIndexes.some(Boolean)) {
-      throw new Error("The import file must include headers: name, email, year, and program.");
-    }
-
-    parsedRows = lines.slice(1)
-      .map((line, index) => {
-        const cells = parseCsvLine(line);
-        const mapped: Omit<ImportRow, "errors"> = {
-          rowNumber: index + 2,
-          fullName: "",
-          graduationYear: "",
-          emailAddress: "",
-          program: "",
-          contactNumber: "",
-        };
-
-        headerIndexes.forEach((key, columnIndex) => {
-          if (key) {
-            mapped[key] = normalizeImportValue(key, cells[columnIndex] || "");
-          }
-        });
-
-        return mapped;
-      })
-      .filter((row) => row.fullName || row.graduationYear || row.emailAddress || row.program || row.contactNumber);
-  } else {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
-    const worksheet = workbook.worksheets[0];
-
-    if (!worksheet) {
-      throw new Error("The uploaded file does not contain any worksheet.");
-    }
-
-    parsedRows = worksheetToRows(worksheet);
+  if (extension !== "xlsx") {
+    throw new Error("Only XLSX alumni import files are supported.");
   }
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.worksheets[0];
+
+  if (!worksheet) {
+    throw new Error("The uploaded file does not contain any worksheet.");
+  }
+
+  const parsedRows = worksheetToRows(worksheet);
 
   if (parsedRows.length === 0) {
     throw new Error("No alumni rows were found. Check that the file includes the required columns.");
@@ -651,8 +593,8 @@ export default function AdminAlumni() {
     try {
       const extension = file.name.split(".").pop()?.toLowerCase();
 
-      if (!extension || !["csv", "xlsx"].includes(extension)) {
-        throw new Error("Only CSV and XLSX files are allowed.");
+      if (extension !== "xlsx") {
+        throw new Error("Only XLSX files are allowed.");
       }
 
       const parsedRows = await parseImportFile(file);
@@ -710,9 +652,9 @@ export default function AdminAlumni() {
     }
   };
 
-  const exportCSV = () => {
-    type AlumniCsvRow = Record<string, string | number>;
-    const columns: Array<ReportColumn<AlumniCsvRow>> = [
+  const exportExcel = async () => {
+    type AlumniExportRow = Record<string, string | number>;
+    const columns: Array<ReportColumn<AlumniExportRow>> = [
       { key: "alumniId", label: "Alumni ID" },
       { key: "name", label: "Name" },
       { key: "course", label: "Course" },
@@ -729,7 +671,7 @@ export default function AdminAlumni() {
       contact: item.contact_number ?? "",
     }));
 
-    downloadBrandedCsv({
+    await downloadBrandedExcel({
       title: "Alumni List Report",
       filename: "alumni_list",
       columns,
@@ -796,9 +738,9 @@ export default function AdminAlumni() {
               <Upload className="h-4 w-4" />
               Import File
             </button>
-            <button onClick={exportCSV} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-navy hover:bg-muted">
-              <Download className="h-4 w-4" />
-              Export
+            <button onClick={() => void exportExcel()} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-navy hover:bg-muted">
+              <FileSpreadsheet className="h-4 w-4" />
+              Export Excel
             </button>
             <button
               onClick={() => {
@@ -1097,7 +1039,7 @@ export default function AdminAlumni() {
           <DialogHeader>
             <DialogTitle>Import Alumni Records</DialogTitle>
             <DialogDescription>
-              Upload one CSV or XLSX file at a time. The system scans it automatically, validates required fields, and shows a preview before import.
+              Upload one XLSX file at a time. The system scans it automatically, validates required fields, and shows a preview before import.
             </DialogDescription>
           </DialogHeader>
 
@@ -1114,7 +1056,7 @@ export default function AdminAlumni() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,.xlsx"
+                    accept=".xlsx"
                     className="hidden"
                     onChange={handleImportFileSelect}
                     disabled={importParsing || importSubmitting}

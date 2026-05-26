@@ -121,6 +121,7 @@ const statusConfig: Record<EmailStatus, { label: string; color: string; icon: ty
 };
 
 const MAX_SELECTED_ALUMNI = 10;
+const LOGS_PAGE_SIZE = 10;
 
 const formatDate = (value?: string | null) => {
   if (!value) return "Not sent";
@@ -155,6 +156,7 @@ export default function AdminNotifications() {
   const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
   const [logToDelete, setLogToDelete] = useState<EmailLog | null>(null);
   const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
+  const [logsPage, setLogsPage] = useState(1);
 
   const [alumniSearch, setAlumniSearch] = useState("");
   const [recipientResults, setRecipientResults] = useState<AlumniRecipient[]>([]);
@@ -241,6 +243,16 @@ export default function AdminNotifications() {
     }),
     [logs]
   );
+
+  const totalLogPages = Math.max(1, Math.ceil(logs.length / LOGS_PAGE_SIZE));
+  const paginatedLogs = useMemo(() => {
+    const start = (logsPage - 1) * LOGS_PAGE_SIZE;
+    return logs.slice(start, start + LOGS_PAGE_SIZE);
+  }, [logs, logsPage]);
+
+  useEffect(() => {
+    setLogsPage((current) => Math.min(current, totalLogPages));
+  }, [totalLogPages]);
 
   const applyTemplate = (nextPurpose: EmailPurpose) => {
     setPurpose(nextPurpose);
@@ -625,7 +637,7 @@ export default function AdminNotifications() {
             {loadingLogs && <div className="py-12 text-center text-sm text-muted-foreground">Loading email logs...</div>}
             {!loadingLogs && logs.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No email logs found.</div>}
             <div className="space-y-2">
-              {logs.map((log) => {
+              {paginatedLogs.map((log) => {
                 const status = statusConfig[log.status] ?? statusConfig.pending;
                 return (
                   <div key={log.id} className="rounded-lg border border-border p-4 transition-colors hover:bg-muted/30">
@@ -673,6 +685,13 @@ export default function AdminNotifications() {
                 );
               })}
             </div>
+            <PaginationControls
+              page={logsPage}
+              pageSize={LOGS_PAGE_SIZE}
+              totalItems={logs.length}
+              totalPages={totalLogPages}
+              onPageChange={setLogsPage}
+            />
           </div>
         )}
       </div>
@@ -799,5 +818,53 @@ export default function AdminNotifications() {
         </div>
       )}
     </AdminLayout>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page <= 1}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <span className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-navy-dark">
+          Page {page} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }

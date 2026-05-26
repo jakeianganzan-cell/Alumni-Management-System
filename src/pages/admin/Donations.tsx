@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { downloadBrandedCsv, type ReportColumn } from "@/lib/reportExport";
+import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
 
 type DonationStatus = "Pending Review" | "Approved" | "Rejected";
 
@@ -101,6 +101,8 @@ const methodTone: Record<string, string> = {
   Personal: "bg-violet-100 text-violet-700",
 };
 
+const DONATION_PAGE_SIZE = 10;
+
 export default function AdminDonations() {
   const { profile, user } = useAuth();
   const [search, setSearch] = useState("");
@@ -121,6 +123,7 @@ export default function AdminDonations() {
   const [showSettingsPassword, setShowSettingsPassword] = useState(false);
   const [verifyingSettings, setVerifyingSettings] = useState(false);
   const [settingsVerifyError, setSettingsVerifyError] = useState("");
+  const [donationPage, setDonationPage] = useState(1);
   const qrInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -327,22 +330,39 @@ export default function AdminDonations() {
     }
   };
 
-  const filteredDonations = (filter === "All" ? donations : donations.filter((donation) => donation.status === filter)).filter(
-    (donation) =>
-      !search ||
-      donation.profile.name.toLowerCase().includes(search.toLowerCase()) ||
-      donation.id.includes(search) ||
-      (donation.profile.student_id || "").toLowerCase().includes(search.toLowerCase()),
-  );
+  const filteredDonations = useMemo(() => {
+    const searchText = search.toLowerCase();
+    return (filter === "All" ? donations : donations.filter((donation) => donation.status === filter)).filter(
+      (donation) =>
+        !searchText ||
+        donation.profile.name.toLowerCase().includes(searchText) ||
+        donation.id.toLowerCase().includes(searchText) ||
+        (donation.profile.student_id || "").toLowerCase().includes(searchText),
+    );
+  }, [donations, filter, search]);
+
+  const totalDonationPages = Math.max(1, Math.ceil(filteredDonations.length / DONATION_PAGE_SIZE));
+  const paginatedDonations = useMemo(() => {
+    const start = (donationPage - 1) * DONATION_PAGE_SIZE;
+    return filteredDonations.slice(start, start + DONATION_PAGE_SIZE);
+  }, [donationPage, filteredDonations]);
+
+  useEffect(() => {
+    setDonationPage(1);
+  }, [filter, search]);
+
+  useEffect(() => {
+    setDonationPage((current) => Math.min(current, totalDonationPages));
+  }, [totalDonationPages]);
 
   const totalApproved = summary.approvedTotal;
   const pendingCount = summary.pendingCount;
   const rejectedCount = summary.rejectedCount;
   const donorCount = summary.donorCount;
 
-  const exportCSV = () => {
-    type DonationCsvRow = Record<string, string | number>;
-    const columns: Array<ReportColumn<DonationCsvRow>> = [
+  const exportExcel = async () => {
+    type DonationExportRow = Record<string, string | number>;
+    const columns: Array<ReportColumn<DonationExportRow>> = [
       { key: "id", label: "ID" },
       { key: "donor", label: "Donor" },
       { key: "studentId", label: "Student ID" },
@@ -363,7 +383,7 @@ export default function AdminDonations() {
       status: donation.status,
     }));
 
-    downloadBrandedCsv({
+    await downloadBrandedExcel({
       title: "Donation Monitoring Report",
       filename: "donations",
       columns,
@@ -380,7 +400,7 @@ export default function AdminDonations() {
 
   return (
     <AdminLayout title="Donation Monitoring" subtitle="Review donor details, confirm approvals carefully, and keep the review flow consistent">
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="grid gap-3 lg:grid-cols-4">
           <SummaryCard label="Total Approved" value={`PHP ${totalApproved.toLocaleString()}`} toneClassName="bg-navy text-white" icon={<Heart className="h-4 w-4" />} />
           <SummaryCard label="Pending Review" value={String(pendingCount)} toneClassName="bg-white text-navy-dark" icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
@@ -389,7 +409,7 @@ export default function AdminDonations() {
         </div>
 
         <Card className="border-slate-200 bg-white shadow-sm">
-          <CardHeader className="border-b border-slate-200 bg-slate-50">
+          <CardHeader className="border-b border-slate-200 bg-slate-50 px-4 py-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <CardTitle className="text-lg text-navy-dark">Donation Review Queue</CardTitle>
@@ -422,9 +442,9 @@ export default function AdminDonations() {
                   <Settings className="mr-2 h-4 w-4" />
                   Payment Settings
                 </Button>
-                <Button type="button" onClick={exportCSV}>
+                <Button type="button" onClick={() => void exportExcel()}>
                   <Download className="mr-2 h-4 w-4" />
-                  Export
+                  Export Excel
                 </Button>
               </div>
             </div>
@@ -456,7 +476,7 @@ export default function AdminDonations() {
                       </td>
                     </tr>
                   ) : (
-                    filteredDonations.map((donation) => (
+                    paginatedDonations.map((donation) => (
                       <tr key={donation.id} className="hover:bg-slate-50/70">
                         <td className="px-4 py-3.5" data-label="Donor">
                           <div>
@@ -488,6 +508,13 @@ export default function AdminDonations() {
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              page={donationPage}
+              pageSize={DONATION_PAGE_SIZE}
+              totalItems={filteredDonations.length}
+              totalPages={totalDonationPages}
+              onPageChange={setDonationPage}
+            />
           </CardContent>
         </Card>
       </div>
@@ -762,12 +789,50 @@ function SummaryCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className={cn("rounded-2xl border border-slate-200 p-4 shadow-sm", toneClassName)}>
+    <div className={cn("rounded-xl border border-slate-200 p-3 shadow-sm", toneClassName)}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold">{label}</p>
+        <p className="text-xs font-semibold">{label}</p>
         <div>{icon}</div>
       </div>
-      <p className="mt-4 text-xl font-bold sm:text-2xl">{value}</p>
+      <p className="mt-2 text-lg font-bold sm:text-xl">{value}</p>
+    </div>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>
+          Previous
+        </Button>
+        <span className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-navy-dark">
+          Page {page} of {totalPages}
+        </span>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
+          Next
+        </Button>
+      </div>
     </div>
   );
 }

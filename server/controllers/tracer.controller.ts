@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { readFileSync } from "fs";
 import { randomUUID } from "crypto";
 import os from "os";
 import path from "path";
@@ -59,13 +60,24 @@ interface SimpleCountRow extends RowDataPacket {
   totalAlumni?: number;
 }
 
-const SCHOOL_NAME = "University of Science and Technology of Southern Philippines";
+const SCHOOL_NAME = "Salay Community College";
+const SCHOOL_OFFICE = "Alumni Affairs and Graduate Tracer Unit";
+const REPORT_TITLE = "Graduate Tracer Analytics Report";
+const REPORT_SUBTITLE = "CHED-ready institutional reporting template";
 const STALE_TRACER_NOTIFICATION_TITLE = "Graduate tracer update needed";
 const STALE_TRACER_NOTIFICATION_CATEGORY = "tracer";
 const STALE_TRACER_NOTIFICATION_LINK = "/alumni/tracer";
 const TWO_YEARS_IN_MS = 1000 * 60 * 60 * 24 * 365 * 2;
 
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
+
+const escapeHtml = (value: unknown) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 const safeParseJson = <T>(value: unknown, fallback: T): T => {
   if (!value) return fallback;
@@ -154,6 +166,39 @@ const formatFileDate = (value = new Date()) => {
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+const formatReportDate = (value = new Date()) =>
+  value.toLocaleString("en-PH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+const loadReportPngDataUri = (candidates: string[]) => {
+  for (const candidate of candidates) {
+    try {
+      const data = readFileSync(candidate);
+      return `data:image/png;base64,${data.toString("base64")}`;
+    } catch {
+      // Dev and production builds use different working directories.
+    }
+  }
+
+  return "";
+};
+
+const SCHOOL_LOGO_DATA_URI = loadReportPngDataUri([
+  path.resolve(process.cwd(), "src/assets/salay.png"),
+  path.resolve(process.cwd(), "../src/assets/salay.png"),
+]);
+
+const CHED_LOGO_DATA_URI = loadReportPngDataUri([
+  path.resolve(process.cwd(), "server/assets/ched-seal.png"),
+  path.resolve(process.cwd(), "assets/ched-seal.png"),
+  path.resolve(process.cwd(), "../server/assets/ched-seal.png"),
+]);
 
 const getPayloadBatchYear = (payload: Record<string, unknown>) =>
   cleanText((Array.isArray(payload.educationalAttainments) ? (payload.educationalAttainments[0] as Record<string, unknown>)?.yearGraduated : "") || "");
@@ -1004,86 +1049,170 @@ const buildAnalytics = async () => {
   };
 };
 
-const buildCsv = (rows: Array<Record<string, unknown>>) => {
-  if (rows.length === 0) return "";
-  const headers = Object.keys(rows[0]);
-  const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-  const body = rows.map((row) => headers.map((header) => escape(row[header])).join(","));
-  return [headers.join(","), ...body].join("\n");
-};
-
-const buildExcelXml = (sheetName: string, rows: Array<Record<string, unknown>>) => {
+const buildExcelWorkbookHtml = (
+  rows: Array<Record<string, unknown>>,
+) => {
   const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-  const xmlEscape = (value: unknown) =>
-    String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  const logoCell = SCHOOL_LOGO_DATA_URI
+    ? `<img src="${SCHOOL_LOGO_DATA_URI}" alt="${escapeHtml(SCHOOL_NAME)} logo" style="height:64px;width:64px;object-fit:contain;" />`
+    : `<strong>${escapeHtml(SCHOOL_NAME)}</strong>`;
+  const chedCell = CHED_LOGO_DATA_URI
+    ? `<img src="${CHED_LOGO_DATA_URI}" alt="CHED seal" style="height:64px;width:64px;object-fit:contain;" />`
+    : "CHED";
+  const tableHeaders = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  const tableRows = rows.length > 0
+    ? rows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${Math.max(headers.length, 1)}">No tracer records available.</td></tr>`;
 
-  const headerCells = headers.map((header) => `<Cell><Data ss:Type="String">${xmlEscape(header)}</Data></Cell>`).join("");
-  const bodyRows = rows
-    .map((row) => `<Row>${headers.map((header) => `<Cell><Data ss:Type="String">${xmlEscape(row[header])}</Data></Cell>`).join("")}</Row>`)
-    .join("");
-
-  return `<?xml version="1.0"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Worksheet ss:Name="${xmlEscape(sheetName)}">
-    <Table>
-      <Row>${headerCells}</Row>
-      ${bodyRows}
-    </Table>
-  </Worksheet>
-</Workbook>`;
+  return `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+  <head>
+    <meta charset="utf-8" />
+    <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Graduate Tracer Report</x:Name><x:WorksheetOptions><x:FreezePanes/><x:FrozenNoSplit/><x:SplitHorizontal>9</x:SplitHorizontal><x:TopRowBottomPane>9</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+    <style>
+      body { font-family: Arial, sans-serif; color: #172033; }
+      .title { background: #550000; color: #ffffff; font-size: 20px; font-weight: 700; text-align: center; }
+      .subtitle { background: #f3f4f6; color: #374151; font-size: 12px; text-align: center; }
+      .logo { text-align: center; vertical-align: middle; border: 1px solid #d1d5db; }
+      .meta { color: #475569; font-size: 12px; text-align: center; }
+      .section { background: #e5e7eb; color: #550000; font-size: 13px; font-weight: 700; }
+      th { background: #550000; color: #ffffff; font-weight: 700; border: 1px solid #550000; padding: 8px; }
+      td { border: 1px solid #d1d5db; padding: 7px; vertical-align: top; mso-number-format:"\\@"; }
+    </style>
+  </head>
+  <body>
+    <table>
+      <colgroup>
+        ${Array.from({ length: Math.max(headers.length, 12) }, () => `<col style="width: 150px;" />`).join("")}
+      </colgroup>
+      <tr>
+        <td class="logo" rowspan="4">${logoCell}</td>
+        <td class="title" colspan="${Math.max(headers.length - 2, 10)}">${escapeHtml(SCHOOL_NAME)}</td>
+        <td class="logo" rowspan="4">${chedCell}</td>
+      </tr>
+      <tr><td class="subtitle" colspan="${Math.max(headers.length - 2, 10)}">${escapeHtml(SCHOOL_OFFICE)}</td></tr>
+      <tr><td class="title" colspan="${Math.max(headers.length - 2, 10)}">${escapeHtml(REPORT_TITLE)}</td></tr>
+      <tr><td class="meta" colspan="${Math.max(headers.length - 2, 10)}">${escapeHtml(REPORT_SUBTITLE)} | Generated ${escapeHtml(formatReportDate())}</td></tr>
+      <tr><td colspan="${Math.max(headers.length, 12)}">&nbsp;</td></tr>
+      <tr><td class="section" colspan="${Math.max(headers.length, 12)}">Respondent Records</td></tr>
+      <tr>${tableHeaders}</tr>
+      ${tableRows}
+    </table>
+  </body>
+</html>`;
 };
 
-const buildReportHtml = (analytics: Awaited<ReturnType<typeof buildAnalytics>>) => {
+const buildReportHtml = (
+  analytics: Awaited<ReturnType<typeof buildAnalytics>>,
+  rows: Array<Record<string, unknown>>,
+) => {
   const list = (title: string, items: Array<{ label: string; value: number }>) => `
-    <section>
+    <section class="panel">
       <h3>${title}</h3>
       <table>
-        <thead><tr><th>Label</th><th>Value</th></tr></thead>
-        <tbody>${items.map((item) => `<tr><td>${item.label}</td><td>${item.value}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Label</th><th class="number">Count</th></tr></thead>
+        <tbody>${items.length > 0 ? items.map((item) => `<tr><td>${escapeHtml(item.label)}</td><td class="number">${escapeHtml(item.value)}</td></tr>`).join("") : `<tr><td colspan="2">No data available.</td></tr>`}</tbody>
       </table>
     </section>
   `;
+  const logo = SCHOOL_LOGO_DATA_URI ? `<img src="${SCHOOL_LOGO_DATA_URI}" alt="${escapeHtml(SCHOOL_NAME)} logo" />` : `<span>${escapeHtml(SCHOOL_NAME)}</span>`;
+  const chedLogo = CHED_LOGO_DATA_URI ? `<img src="${CHED_LOGO_DATA_URI}" alt="CHED seal" />` : `<span>CHED</span>`;
+  const recordHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const emptyRow = `<tr><td colspan="${Math.max(recordHeaders.length, 1)}">No tracer records available.</td></tr>`;
+  const recordTable = recordHeaders.length > 0 ? `
+    <section class="records-panel">
+      <div class="section-bar">
+        <h3>Respondent Records</h3>
+        <span>${rows.length} record${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="table-wrap">
+        <table class="records">
+          <thead><tr>${recordHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.length > 0 ? rows.map((row) => `<tr>${recordHeaders.map((header) => `<td>${escapeHtml(row[header])}</td>`).join("")}</tr>`).join("") : emptyRow}</tbody>
+        </table>
+      </div>
+    </section>
+  ` : "";
 
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Graduate Tracer Analytics Report</title>
+    <title>${escapeHtml(REPORT_TITLE)}</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 32px; color: #0f172a; }
-      h1, h2, h3 { margin: 0 0 12px; }
-      .meta { margin-bottom: 24px; color: #475569; }
-      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
-      .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; }
-      .card strong { display: block; font-size: 24px; margin-top: 8px; }
-      table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
-      th { background: #e2e8f0; }
+      @page { size: A4 landscape; margin: 10mm; }
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; margin: 0; color: #172033; background: #f8fafc; font-size: 12px; }
+      .sheet { max-width: 1440px; margin: 0 auto; background: #ffffff; padding: 24px; }
+      header { display: grid; grid-template-columns: 78px 1fr 78px; align-items: center; gap: 16px; border-bottom: 4px solid #550000; padding-bottom: 14px; }
+      header .logo { align-items: center; border: 1px solid #d8dde6; border-radius: 10px; display: flex; height: 68px; justify-content: center; padding: 7px; }
+      header img { max-height: 56px; max-width: 56px; object-fit: contain; }
+      h1 { color: #550000; font-size: 23px; letter-spacing: 0.02em; margin: 0; text-align: center; text-transform: uppercase; }
+      h2 { color: #172033; font-size: 14px; font-weight: 700; margin: 4px 0 0; text-align: center; }
+      .meta { color: #64748b; line-height: 1.5; margin-top: 8px; text-align: center; }
+      .intro { border: 1px solid #e2e8f0; border-left: 5px solid #550000; margin: 14px 0; padding: 10px 12px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+      .panel { break-inside: avoid; border: 1px solid #d8dde6; border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+      h3 { color: inherit; font-size: 12px; letter-spacing: .04em; margin: 0; text-transform: uppercase; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #d8dde6; padding: 6px 7px; text-align: left; vertical-align: top; }
+      th { background: #f1f5f9; color: #172033; font-size: 10px; text-transform: uppercase; }
+      .number { text-align: right; width: 90px; }
+      .records-panel { border: 1px solid #d8dde6; border-radius: 10px; overflow: hidden; }
+      .section-bar { align-items: center; background: #550000; color: #ffffff; display: flex; justify-content: space-between; padding: 10px 12px; }
+      .section-bar span { font-size: 11px; font-weight: 700; }
+      .table-wrap { overflow-x: auto; }
+      .records { font-size: 9.5px; min-width: 1320px; table-layout: fixed; }
+      .records th { background: #550000; color: #ffffff; }
+      .records th:nth-child(1), .records td:nth-child(1) { width: 145px; }
+      .records th:nth-child(2), .records td:nth-child(2) { width: 90px; }
+      .records th:nth-child(3), .records td:nth-child(3) { width: 140px; }
+      .records th:nth-child(4), .records td:nth-child(4) { width: 62px; }
+      .records th:nth-child(5), .records td:nth-child(5) { width: 118px; }
+      .records th:nth-child(6), .records td:nth-child(6) { width: 120px; }
+      .records th:nth-child(7), .records td:nth-child(7) { width: 120px; }
+      .records th:nth-child(8), .records td:nth-child(8) { width: 105px; }
+      .records th:nth-child(9), .records td:nth-child(9) { width: 95px; }
+      .records th:nth-child(10), .records td:nth-child(10) { width: 105px; }
+      .records th:nth-child(11), .records td:nth-child(11) { width: 105px; }
+      .records th:nth-child(12), .records td:nth-child(12) { width: 115px; }
+      footer { border-top: 1px solid #d8dde6; color: #64748b; margin-top: 18px; padding-top: 10px; text-align: right; }
+      .print-action { background: #550000; border: 0; border-radius: 8px; color: #fff; cursor: pointer; font-weight: 700; padding: 9px 14px; position: fixed; right: 18px; top: 18px; }
+      @media print {
+        body { background: #ffffff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .sheet { max-width: none; padding: 0; }
+        .table-wrap { overflow: visible; }
+        .records { min-width: 0; width: 100%; }
+        .print-action { display: none; }
+      }
     </style>
   </head>
   <body>
-    <h1>Graduate Tracer Analytics Report</h1>
-    <p class="meta">${SCHOOL_NAME}<br />Generated ${formatFileDate()}</p>
-    <div class="cards">
-      <div class="card">Total Alumni<strong>${analytics.totals.totalAlumni}</strong></div>
-      <div class="card">Responded<strong>${analytics.totals.totalResponded}</strong></div>
-      <div class="card">Completion Rate<strong>${analytics.totals.completionRate}%</strong></div>
-      <div class="card">Employment Rate<strong>${analytics.totals.employmentRate}%</strong></div>
-      <div class="card">Unemployment Rate<strong>${analytics.totals.unemploymentRate}%</strong></div>
-      <div class="card">Average Waiting Time<strong>${analytics.totals.averageWaitingMonths} months</strong></div>
+    <button class="print-action" onclick="window.print()">Print / Save as PDF</button>
+    <main class="sheet">
+    <header>
+      <div class="logo">${logo}</div>
+      <div>
+        <h1>${escapeHtml(SCHOOL_NAME)}</h1>
+        <h2>${escapeHtml(REPORT_TITLE)}</h2>
+        <p class="meta">${escapeHtml(SCHOOL_OFFICE)}<br />${escapeHtml(REPORT_SUBTITLE)}<br />Generated ${escapeHtml(formatReportDate())}</p>
+      </div>
+      <div class="logo">${chedLogo}</div>
+    </header>
+    <section class="intro">
+      Landscape printable report arranged like the Excel workbook for clear review of alumni tracer details.
+    </section>
+    ${recordTable}
+    <div class="grid">
+      ${list("Employment Status", analytics.charts.employmentStatus)}
+      ${list("Salary Brackets", analytics.charts.salaryBrackets)}
+      ${list("Work Location", analytics.charts.workLocation)}
+      ${list("Curriculum Relevance", analytics.charts.curriculumRelevance)}
+      ${list("Top Useful Competencies", analytics.charts.usefulCompetencies)}
+      ${list("Graduation Year", analytics.charts.graduationYear)}
     </div>
-    ${list("Employment Status", analytics.charts.employmentStatus)}
-    ${list("Salary Brackets", analytics.charts.salaryBrackets)}
-    ${list("Work Location", analytics.charts.workLocation)}
-    ${list("Curriculum Relevance", analytics.charts.curriculumRelevance)}
-    ${list("Top Useful Competencies", analytics.charts.usefulCompetencies)}
+    <footer>Prepared through the Alumni Management System Graduate Tracer module.</footer>
+    </main>
   </body>
 </html>`;
 };
@@ -1533,29 +1662,32 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
     const summaryRows = rows.map((row) => {
       const payload = row.ched_payload as Record<string, unknown>;
       return {
-        AlumniName: cleanText(row.name),
-        StudentId: cleanText(row.student_id),
+        "Alumni Name": cleanText(row.name),
+        "Student ID": cleanText(row.student_id),
         Course: cleanText(row.course),
         Batch: cleanText(row.batch),
-        EmploymentStatus: cleanText(row.employment_status) || cleanText(payload.presentlyEmployed),
+        "Employment Status": cleanText(row.employment_status) || cleanText(payload.presentlyEmployed),
         Occupation: cleanText(row.job_title),
         Company: cleanText(row.company),
-        WorkLocation: cleanText(row.work_location),
-        SalaryRange: cleanText(row.income),
-        CurriculumRelevant: cleanText(row.relevance),
-        TimeToJob: cleanText(row.time_to_job),
-        SubmittedAt: cleanText(row.submitted_at),
+        "Work Location": cleanText(row.work_location),
+        "Salary Range": cleanText(row.income),
+        "Curriculum Relevant": cleanText(row.relevance),
+        "Time To First Job": cleanText(row.time_to_job),
+        "Submitted At": cleanText(row.submitted_at),
       };
     });
 
-    const format = cleanText(req.query.format).toLowerCase();
+    const format = cleanText(req.query.format).toLowerCase() || "pdf";
+    if (!["excel", "pdf"].includes(format)) {
+      return jsonResponseError(res, 400, "Only Excel and PDF tracer report exports are available.");
+    }
     await db.execute(
       "INSERT INTO tracer_reports (report_type, generated_by, filters_json, file_name) VALUES (?, ?, ?, ?)",
-      ["analytics", req.user.id, JSON.stringify(req.query || {}), `tracer-report-${format || "csv"}`],
+      ["analytics", req.user.id, JSON.stringify(req.query || {}), `tracer-report-${format}`],
     ).catch(() => undefined);
 
     if (format === "excel") {
-      const workbook = buildExcelXml("Tracer Report", summaryRows);
+      const workbook = buildExcelWorkbookHtml(summaryRows);
       await writeAuditLog(req.user.id, "", "export_report_excel", { rows: summaryRows.length });
       res.setHeader("Content-Type", "application/vnd.ms-excel");
       res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-report-${formatFileDate()}.xls"`);
@@ -1565,14 +1697,14 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
     if (format === "pdf") {
       await writeAuditLog(req.user.id, "", "export_report_pdf", { rows: summaryRows.length });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.send(buildReportHtml(analytics));
+      res.setHeader("Content-Disposition", `inline; filename="graduate-tracer-report-${formatFileDate()}.html"`);
+      return res.send(buildReportHtml(analytics, summaryRows));
     }
 
-    const csv = buildCsv(summaryRows);
-    await writeAuditLog(req.user.id, "", "export_report_csv", { rows: summaryRows.length });
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-report-${formatFileDate()}.csv"`);
-    return res.send(csv);
+    await writeAuditLog(req.user.id, "", "export_report_pdf", { rows: summaryRows.length });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="graduate-tracer-report-${formatFileDate()}.html"`);
+    return res.send(buildReportHtml(analytics, summaryRows));
   } catch (error: unknown) {
     console.error("EXPORT TRACER REPORTS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -112,6 +112,7 @@ const BLANK_FORM: AnnouncementForm = {
 };
 
 const EVENT_TYPE_OPTIONS = ["Donation", "Meeting", "Alumni", "Other"] as const;
+const LIST_PAGE_SIZE = 10;
 
 export default function AdminAnnouncements() {
   const queryClient = useQueryClient();
@@ -125,6 +126,7 @@ export default function AdminAnnouncements() {
   const [durationFilter, setDurationFilter] = useState<"all" | "Upcoming" | "Active" | "Archived">("all");
   const [search, setSearch] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [contentPage, setContentPage] = useState(1);
 
   const { data: announcements = [], isLoading } = useQuery<Announcement[]>({
     queryKey: ["announcements"],
@@ -320,6 +322,20 @@ export default function AdminAnnouncements() {
       return matchesFilter && matchesDuration && matchesSearch;
     });
   }, [activeWorkspace, announcements, approvalFilter, durationFilter, search]);
+
+  const totalContentPages = Math.max(1, Math.ceil(filteredAnnouncements.length / LIST_PAGE_SIZE));
+  const paginatedAnnouncements = useMemo(() => {
+    const start = (contentPage - 1) * LIST_PAGE_SIZE;
+    return filteredAnnouncements.slice(start, start + LIST_PAGE_SIZE);
+  }, [contentPage, filteredAnnouncements]);
+
+  useEffect(() => {
+    setContentPage(1);
+  }, [activeWorkspace, approvalFilter, durationFilter, search]);
+
+  useEffect(() => {
+    setContentPage((current) => Math.min(current, totalContentPages));
+  }, [totalContentPages]);
 
   const saving = createMutation.isPending || updateMutation.isPending;
 
@@ -532,7 +548,7 @@ export default function AdminAnnouncements() {
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">{filteredAnnouncements.length}</span>
               </div>
 
-              <div className="max-h-[760px] space-y-3 overflow-y-auto pr-1">
+              <div className="space-y-3">
                 {isLoading ? (
                   <div className="flex min-h-[220px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -543,7 +559,7 @@ export default function AdminAnnouncements() {
                     No {activeWorkspace === "event" ? "events" : "announcements"} matched the current search or filters.
                   </div>
                 ) : (
-                  filteredAnnouncements.map((announcement) => (
+                  paginatedAnnouncements.map((announcement) => (
                     <article
                       key={announcement.id}
                       role="button"
@@ -599,6 +615,13 @@ export default function AdminAnnouncements() {
                   ))
                 )}
               </div>
+              <PaginationControls
+                page={contentPage}
+                pageSize={LIST_PAGE_SIZE}
+                totalItems={filteredAnnouncements.length}
+                totalPages={totalContentPages}
+                onPageChange={setContentPage}
+              />
             </section>
           </>
         )}
@@ -1068,6 +1091,44 @@ function MiniCount({ label, value }: { label: string; value: number }) {
     <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
       <p className="text-base font-bold text-navy-dark">{value}</p>
       <p className="text-[11px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems <= pageSize) return null;
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {totalItems}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>
+          Previous
+        </Button>
+        <span className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-navy-dark">
+          Page {page} of {totalPages}
+        </span>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
+          Next
+        </Button>
+      </div>
     </div>
   );
 }

@@ -200,16 +200,6 @@ export default function AlumniDonate() {
   return (
     <AlumniLayout title="Make a Donation" subtitle="Support SaCC students and programs">
       <div className="mx-auto max-w-2xl">
-        <div className="mb-6 rounded-xl p-5 shadow-gold" style={{ background: "var(--gradient-gold)" }}>
-          <div className="flex items-center gap-3">
-            <Heart className="h-8 w-8 text-navy-dark" />
-            <div>
-              <p className="text-lg font-display font-bold text-navy-dark">Your Donation Matters</p>
-              <p className="text-sm text-navy/70">Every contribution helps support SaCC students.</p>
-            </div>
-          </div>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="rounded-xl border border-border bg-card p-5 shadow-card">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-display font-bold text-navy-dark">
