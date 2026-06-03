@@ -374,7 +374,7 @@ export default function AdminNotifications() {
   };
 
   return (
-    <AdminLayout title="Mailing" subtitle="Send targeted emails to selected alumni only">
+    <AdminLayout title="Mailing">
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Sent", value: stats.sent, icon: CheckCircle, color: "bg-emerald-100 text-emerald-700" },

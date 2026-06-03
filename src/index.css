@@ -576,6 +576,300 @@
     }
   }
 
+  @media (max-width: 768px) {
+    .alumni-portal .portal-main {
+      padding: 0.8rem 0.75rem 5.6rem;
+    }
+
+    .alumni-portal .portal-header {
+      gap: 0.5rem;
+      padding: 0.55rem 0.65rem;
+    }
+
+    .alumni-portal .portal-main > * {
+      width: 100%;
+    }
+
+    .alumni-portal .portal-main :where(.space-y-8 > :not([hidden]) ~ :not([hidden])) {
+      margin-top: 1.15rem;
+    }
+
+    .alumni-portal .portal-main :where(.space-y-6 > :not([hidden]) ~ :not([hidden])) {
+      margin-top: 0.95rem;
+    }
+
+    .alumni-portal .portal-main :where(.space-y-5 > :not([hidden]) ~ :not([hidden])) {
+      margin-top: 0.85rem;
+    }
+
+    .alumni-portal .portal-main :where(.mb-8) {
+      margin-bottom: 1rem;
+    }
+
+    .alumni-portal .portal-main :where(.mb-6) {
+      margin-bottom: 0.9rem;
+    }
+
+    .alumni-portal .portal-main :where(.mt-6) {
+      margin-top: 1rem;
+    }
+
+    .alumni-portal .portal-main :where(.p-8, .md\:p-8) {
+      padding: 1rem;
+    }
+
+    .alumni-portal .portal-main :where(.p-6, .md\:p-6, .sm\:p-5) {
+      padding: 0.95rem;
+    }
+
+    .alumni-portal .portal-main :where(.p-5) {
+      padding: 0.9rem;
+    }
+
+    .alumni-portal .portal-main :where(.p-4) {
+      padding: 0.85rem;
+    }
+
+    .alumni-portal .portal-main :where(.px-6, .sm\:px-6) {
+      padding-left: 0.95rem;
+      padding-right: 0.95rem;
+    }
+
+    .alumni-portal .portal-main :where(.py-6, .sm\:py-6) {
+      padding-top: 0.95rem;
+      padding-bottom: 0.95rem;
+    }
+
+    .alumni-portal .portal-main :where(.gap-8, .gap-6, .gap-5, .lg\:gap-6) {
+      gap: 0.85rem;
+    }
+
+    .alumni-portal .portal-main :where(.gap-4) {
+      gap: 0.75rem;
+    }
+
+    .alumni-portal .portal-main :where(h1, h2, h3, h4, p, span, label, button, input, textarea, select) {
+      max-width: 100%;
+    }
+
+    .alumni-portal .portal-main :where(h1, .text-4xl, .text-3xl) {
+      font-size: 1.35rem;
+      line-height: 1.25;
+    }
+
+    .alumni-portal .portal-main :where(h2, .text-2xl, .sm\:text-2xl, .md\:text-2xl) {
+      font-size: 1.18rem;
+      line-height: 1.3;
+    }
+
+    .alumni-portal .portal-main :where(h3, .text-xl, .sm\:text-xl) {
+      font-size: 1.02rem;
+      line-height: 1.35;
+    }
+
+    .alumni-portal .portal-main :where(.text-lg, .md\:text-lg) {
+      font-size: 0.98rem;
+      line-height: 1.4;
+    }
+
+    .alumni-portal .portal-main :where(.text-base) {
+      font-size: 0.94rem;
+      line-height: 1.45;
+    }
+
+    .alumni-portal .portal-main :where(.text-sm) {
+      font-size: 0.84rem;
+      line-height: 1.5;
+    }
+
+    .alumni-portal .portal-main :where(.tracking-\[0\.25em\], .tracking-\[0\.2em\], .tracking-\[0\.16em\], .tracking-\[0\.14em\]) {
+      letter-spacing: 0.08em;
+    }
+
+    .alumni-portal .portal-main :where(.grid-cols-2, .grid-cols-3, .grid-cols-4, .sm\:grid-cols-2, .sm\:grid-cols-3, .md\:grid-cols-2, .md\:grid-cols-3, .md\:grid-cols-4, .lg\:grid-cols-3, [class*="grid-cols-["]) {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .alumni-portal .portal-main :where(.sm\:flex-row) {
+      flex-direction: column !important;
+    }
+
+    .alumni-portal .portal-main :where(.sm\:items-center, .sm\:items-start, .sm\:items-end) {
+      align-items: stretch !important;
+    }
+
+    .alumni-portal .portal-main :where(.sm\:justify-between, .sm\:justify-end) {
+      justify-content: flex-start !important;
+    }
+
+    .alumni-portal .portal-main :where(.sm\:w-auto) {
+      width: 100% !important;
+    }
+
+    .alumni-portal .portal-main :where(button, .inline-flex) {
+      min-width: 0;
+    }
+
+    .alumni-portal .portal-main :where(button:not(.rounded-full), .button, [role="button"]) {
+      white-space: normal;
+    }
+
+    .alumni-portal .portal-main :where(.rounded-3xl) {
+      border-radius: 1rem;
+    }
+
+    .alumni-portal .portal-main :where(.rounded-2xl) {
+      border-radius: 0.9rem;
+    }
+
+    .alumni-portal .portal-main :where([class*="min-h-[340px]"]) {
+      min-height: clamp(220px, 62vw, 320px) !important;
+    }
+
+    .alumni-portal .portal-main :where([class*="min-h-[250px]"], [class*="min-h-[230px]"], [class*="min-h-[220px]"], [class*="min-h-[190px]"]) {
+      min-height: clamp(170px, 54vw, 220px) !important;
+    }
+
+    .alumni-portal .portal-main :where(.h-56, .sm\:h-72) {
+      height: clamp(13rem, 56vw, 18rem) !important;
+    }
+
+    .alumni-portal .portal-main :where(img.w-40, img.sm\:w-48) {
+      width: 100% !important;
+      height: auto !important;
+      max-height: 18rem;
+      object-fit: contain;
+    }
+
+    .alumni-portal .portal-main :where(.aspect-square) {
+      aspect-ratio: 4 / 3;
+    }
+
+    .alumni-portal .portal-main :where(.overflow-x-auto:not(:has(table))) {
+      overflow-x: visible;
+    }
+
+    .alumni-portal .portal-main :where(.overflow-x-auto:not(:has(table)) > .flex) {
+      flex-wrap: wrap;
+    }
+
+    .alumni-portal .portal-main :where(.dashboard-swipe-row) {
+      flex-wrap: nowrap !important;
+      overflow-x: auto !important;
+      cursor: grab;
+      overscroll-behavior-x: contain;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .alumni-portal .portal-main .dashboard-swipe-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .alumni-portal .portal-main .dashboard-swipe-row.is-dragging {
+      cursor: grabbing;
+      scroll-behavior: auto;
+      scroll-snap-type: none;
+    }
+
+    .alumni-portal .portal-main .dashboard-swipe-row > * {
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+
+    .alumni-portal .portal-main .dashboard-swipe-row.is-dragging > * {
+      transform: scale(0.985);
+    }
+
+    .alumni-portal .portal-main :where(.fixed.bottom-20.right-4) {
+      right: 0.75rem;
+      bottom: 4.7rem;
+      max-width: calc(100vw - 1.5rem);
+      padding: 0.7rem 0.95rem;
+    }
+
+    .alumni-portal .portal-main :where(.alumni-floating-action) {
+      width: auto !important;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    .alumni-portal .portal-main :where(.fixed.inset-0) {
+      padding: 0.65rem;
+    }
+
+    .alumni-portal .portal-main :where([class*="max-h-[90"], [class*="max-h-[92"]) {
+      max-height: calc(100dvh - 1.25rem) !important;
+    }
+
+    .alumni-portal .portal-main :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+      width: 100%;
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    .alumni-portal .portal-main :where(label.flex) {
+      align-items: flex-start;
+    }
+
+    .alumni-portal .portal-main :where(.line-clamp-4) {
+      -webkit-line-clamp: 3;
+    }
+
+    .alumni-portal .portal-main :where(.line-clamp-3) {
+      -webkit-line-clamp: 2;
+    }
+
+    .alumni-portal .portal-sidebar-item {
+      min-height: 44px;
+      padding: 0.7rem 0.85rem;
+      font-size: 0.82rem;
+    }
+
+    .alumni-portal .portal-logo-frame {
+      height: 4rem;
+      width: 4rem;
+      border-radius: 1rem;
+    }
+
+    .alumni-portal .alumni-mobile-nav {
+      min-height: 60px !important;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .alumni-portal .alumni-mobile-nav button {
+      gap: 0.15rem;
+      padding: 0.45rem 0.2rem;
+    }
+
+    .alumni-portal .alumni-mobile-nav svg {
+      height: 1.15rem;
+      width: 1.15rem;
+    }
+
+    .alumni-portal .alumni-mobile-nav span {
+      font-size: 0.62rem;
+      line-height: 1;
+    }
+  }
+
+  @media (max-width: 380px) {
+    .alumni-portal .portal-header {
+      gap: 0.35rem;
+    }
+
+    .alumni-portal .portal-header-button,
+    .alumni-portal .portal-account-button {
+      min-height: 40px;
+      min-width: 40px;
+      padding: 0.5rem;
+    }
+
+    .alumni-portal .alumni-mobile-nav span {
+      display: none;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .portal-main *,
     .portal-sidebar *,

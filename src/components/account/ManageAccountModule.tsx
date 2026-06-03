@@ -263,7 +263,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
   const sections = [
     { key: "profile" as SectionKey, label: "Profile", icon: User },
-    { key: "security" as SectionKey, label: "Account Settings", icon: Lock },
+    { key: "security" as SectionKey, label: "Security", icon: Lock },
     { key: "notifications" as SectionKey, label: "Notifications", icon: Bell },
     ...(canViewReports ? [{ key: "reports" as SectionKey, label: "Reports", icon: ClipboardList }] : []),
     ...(!isAdminView ? [{ key: "problem" as SectionKey, label: "Report a Problem", icon: MessageSquareWarning }] : []),
@@ -628,9 +628,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           <div className="space-y-3 p-5">
             <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm">
               <p className="font-semibold text-navy-dark">Profile Photo</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Upload or remove your profile image, then save your profile.
-              </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
                   <Camera className="mr-2 h-4 w-4" />
@@ -685,7 +682,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Profile Information</p>
                 <h3 className="font-display text-2xl font-bold text-navy-dark">
                   {isAdminView ? "Administrator Profile" : "Personal Alumni Profile"}
                 </h3>
@@ -769,7 +765,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
             <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
               <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Homepage Slides</p>
                   <h3 className="font-display text-2xl font-bold text-navy-dark">
                     {editingHomepageSlideId ? "Edit Slide" : "Post Media"}
                   </h3>
@@ -977,7 +972,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Account Settings</p>
                 <h3 className="font-display text-2xl font-bold text-navy-dark">Password Management</h3>
               </div>
               <Button type="button" onClick={() => void saveSecurity()} disabled={savingSecurity}>
@@ -1046,7 +1040,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Notification Settings</p>
                 <h3 className="font-display text-2xl font-bold text-navy-dark">Alerts & Preferences</h3>
               </div>
               <Button type="button" onClick={() => void saveNotificationSettings()} disabled={savingNotifications || loadingNotifications}>

@@ -16,7 +16,7 @@ import { AdminPageIntro } from "@/components/admin/AdminPageIntro";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -566,10 +566,9 @@ export default function AdminOfficers() {
   };
 
   return (
-    <AdminLayout title="Officer Management" subtitle="Create, review, edit, and publish officer bundles with a cleaner workflow">
+    <AdminLayout title="Officer Management">
       <div className="space-y-6">
         <AdminPageIntro
-          eyebrow="Officer Archive"
           title="Officer bundles by school year"
           action={
             <div className="flex flex-wrap gap-2">
@@ -591,7 +590,6 @@ export default function AdminOfficers() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <CardTitle className="text-lg text-navy-dark">School Year Archive</CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">Choose a school year to inspect or edit the full officer bundle.</p>
                 </div>
                 <Badge variant="outline">{overview.schoolYears.length}</Badge>
               </div>
@@ -663,7 +661,6 @@ export default function AdminOfficers() {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <CardTitle className="text-lg text-navy-dark">{selectedSummary?.label || "Officer Bundle"}</CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">Search officers, filter by position, and review the published snapshot for this school year.</p>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -759,9 +756,6 @@ export default function AdminOfficers() {
         <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           <DialogHeader className="space-y-2">
             <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{bundleMode === "edit" ? "Edit Officer Bundle" : "Create Officer Bundle"}</DialogTitle>
-            <DialogDescription>
-              Use solid officer cards, complete the required set, and save the bundle to sync the current organization chart.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6">
@@ -846,7 +840,6 @@ export default function AdminOfficers() {
             <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5">
               <div>
                 <h3 className="text-base font-semibold text-navy-dark">Primary officers</h3>
-                <p className="text-sm text-muted-foreground">Select the core officers and adjust the saved snapshot details if needed.</p>
               </div>
               <div className="grid gap-4 xl:grid-cols-2">
                 {PRIMARY_SLOTS.map((slot) => (
@@ -866,7 +859,6 @@ export default function AdminOfficers() {
             <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5">
               <div>
                 <h3 className="text-base font-semibold text-navy-dark">Support officers</h3>
-                <p className="text-sm text-muted-foreground">Add assistant roles when they are part of the organization set for this school year.</p>
               </div>
               <div className="grid gap-4 xl:grid-cols-2">
                 {SUPPORT_SLOTS.map((slot) => (
@@ -887,7 +879,6 @@ export default function AdminOfficers() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <h3 className="text-base font-semibold text-navy-dark">Board members</h3>
-                  <p className="text-sm text-muted-foreground">Add as many board members as needed and set their display titles.</p>
                 </div>
                 <Button type="button" variant="outline" onClick={addBoardMember}>
                   <Plus className="mr-2 h-4 w-4" />

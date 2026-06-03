@@ -179,7 +179,7 @@ export default function AdminEngagement() {
   const comparisonRows = courseComparisons.slice(0, 6);
 
   return (
-    <AdminLayout title="Engagement Metrics" subtitle="Monitor alumni participation and interaction levels">
+    <AdminLayout title="Engagement Metrics">
       <div className="grid grid-cols-1 gap-3 mb-5 sm:grid-cols-2 lg:grid-cols-4">
         {STATS.map((s, i) => (
           <div key={i} className="bg-card rounded-xl border border-border shadow-card p-4 flex flex-col gap-3">
@@ -199,7 +199,6 @@ export default function AdminEngagement() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Engagement Prediction</h3>
-            <p className="text-[11px] text-muted-foreground">Predicted alumni categories from logins, surveys, donations, events, comments, and reactions.</p>
           </div>
           <div className="space-y-3 p-4">
             {predictionCounts.length === 0 ? (
@@ -226,7 +225,6 @@ export default function AdminEngagement() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Engagement Heatmaps</h3>
-            <p className="text-[11px] text-muted-foreground">Darker cells indicate higher alumni activity by day and time block.</p>
           </div>
           <div className="overflow-x-auto p-4">
             <div className="min-w-[520px]">
@@ -260,7 +258,6 @@ export default function AdminEngagement() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Course Comparison</h3>
-            <p className="text-[11px] text-muted-foreground">Engagement, donation, event, survey, and employment rates by program.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -292,7 +289,6 @@ export default function AdminEngagement() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Most Active Alumni</h3>
-            <p className="text-[11px] text-muted-foreground">Ranked by combined activity score and predicted participation likelihood.</p>
           </div>
           <div className="divide-y divide-border">
             {topAlumni.length === 0 ? (

@@ -122,10 +122,9 @@ export default function AdminCommunity() {
   };
 
   return (
-    <AdminLayout title="Freedom Wall" subtitle="Moderate alumni posts with a clearer and more polished review layout">
+    <AdminLayout title="Freedom Wall">
       <div className="space-y-6">
         <AdminPageIntro
-          eyebrow="Community Moderation"
           title="Freedom Wall posts"
         />
 

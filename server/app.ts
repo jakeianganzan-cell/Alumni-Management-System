@@ -843,7 +843,7 @@ const buildRemainingTime = (target: Date | null, now = new Date()) => {
     return `${parts.join(" ")} remaining`;
 };
 
-const computeDurationFields = (row: Record<string, unknown>) => {
+const computeDurationFields = (row: Record<string, unknown>, options?: { ignoreDuration?: boolean }) => {
     const now = new Date();
     const { start, end, archivedAt } = getDurationDatesFromRow(row);
     let computedStatus: DurationComputedStatus = "Active";
@@ -855,6 +855,8 @@ const computeDurationFields = (row: Record<string, unknown>) => {
 
     if (archivedAt || storedStatus === "archived") {
         computedStatus = "Archived";
+    } else if (options?.ignoreDuration) {
+        computedStatus = computedStatus === "Completed" ? "Completed" : "Active";
     } else if (computedStatus !== "Completed" && start && now.getTime() < start.getTime()) {
         computedStatus = "Upcoming";
     } else if (end && now.getTime() > end.getTime()) {
@@ -865,7 +867,9 @@ const computeDurationFields = (row: Record<string, unknown>) => {
     }
 
     const isExpired = computedStatus === "Archived" || computedStatus === "Completed";
-    const remainingTime = computedStatus === "Upcoming"
+    const remainingTime = options?.ignoreDuration
+        ? ""
+        : computedStatus === "Upcoming"
         ? `Starts ${formatDisplayManilaDateTime(start)}`
         : computedStatus === "Archived"
             ? `Archived after ${formatDisplayManilaDateTime(end)}`
@@ -874,13 +878,13 @@ const computeDurationFields = (row: Record<string, unknown>) => {
             : buildRemainingTime(end, now);
 
     return {
-        start_datetime: start ? formatSqlDateTime(start) : null,
-        start_date: start ? formatManilaDate(start) : null,
-        start_time: start ? formatManilaTime(start).slice(0, 5) : null,
-        end_datetime: end ? formatSqlDateTime(end) : null,
-        end_date: end ? formatManilaDate(end) : null,
-        end_time: end ? formatManilaTime(end).slice(0, 5) : null,
-        auto_archive_at: row.auto_archive_at || (end ? formatSqlDateTime(end) : null),
+        start_datetime: options?.ignoreDuration ? null : start ? formatSqlDateTime(start) : null,
+        start_date: options?.ignoreDuration ? null : start ? formatManilaDate(start) : null,
+        start_time: options?.ignoreDuration ? null : start ? formatManilaTime(start).slice(0, 5) : null,
+        end_datetime: options?.ignoreDuration ? null : end ? formatSqlDateTime(end) : null,
+        end_date: options?.ignoreDuration ? null : end ? formatManilaDate(end) : null,
+        end_time: options?.ignoreDuration ? null : end ? formatManilaTime(end).slice(0, 5) : null,
+        auto_archive_at: options?.ignoreDuration ? null : row.auto_archive_at || (end ? formatSqlDateTime(end) : null),
         archived_at: archivedAt ? formatSqlDateTime(archivedAt) : null,
         duration_status: computedStatus,
         computed_status: computedStatus,
@@ -889,9 +893,9 @@ const computeDurationFields = (row: Record<string, unknown>) => {
     };
 };
 
-const withDurationFields = <T extends Record<string, unknown>>(row: T) => ({
+const withDurationFields = <T extends Record<string, unknown>>(row: T, options?: { ignoreDuration?: boolean }) => ({
     ...row,
-    ...computeDurationFields(row)
+    ...computeDurationFields(row, options)
 });
 
 const autoArchiveExpiredContent = async () => {
@@ -907,7 +911,8 @@ const autoArchiveExpiredContent = async () => {
              WHERE end_datetime IS NOT NULL
                AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
                AND archived_at IS NULL
-               AND LOWER(COALESCE(status, '')) <> 'archived'`,
+               AND LOWER(COALESCE(status, '')) <> 'archived'
+               AND LOWER(COALESCE(type, 'announcement')) <> 'announcement'`,
             [nowSql, nowSql]
         );
     }
@@ -6770,11 +6775,12 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
         ));
 
         const mappedAnnouncements = rows.map((row) => {
-            const duration = withDurationFields(row as Record<string, unknown>);
+            const normalizedType = normalizeAnnouncementType(String(row.type || ""));
+            const duration = withDurationFields(row as Record<string, unknown>, { ignoreDuration: normalizedType === "announcement" });
             return {
             ...duration,
             id: String(row.id),
-            type: normalizeAnnouncementType(String(row.type || "")),
+            type: normalizedType,
             image_url: normalizeStoredMedia(row.image_url),
             status: normalizeStatus(row.status, getAnnouncementStatusFallback(String(row.type || ""))),
             approvalStatus: normalizeAnnouncementApprovalStatus((row as QueryRow).approval_status, "approved"),
@@ -6817,12 +6823,14 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
         const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
         const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
+        const usesDurationWindow = normalizedType !== "announcement";
         const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
-        const durationWindow = getDurationWindowFromBody(req.body || {});
+        const durationWindow = usesDurationWindow ? getDurationWindowFromBody(req.body || {}) : getDurationWindowFromBody({});
         const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
-        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
+        const effectiveTime = usesDurationWindow ? time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null) : null;
+        const normalizedStatus = normalizeStatus(status, getAnnouncementStatusFallback(normalizedType));
         const role = await getRoleForUser(req.user.id);
         const canModerate = canModerateAnnouncementContent(role);
         const approvalStatus = canModerate ? "approved" : "pending_approval";
@@ -6874,7 +6882,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             ...(hasGoogleFormLink ? [google_form_link || null] : []),
             organizer || null,
             normalizeStoredMedia(image_url) || null,
-            normalizeStatus(status, getAnnouncementStatusFallback(normalizedType)),
+            normalizedStatus,
             capacity || 0,
             ...(hasApprovalStatus ? [approvalStatus] : []),
             ...(hasCreatedBy ? [req.user.id] : []),
@@ -6903,7 +6911,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             success: true,
             event: newEvent
                 ? {
-                    ...withDurationFields(newEvent),
+                    ...withDurationFields(newEvent, { ignoreDuration: normalizeAnnouncementType(String(newEvent.type || normalizedType)) === "announcement" }),
                     id: String(newEvent.id),
                     type: normalizeAnnouncementType(String(newEvent.type || normalizedType)),
                     image_url: normalizeStoredMedia(newEvent.image_url),
@@ -7035,7 +7043,8 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
         if (!canModerate && approvalStatus === "approved" && String(event.created_by || "") !== req.user.id && !canViewByAudience) {
             return res.status(404).json({ error: "Announcement not found" });
         }
-        const eventDuration = withDurationFields(event);
+        const eventType = normalizeAnnouncementType(String(event.type || ""));
+        const eventDuration = withDurationFields(event, { ignoreDuration: eventType === "announcement" });
         if (!canModerate && eventDuration.computed_status === "Archived" && String(event.created_by || "") !== req.user.id) {
             return res.status(404).json({ error: "Announcement not found" });
         }
@@ -7043,7 +7052,7 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
         res.json({
             ...eventDuration,
             id: String(event.id),
-            type: normalizeAnnouncementType(String(event.type || "")),
+            type: eventType,
             image_url: normalizeStoredMedia(event.image_url),
             status: normalizeStatus(event.status, getAnnouncementStatusFallback(String(event.type || ""))),
             approvalStatus,
@@ -7446,12 +7455,14 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
         const eventId = Number(req.params.id);
         const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
+        const usesDurationWindow = normalizedType !== "announcement";
         const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
-        const durationWindow = getDurationWindowFromBody(req.body || {});
+        const durationWindow = usesDurationWindow ? getDurationWindowFromBody(req.body || {}) : getDurationWindowFromBody({});
         const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
-        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
+        const effectiveTime = usesDurationWindow ? time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null) : null;
+        const normalizedStatus = normalizeStatus(status, getAnnouncementStatusFallback(normalizedType));
 
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
         if (normalizedAudienceScope !== "all" && !normalizedAudienceValue) {
@@ -7465,7 +7476,7 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
             ...(hasStartDatetime ? ["start_datetime = ?"] : []),
             ...(hasEndDatetime ? ["end_datetime = ?"] : []),
             ...(hasAutoArchiveAt ? ["auto_archive_at = ?"] : []),
-            ...(hasArchivedAt && durationWindow.end && durationWindow.end.getTime() > Date.now() ? ["archived_at = NULL"] : [])
+            ...(hasArchivedAt && ((durationWindow.end && durationWindow.end.getTime() > Date.now()) || (normalizedType === "announcement" && normalizedStatus !== "archived")) ? ["archived_at = NULL"] : [])
         ];
         const durationValues: DbParam[] = [
             ...(hasStartDatetime ? [durationWindow.startSql] : []),
@@ -7495,7 +7506,7 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                     google_form_link || null,
                     organizer || null,
                     normalizeStoredMedia(image_url) || null,
-                    normalizeStatus(status, getAnnouncementStatusFallback(normalizedType)),
+                    normalizedStatus,
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
                     ...(hasAudienceValue ? [normalizedAudienceValue] : []),
@@ -7512,7 +7523,7 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                     normalizedType,
                     organizer || null,
                     normalizeStoredMedia(image_url) || null,
-                    normalizeStatus(status, getAnnouncementStatusFallback(normalizedType)),
+                    normalizedStatus,
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
                     ...(hasAudienceValue ? [normalizedAudienceValue] : []),
@@ -7527,7 +7538,7 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
             success: true,
             event: updated
                 ? {
-                    ...withDurationFields(updated),
+                    ...withDurationFields(updated, { ignoreDuration: normalizeAnnouncementType(String(updated.type || normalizedType)) === "announcement" }),
                     type: normalizeAnnouncementType(String(updated.type || normalizedType)),
                     image_url: normalizeStoredMedia(updated.image_url),
                     status: normalizeStatus(updated.status, getAnnouncementStatusFallback(String(updated.type || normalizedType))),
@@ -7640,6 +7651,12 @@ app.patch("/api/announcements/:id/archive", authenticateToken, requireAdmin, asy
         const announcementTable = await getAnnouncementTableName();
         const eventId = Number(req.params.id);
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+
+        const content = await getSingleRow(`SELECT type FROM ${announcementTable} WHERE id = ?`, [eventId]);
+        if (!content) return res.status(404).json({ error: "Announcement not found" });
+        if (normalizeAnnouncementType(String(content.type || "")) === "announcement") {
+            return res.status(400).json({ error: "Announcements do not use archive. Delete the announcement to remove it." });
+        }
 
         await db.execute(
             `UPDATE ${announcementTable}

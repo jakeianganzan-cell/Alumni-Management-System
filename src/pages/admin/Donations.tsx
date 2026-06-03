@@ -399,7 +399,7 @@ export default function AdminDonations() {
   };
 
   return (
-    <AdminLayout title="Donation Monitoring" subtitle="Review donor details, confirm approvals carefully, and keep the review flow consistent">
+    <AdminLayout title="Donation Monitoring">
       <div className="space-y-4">
         <div className="grid gap-3 lg:grid-cols-4">
           <SummaryCard label="Total Approved" value={`PHP ${totalApproved.toLocaleString()}`} toneClassName="bg-navy text-white" icon={<Heart className="h-4 w-4" />} />

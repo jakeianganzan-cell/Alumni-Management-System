@@ -168,15 +168,14 @@ export default function AdminAchievements() {
     <AdminLayout title="Achievements" subtitle="Review, approve, reject, and curate alumni milestones">
       <div className="space-y-6">
         <AdminPageIntro
-          eyebrow="Achievement Review"
           title="Achievement submissions"
         />
 
         <AdminStatsGrid>
-          <AdminStatCard label="Pending" value={counts.pending} description="Waiting for review" icon={<Trophy className="h-4 w-4" />} toneClassName="bg-amber-100 text-amber-700" />
-          <AdminStatCard label="Approved" value={counts.approved} description="Ready to showcase" icon={<CheckCircle2 className="h-4 w-4" />} toneClassName="bg-emerald-100 text-emerald-700" />
-          <AdminStatCard label="Rejected" value={counts.rejected} description="Need correction" icon={<XCircle className="h-4 w-4" />} toneClassName="bg-rose-100 text-rose-700" />
-          <AdminStatCard label="Featured" value={counts.featured} description="Visible on approved records" icon={<Star className="h-4 w-4" />} toneClassName="bg-violet-100 text-violet-700" />
+          <AdminStatCard label="Pending" value={counts.pending} icon={<Trophy className="h-4 w-4" />} toneClassName="bg-amber-100 text-amber-700" />
+          <AdminStatCard label="Approved" value={counts.approved} icon={<CheckCircle2 className="h-4 w-4" />} toneClassName="bg-emerald-100 text-emerald-700" />
+          <AdminStatCard label="Rejected" value={counts.rejected} icon={<XCircle className="h-4 w-4" />} toneClassName="bg-rose-100 text-rose-700" />
+          <AdminStatCard label="Featured" value={counts.featured} icon={<Star className="h-4 w-4" />} toneClassName="bg-violet-100 text-violet-700" />
         </AdminStatsGrid>
 
         <section className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">

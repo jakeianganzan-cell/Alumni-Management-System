@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Reply, Send, UserCircle } from "lucide-react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
-import { AnnouncementAttachment, AnnouncementCard, AnnouncementDetailMeta, formatTypeLabel } from "@/components/AnnouncementCard";
+import { AnnouncementAttachment, AnnouncementCard, formatTypeLabel } from "@/components/AnnouncementCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -413,21 +413,21 @@ export default function AlumniAnnouncements() {
   return (
     <AlumniLayout title="Announcements" subtitle="Browse published updates and submit alumni announcements for admin approval">
       <div className="mx-auto max-w-4xl space-y-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-          <div className="grid gap-2 sm:grid-cols-3">
+        <div className="sticky top-0 z-20 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="flex min-w-0 flex-nowrap gap-1">
             {tabItems.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex min-h-12 items-center justify-between rounded-lg px-4 py-3 text-left text-sm font-semibold transition ${
+                className={`flex min-h-8 min-w-0 flex-1 items-center justify-between gap-1 rounded-lg px-1.5 py-1 text-left text-[10px] font-semibold transition sm:px-2.5 sm:text-[11px] ${
                   activeTab === tab.id
                     ? "bg-navy text-white shadow-sm"
                     : "bg-slate-50 text-navy-dark hover:bg-slate-100"
                 }`}
               >
-                <span>{tab.label}</span>
-                <span className={`rounded-full px-2 py-0.5 text-xs ${activeTab === tab.id ? "bg-white/20 text-white" : "bg-white text-muted-foreground"}`}>
+                <span className="min-w-0 truncate">{tab.label}</span>
+                <span className={`rounded-full px-1 py-0.5 text-[9px] leading-none sm:px-1.5 sm:text-[10px] ${activeTab === tab.id ? "bg-white/20 text-white" : "bg-white text-muted-foreground"}`}>
                   {tab.count}
                 </span>
               </button>
@@ -487,7 +487,7 @@ export default function AlumniAnnouncements() {
       <button
         type="button"
         onClick={() => setFormOpen(true)}
-        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
+        className="alumni-floating-action fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
       >
         <Plus className="h-4 w-4" />
         Announcement
@@ -505,6 +505,14 @@ export default function AlumniAnnouncements() {
                   <span className="text-xs text-muted-foreground">
                     {selectedAnnouncement.date ? new Date(selectedAnnouncement.date).toLocaleDateString() : "Posted recently"}
                   </span>
+                  {selectedAnnouncement.type === "event" && (
+                    <DurationBadge
+                      status={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status}
+                      remainingTime={selectedAnnouncement.remaining_time}
+                      startDatetime={selectedAnnouncement.start_datetime}
+                      endDatetime={selectedAnnouncement.end_datetime}
+                    />
+                  )}
                 </div>
                 <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedAnnouncement.title}</DialogTitle>
                 <DialogDescription>Complete details for the selected post.</DialogDescription>
@@ -512,8 +520,6 @@ export default function AlumniAnnouncements() {
 
               <div className="space-y-4">
                 <AnnouncementAttachment announcement={selectedAnnouncement} />
-
-                <AnnouncementDetailMeta announcement={selectedAnnouncement} />
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">

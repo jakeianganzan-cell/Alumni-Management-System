@@ -686,7 +686,7 @@ export default function AdminAlumni() {
   };
 
   return (
-    <AdminLayout title="Alumni Management" subtitle="Manage and monitor all registered alumni accounts">
+    <AdminLayout title="Alumni Management">
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Total Alumni", value: alumni.length },

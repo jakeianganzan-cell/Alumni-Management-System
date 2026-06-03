@@ -56,7 +56,7 @@ export default function AlumniLayout({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
   const visibleNavItems = isMobile ? NAV_ITEMS.filter((item) => item.path !== "/alumni/about") : NAV_ITEMS;
-  const mobileHeaderTitle = title === "Salay Community College" ? "" : title;
+  const mobileHeaderTitle = title;
 
   const handleLogout = () => {
     signOut();
@@ -117,7 +117,7 @@ export default function AlumniLayout({
   );
 
   return (
-    <div className="portal-shell flex h-screen overflow-hidden">
+    <div className="portal-shell alumni-portal flex h-screen overflow-hidden">
       {!isMobile && <div className="hidden w-64 flex-shrink-0 flex-col shadow-xl lg:flex"><Sidebar /></div>}
 
       {sidebarOpen && (
@@ -135,14 +135,16 @@ export default function AlumniLayout({
           style={{ color: "white" }}
         >
           {isMobile ? (
-            <button
-              type="button"
-              onClick={() => navigate("/alumni")}
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm"
-              aria-label="Go to alumni dashboard"
-            >
-              <img src={ustpLogo} alt="SaCC" className="h-8 w-8 object-contain" />
-            </button>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/alumni")}
+                className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm"
+                aria-label="Go to alumni dashboard"
+              >
+                <img src={ustpLogo} alt="SaCC" className="h-8 w-8 object-contain" />
+              </button>
+            </div>
           ) : (
             <button onClick={() => setSidebarOpen(true)} className="portal-header-button lg:hidden">
               <Menu className="h-6 w-6" />
@@ -244,7 +246,7 @@ export default function AlumniLayout({
 
         {isMobile && (
           <nav
-            className="fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
+            className="alumni-mobile-nav fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
             style={{ borderColor: "hsl(220,20%,88%)", minHeight: "64px" }}
           >
             {NAV_ITEMS.slice(0, 5).map((tab) => {

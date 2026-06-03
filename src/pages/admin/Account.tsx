@@ -3,7 +3,7 @@ import ManageAccountModule from "@/components/account/ManageAccountModule";
 
 export default function AdminAccount() {
   return (
-    <AdminLayout title="Manage Account" subtitle="Profile, password, and notification preferences">
+    <AdminLayout title="Manage Account">
       <ManageAccountModule mode="admin" />
     </AdminLayout>
   );

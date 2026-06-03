@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Calendar, Bell, Clock3, MapPin, MessageCircle, Send, CheckCircle, UserCheck, XCircle } from "lucide-react";
+import { Calendar, Bell, ChevronRight, MessageCircle, Send, CheckCircle, UserCheck, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import salayBackground from "@/assets/salay-background.png";
@@ -449,38 +449,6 @@ export default function AlumniDashboard() {
     <AlumniLayout title="Salay Community College" subtitle="SaCC Alumni Association">
       <HomepageSlideshow slides={slideshow} className="mb-8" />
 
-      <section className="mb-6 overflow-hidden rounded-xl border border-border bg-card shadow-card">
-        <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
-          <div>
-            <h3 className="text-sm font-bold text-navy-dark">Donation Activity</h3>
-            <p className="text-[11px] text-muted-foreground">Recent alumni donors.</p>
-          </div>
-          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">
-            {donationActivity.length}
-          </span>
-        </div>
-        <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
-          {donationActivity.length > 0 ? (
-            donationActivity.map((donation) => (
-              <div key={donation.id} className="flex items-start justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-navy-dark">{donation.donorName}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donation.purpose || donation.message || "General donation"}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{formatActivityDate(donation.created_at)}</p>
-                </div>
-                <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
-                  {formatDonationAmount(donation.amount)}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="px-4 py-5 text-center text-sm text-muted-foreground md:col-span-2">
-              No recent donor activity yet.
-            </div>
-          )}
-        </div>
-      </section>
-
       <div
         className="hidden"
         style={{
@@ -556,9 +524,9 @@ export default function AlumniDashboard() {
         </div>
       </div>
 
-      <div className="space-y-6">
+      <div className="featured-dashboard-sections space-y-4 md:space-y-6">
         <DashboardContentSection
-          title="All Announcements"
+          title="Featured Announcements"
           description="Official notices and alumni updates."
           count={allAnnouncements.length}
           emptyText="No announcements are available."
@@ -569,7 +537,7 @@ export default function AlumniDashboard() {
         </DashboardContentSection>
 
         <DashboardContentSection
-          title="All Events"
+          title="Featured Events"
           description="Events remain visible after completion until they move to archive."
           count={allEvents.length}
           emptyText="No events are available."
@@ -580,7 +548,7 @@ export default function AlumniDashboard() {
         </DashboardContentSection>
 
         <DashboardContentSection
-          title="All Surveys"
+          title="Featured Surveys"
           description="Answer platform surveys directly inside the system."
           count={answerableSurveys.length}
           emptyText="No surveys are available."
@@ -611,6 +579,8 @@ export default function AlumniDashboard() {
 
       </div>
 
+      <DonationActivitySection donations={donationActivity} />
+
       <div className="mb-4 hidden items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-display font-bold text-navy-dark">Announcements, Events & Surveys</h3>
@@ -630,6 +600,7 @@ export default function AlumniDashboard() {
           {announcements.map((announcement) => {
             const isSurvey = announcement.type === "survey";
             const isEvent = announcement.type === "event";
+            const usesDuration = isSurvey || isEvent;
             const imageUrl = resolveAssetUrl(announcement.image_url);
 
             return (
@@ -647,7 +618,9 @@ export default function AlumniDashboard() {
                     <Badge className={isSurvey ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : isEvent ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"}>
                       {isSurvey ? "Survey" : isEvent ? "Event" : "Announcement"}
                     </Badge>
-                    <DurationBadge status={announcement.computed_status || announcement.duration_status} remainingTime={announcement.remaining_time} startDatetime={announcement.start_datetime} endDatetime={announcement.end_datetime} />
+                    {usesDuration && (
+                      <DurationBadge status={announcement.computed_status || announcement.duration_status} remainingTime={announcement.remaining_time} startDatetime={announcement.start_datetime} endDatetime={announcement.end_datetime} />
+                    )}
                     <span className="text-[11px] text-muted-foreground">
                       {announcement.date ? new Date(announcement.date).toLocaleDateString() : "Posted recently"}
                     </span>
@@ -677,6 +650,14 @@ export default function AlumniDashboard() {
                   <span className="text-xs text-muted-foreground">
                     {selectedAnnouncement.date ? new Date(selectedAnnouncement.date).toLocaleDateString() : "Posted recently"}
                   </span>
+                  {selectedAnnouncement.type === "event" && (
+                    <DurationBadge
+                      status={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status}
+                      remainingTime={selectedAnnouncement.remaining_time}
+                      startDatetime={selectedAnnouncement.start_datetime}
+                      endDatetime={selectedAnnouncement.end_datetime}
+                    />
+                  )}
                 </div>
                 <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedAnnouncement.title}</DialogTitle>
                 <DialogDescription>Complete details for the selected post.</DialogDescription>
@@ -692,54 +673,6 @@ export default function AlumniDashboard() {
                     />
                   </div>
                 )}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {selectedAnnouncement.date && (
-                    <DetailCard
-                      label="Date"
-                      value={
-                        <span className="inline-flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          {new Date(selectedAnnouncement.date).toLocaleDateString()}
-                        </span>
-                      }
-                    />
-                  )}
-                  {selectedAnnouncement.time && (
-                    <DetailCard
-                      label="Time"
-                      value={
-                        <span className="inline-flex items-center gap-2">
-                          <Clock3 className="h-4 w-4" />
-                          {selectedAnnouncement.time}
-                        </span>
-                      }
-                    />
-                  )}
-                  {selectedAnnouncement.venue && (
-                    <DetailCard
-                      label="Venue"
-                      value={
-                        <span className="inline-flex items-center gap-2">
-                          <MapPin className="h-4 w-4" />
-                          {selectedAnnouncement.venue}
-                        </span>
-                      }
-                    />
-                  )}
-                  {selectedAnnouncement.status && <DetailCard label="Status" value={selectedAnnouncement.status} />}
-                  <DetailCard
-                    label="Duration"
-                    value={
-                      <DurationBadge
-                        status={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status}
-                        remainingTime={selectedAnnouncement.remaining_time}
-                        startDatetime={selectedAnnouncement.start_datetime}
-                        endDatetime={selectedAnnouncement.end_datetime}
-                      />
-                    }
-                  />
-                </div>
 
                 <div className="rounded-2xl border border-border/70 bg-muted/15 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Complete details</p>
@@ -838,15 +771,6 @@ export default function AlumniDashboard() {
   );
 }
 
-function DetailCard({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-border/70 bg-card p-4">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <div className="mt-2 text-sm font-medium text-foreground">{value}</div>
-    </div>
-  );
-}
-
 function DashboardContentSection({
   title,
   description,
@@ -860,8 +784,59 @@ function DashboardContentSection({
   emptyText: string;
   children: React.ReactNode;
 }) {
+  const swipeRowRef = useRef<HTMLDivElement | null>(null);
+  const swipeState = useRef({
+    active: false,
+    dragged: false,
+    startX: 0,
+    scrollLeft: 0,
+  });
+
+  const startSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const row = swipeRowRef.current;
+    if (!row || row.scrollWidth <= row.clientWidth) return;
+
+    swipeState.current = {
+      active: true,
+      dragged: false,
+      startX: event.clientX,
+      scrollLeft: row.scrollLeft,
+    };
+    row.classList.add("is-dragging");
+    row.setPointerCapture(event.pointerId);
+  };
+
+  const moveSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const row = swipeRowRef.current;
+    const state = swipeState.current;
+    if (!row || !state.active) return;
+
+    const deltaX = event.clientX - state.startX;
+    if (Math.abs(deltaX) > 4) {
+      state.dragged = true;
+      row.scrollLeft = state.scrollLeft - deltaX;
+      event.preventDefault();
+    }
+  };
+
+  const endSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const row = swipeRowRef.current;
+    if (row?.hasPointerCapture(event.pointerId)) {
+      row.releasePointerCapture(event.pointerId);
+    }
+    row?.classList.remove("is-dragging");
+    swipeState.current.active = false;
+  };
+
+  const stopDraggedClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!swipeState.current.dragged) return;
+    event.preventDefault();
+    event.stopPropagation();
+    swipeState.current.dragged = false;
+  };
+
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="featured-dashboard-section relative flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 p-3.5 shadow-sm md:min-h-0 md:rounded-xl md:p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-semibold text-navy-dark">{title}</h3>
@@ -870,10 +845,62 @@ function DashboardContentSection({
         <Badge variant="outline">{count}</Badge>
       </div>
       {count === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">{emptyText}</div>
+        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground md:flex-none">{emptyText}</div>
       ) : (
-        <div className="space-y-3">{children}</div>
+        <div
+          ref={swipeRowRef}
+          className="dashboard-swipe-row flex flex-1 snap-x snap-mandatory touch-pan-x items-stretch gap-3 overflow-x-auto pb-1 pr-7 [&>*]:min-h-[12rem] [&>*]:w-[calc(100vw-4.5rem)] [&>*]:shrink-0 [&>*]:snap-start sm:[&>*]:w-[min(24rem,72vw)] md:flex-none md:pr-1 md:[&>*]:min-h-0 md:[&>*]:w-[min(22rem,45vw)] lg:[&>*]:w-[min(24rem,31vw)]"
+          onPointerDown={startSwipe}
+          onPointerMove={moveSwipe}
+          onPointerUp={endSwipe}
+          onPointerCancel={endSwipe}
+          onClickCapture={stopDraggedClick}
+        >
+          {children}
+        </div>
       )}
+      {count > 1 && (
+        <div className="pointer-events-none absolute bottom-5 right-3 flex items-center gap-1 rounded-full border border-white/80 bg-white/90 px-2 py-1 text-[10px] font-semibold text-navy shadow-sm md:hidden">
+          <span>Swipe</span>
+          <ChevronRight className="h-3.5 w-3.5" />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DonationActivitySection({ donations }: { donations: DonationActivity[] }) {
+  return (
+    <section className="mt-6 overflow-hidden rounded-xl border border-border bg-card shadow-card">
+      <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
+        <div>
+          <h3 className="text-sm font-bold text-navy-dark">Donation Activity</h3>
+          <p className="text-[11px] text-muted-foreground">Recent alumni donors.</p>
+        </div>
+        <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">
+          {donations.length}
+        </span>
+      </div>
+      <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+        {donations.length > 0 ? (
+          donations.map((donation) => (
+            <div key={donation.id} className="flex items-start justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-navy-dark">{donation.donorName}</p>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donation.purpose || donation.message || "General donation"}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{formatActivityDate(donation.created_at)}</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
+                {formatDonationAmount(donation.amount)}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="px-4 py-5 text-center text-sm text-muted-foreground md:col-span-2">
+            No recent donor activity yet.
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -882,6 +909,7 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
   const imageUrl = resolveAssetUrl(item.image_url);
   const isEvent = item.type === "event";
   const isSurvey = item.type === "survey";
+  const usesDuration = isEvent || isSurvey;
   const hasImage = Boolean(imageUrl);
 
   return (
@@ -911,7 +939,9 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
             <Badge className={isSurvey ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : isEvent ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"}>
               {isSurvey ? "Survey" : isEvent ? "Event" : "Announcement"}
             </Badge>
-            <DurationBadge status={item.computed_status || item.duration_status} remainingTime={item.remaining_time} startDatetime={item.start_datetime} endDatetime={item.end_datetime} />
+            {usesDuration && (
+              <DurationBadge status={item.computed_status || item.duration_status} remainingTime={item.remaining_time} startDatetime={item.start_datetime} endDatetime={item.end_datetime} />
+            )}
           </div>
           <h4 className={hasImage ? "line-clamp-2 text-base font-semibold text-white drop-shadow-sm sm:text-sm sm:text-navy-dark sm:drop-shadow-none" : "line-clamp-2 text-sm font-semibold text-navy-dark"}>{item.title}</h4>
           <p className={hasImage ? "mt-2 line-clamp-3 text-xs leading-5 text-white/90 drop-shadow-sm sm:mt-1 sm:line-clamp-2 sm:text-muted-foreground sm:drop-shadow-none" : "mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground"}>{item.description || "No description provided."}</p>

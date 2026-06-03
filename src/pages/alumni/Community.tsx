@@ -442,7 +442,7 @@ export default function Community() {
       <button
         type="button"
         onClick={() => setPostDialogOpen(true)}
-        className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
+        className="alumni-floating-action fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-full bg-navy px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_36px_rgba(85,0,0,0.28)] transition hover:opacity-95 md:bottom-6 md:right-6"
       >
         <Plus className="h-4 w-4" />
         Post

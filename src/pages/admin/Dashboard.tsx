@@ -239,7 +239,6 @@ export default function AdminDashboard() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Engagement Per Month</h3>
-            <p className="text-[11px] text-muted-foreground">Live alumni activity from logins, comments, events, surveys, announcements, and Freedom Wall.</p>
           </div>
 
           <div className="p-4">
@@ -285,7 +284,6 @@ export default function AdminDashboard() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Contribution by Course</h3>
-            <p className="text-[11px] text-muted-foreground">Score combines donations, event participation, surveys, achievements, comments, and Freedom Wall activity.</p>
           </div>
 
           <div className="p-4">
@@ -330,7 +328,6 @@ export default function AdminDashboard() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Recent Donors</h3>
-            <p className="text-[11px] text-muted-foreground">Latest approved donation activity.</p>
           </div>
           <div className="divide-y divide-border">
             {recentDonors.length > 0 ? (
@@ -357,7 +354,6 @@ export default function AdminDashboard() {
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Donation Trends</h3>
-            <p className="text-[11px] text-muted-foreground">Approved donation growth over the last 12 months. Total: {formatCurrency(topDonationTrend)}</p>
           </div>
           <div className="p-4">
             {donationTrends.some((item) => item.donatedAmount > 0) ? (

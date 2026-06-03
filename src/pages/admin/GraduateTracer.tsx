@@ -273,7 +273,6 @@ export default function AdminGraduateTracer() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-semibold text-navy-dark">Tracer Analytics Snapshot</p>
-            <p className="text-xs text-muted-foreground">Live counts from completed tracer submissions</p>
           </div>
           <button
             onClick={() => void fetchAnalytics()}
@@ -328,7 +327,6 @@ export default function AdminGraduateTracer() {
 
       <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
         <p className="text-sm font-semibold text-navy-dark">Report Exports</p>
-        <p className="mt-1 text-xs text-muted-foreground">Download tracer analytics for defense presentations, institutional review, and CHED-ready reporting.</p>
         <div className="mt-4 grid gap-2">
           <button
             onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
@@ -352,10 +350,7 @@ export default function AdminGraduateTracer() {
   );
 
   return (
-    <AdminLayout
-      title="Graduate Tracer Management"
-      subtitle="Review alumni tracer submissions, preview accomplished CHED copies, download finished forms, and export tracer analytics."
-    >
+    <AdminLayout title="Graduate Tracer Management">
       <div className="grid gap-3 lg:grid-cols-4">
         {[
           { label: "Total Alumni", value: analytics?.totals.totalAlumni, sub: "Eligible alumni accounts" },

@@ -337,7 +337,6 @@ export default function ReportExportsPanel() {
     <div className="space-y-6">
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
       <div className="border-b border-border pb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Data Exports</p>
         <h3 className="font-display text-2xl font-bold text-navy-dark">Export Center</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           Download the main system data files from your account area.
@@ -390,7 +389,6 @@ export default function ReportExportsPanel() {
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">Alumni Concerns / Messages</p>
             <h3 className="font-display text-2xl font-bold text-navy-dark">Concern Inbox</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               Review alumni concerns, send admin replies, and update their handling status.

@@ -410,6 +410,10 @@ export default function AdminAnnouncements() {
       status: getDefaultStatus(value),
       venue: value === "event" ? current.venue : "",
       time: value === "announcement" ? "" : current.time,
+      start_date: value === "announcement" ? current.date || current.start_date : current.start_date,
+      start_time: value === "announcement" ? "" : current.start_time,
+      end_date: value === "announcement" ? "" : current.end_date,
+      end_time: value === "announcement" ? "" : current.end_time,
       google_form_link: value === "survey" ? current.google_form_link : "",
       interestEnabled: value === "event" ? true : current.interestEnabled,
     }));
@@ -483,9 +487,6 @@ export default function AdminAnnouncements() {
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    {activeWorkspace === "event" ? "Event Workspace" : "Announcement Workspace"}
-                  </p>
                   <h2 className="mt-1 text-xl font-semibold text-navy-dark">
                     {activeWorkspace === "event" ? "All events" : "All announcements"}
                   </h2>
@@ -578,16 +579,20 @@ export default function AdminAnnouncements() {
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <Badge className={getTypeBadgeClassName(announcement.type)}>{formatTypeLabel(announcement.type)}</Badge>
                             <Badge className={getApprovalBadgeClassName(announcement.approvalStatus || "approved")}>{formatApprovalLabel(announcement.approvalStatus || "approved")}</Badge>
-                            <DurationBadge status={announcement.computed_status || announcement.duration_status} remainingTime={announcement.remaining_time} startDatetime={announcement.start_datetime} endDatetime={announcement.end_datetime} />
+                            {contentUsesDuration(announcement.type) && (
+                              <DurationBadge status={announcement.computed_status || announcement.duration_status} remainingTime={announcement.remaining_time} startDatetime={announcement.start_datetime} endDatetime={announcement.end_datetime} />
+                            )}
                           </div>
                           <h3 className="line-clamp-2 text-sm font-semibold text-navy-dark">{announcement.title}</h3>
                           <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{announcement.description || "No description provided yet."}</p>
                           <p className="mt-2 text-xs font-semibold text-muted-foreground">
                             {getContentStats(announcement)} | {announcement.audienceLabel || "All alumni"}
                           </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Starts {formatDateTime(announcement.start_datetime)} | Ends {formatDateTime(announcement.end_datetime)}
-                          </p>
+                          {contentUsesDuration(announcement.type) && (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Starts {formatDateTime(announcement.start_datetime)} | Ends {formatDateTime(announcement.end_datetime)}
+                            </p>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-2 md:justify-end">
                           <Button type="button" size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); openDetail(announcement); }}>
@@ -656,12 +661,16 @@ export default function AdminAnnouncements() {
                     <MetaCard label="Submitted By" value={selectedAnnouncement.createdByName || "System Admin"} />
                     <MetaCard label="Date" value={selectedAnnouncement.date ? new Date(selectedAnnouncement.date).toLocaleDateString() : "Not set"} />
                     <MetaCard label="Status" value={selectedAnnouncement.status.replace(/\b\w/g, (char) => char.toUpperCase())} />
-                    <MetaCard label="Duration Status" value={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status || "Active"} />
-                    <MetaCard label="Time Remaining" value={selectedAnnouncement.remaining_time || "Not set"} />
-                    <MetaCard label="Starts" value={selectedAnnouncement.start_datetime ? new Date(String(selectedAnnouncement.start_datetime).replace(" ", "T")).toLocaleString() : "Not set"} />
-                    <MetaCard label="Ends" value={selectedAnnouncement.end_datetime ? new Date(String(selectedAnnouncement.end_datetime).replace(" ", "T")).toLocaleString() : "Not set"} />
+                    {contentUsesDuration(selectedAnnouncement.type) && (
+                      <>
+                        <MetaCard label="Duration Status" value={selectedAnnouncement.computed_status || selectedAnnouncement.duration_status || "Active"} />
+                        <MetaCard label="Time Remaining" value={selectedAnnouncement.remaining_time || "Not set"} />
+                        <MetaCard label="Starts" value={selectedAnnouncement.start_datetime ? new Date(String(selectedAnnouncement.start_datetime).replace(" ", "T")).toLocaleString() : "Not set"} />
+                        <MetaCard label="Ends" value={selectedAnnouncement.end_datetime ? new Date(String(selectedAnnouncement.end_datetime).replace(" ", "T")).toLocaleString() : "Not set"} />
+                      </>
+                    )}
                     <MetaCard label="Audience" value={selectedAnnouncement.audienceLabel || "All alumni"} />
-                    <MetaCard label="Time" value={selectedAnnouncement.time || "Not set"} />
+                    {contentUsesDuration(selectedAnnouncement.type) && <MetaCard label="Time" value={selectedAnnouncement.time || "Not set"} />}
                     <MetaCard label="Venue" value={selectedAnnouncement.venue || "Not set"} />
                     <MetaCard label={selectedAnnouncement.type === "event" ? "Event Type" : selectedAnnouncement.type === "survey" ? "Survey Owner" : "Organizer"} value={selectedAnnouncement.organizer || "Not set"} />
                   </div>
@@ -870,10 +879,10 @@ export default function AdminAnnouncements() {
                       </>
                     )}
                     <Button type="button" variant="outline" onClick={() => openEdit(selectedAnnouncement)}>
-                      {(selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) === "Archived" ? <RotateCcw className="mr-2 h-4 w-4" /> : <Pencil className="mr-2 h-4 w-4" />}
-                      {(selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) === "Archived" ? "Reopen with new end time" : "Edit"}
+                      {contentUsesDuration(selectedAnnouncement.type) && (selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) === "Archived" ? <RotateCcw className="mr-2 h-4 w-4" /> : <Pencil className="mr-2 h-4 w-4" />}
+                      {contentUsesDuration(selectedAnnouncement.type) && (selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) === "Archived" ? "Reopen with new end time" : "Edit"}
                     </Button>
-                    {(selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) !== "Archived" && (
+                    {contentUsesDuration(selectedAnnouncement.type) && (selectedAnnouncement.computed_status || selectedAnnouncement.duration_status) !== "Archived" && (
                       <Button type="button" variant="outline" className="border-zinc-200 text-zinc-700 hover:bg-zinc-50" onClick={() => archiveMutation.mutate(selectedAnnouncement.id)}>
                         <Archive className="mr-2 h-4 w-4" />
                         Archive
@@ -933,20 +942,28 @@ export default function AdminAnnouncements() {
                 <Textarea value={formData.description} onChange={(event) => setFormData((current) => ({ ...current, description: event.target.value }))} rows={6} className="border-slate-300 bg-white" />
               </Field>
 
-              <div className="grid gap-4 md:grid-cols-4">
-                <Field label="Start date">
-                  <Input type="date" value={formData.start_date} onChange={(event) => setFormData((current) => ({ ...current, start_date: event.target.value, date: event.target.value }))} required className="border-slate-300 bg-white" />
-                </Field>
-                <Field label="Start time">
-                  <Input type="time" value={formData.start_time} onChange={(event) => setFormData((current) => ({ ...current, start_time: event.target.value, time: event.target.value }))} required className="border-slate-300 bg-white" />
-                </Field>
-                <Field label="End date">
-                  <Input type="date" value={formData.end_date} onChange={(event) => setFormData((current) => ({ ...current, end_date: event.target.value }))} required className="border-slate-300 bg-white" />
-                </Field>
-                <Field label="End time">
-                  <Input type="time" value={formData.end_time} onChange={(event) => setFormData((current) => ({ ...current, end_time: event.target.value }))} required className="border-slate-300 bg-white" />
-                </Field>
-              </div>
+              {contentUsesDuration(formData.type) ? (
+                <div className="grid gap-4 md:grid-cols-4">
+                  <Field label="Start date">
+                    <Input type="date" value={formData.start_date} onChange={(event) => setFormData((current) => ({ ...current, start_date: event.target.value, date: event.target.value }))} required className="border-slate-300 bg-white" />
+                  </Field>
+                  <Field label="Start time">
+                    <Input type="time" value={formData.start_time} onChange={(event) => setFormData((current) => ({ ...current, start_time: event.target.value, time: event.target.value }))} required className="border-slate-300 bg-white" />
+                  </Field>
+                  <Field label="End date">
+                    <Input type="date" value={formData.end_date} onChange={(event) => setFormData((current) => ({ ...current, end_date: event.target.value }))} required className="border-slate-300 bg-white" />
+                  </Field>
+                  <Field label="End time">
+                    <Input type="time" value={formData.end_time} onChange={(event) => setFormData((current) => ({ ...current, end_time: event.target.value }))} required className="border-slate-300 bg-white" />
+                  </Field>
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Publication date">
+                    <Input type="date" value={formData.date || formData.start_date} onChange={(event) => setFormData((current) => ({ ...current, date: event.target.value, start_date: event.target.value }))} required className="border-slate-300 bg-white" />
+                  </Field>
+                </div>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 {formData.type === "event" ? (
@@ -1199,6 +1216,12 @@ function normalizeFormPayload(formData: AnnouncementForm): AnnouncementForm {
   if (formData.type === "announcement") {
     return {
       ...base,
+      date: formData.date || formData.start_date,
+      time: "",
+      start_date: "",
+      start_time: "",
+      end_date: "",
+      end_time: "",
       venue: "",
       google_form_link: "",
       audienceValue: formData.audienceScope === "all" ? "" : formData.audienceValue.trim(),
@@ -1227,6 +1250,10 @@ function formatTypeLabel(type: AnnouncementType) {
   if (type === "event") return "Event";
   if (type === "survey") return "Survey";
   return "Announcement";
+}
+
+function contentUsesDuration(type: AnnouncementType) {
+  return type === "event" || type === "survey";
 }
 
 function formatApprovalLabel(status: AnnouncementApprovalStatus) {

@@ -16,6 +16,7 @@ export function AnnouncementCard({
 }) {
   const imageUrl = resolveAssetUrl(announcement.image_url);
   const hasImage = Boolean(imageUrl);
+  const usesDuration = announcement.type === "event" || announcement.type === "survey";
 
   return (
     <article
@@ -65,12 +66,14 @@ export function AnnouncementCard({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge className={getTypeBadgeClassName(announcement.type)}>{formatTypeLabel(announcement.type)}</Badge>
-            <DurationBadge
-              status={announcement.computed_status || announcement.duration_status}
-              remainingTime={announcement.remaining_time}
-              startDatetime={announcement.start_datetime}
-              endDatetime={announcement.end_datetime}
-            />
+            {usesDuration && (
+              <DurationBadge
+                status={announcement.computed_status || announcement.duration_status}
+                remainingTime={announcement.remaining_time}
+                startDatetime={announcement.start_datetime}
+                endDatetime={announcement.end_datetime}
+              />
+            )}
             <span className={cn("text-xs", hasImage ? "text-white/85 md:text-muted-foreground" : "text-muted-foreground")}>
               {formatPostedDate(announcement.created_at || announcement.date)}
             </span>
@@ -83,7 +86,7 @@ export function AnnouncementCard({
 
           <div className={cn("mt-3 flex flex-wrap gap-1.5 text-[11px] md:mt-2.5", hasImage ? "text-white/90 md:text-muted-foreground" : "text-muted-foreground")}>
             <MetaChip overlay={hasImage} icon={<CalendarDays className="h-3.5 w-3.5" />} label={formatDisplayDate(announcement.date)} />
-            {announcement.time && <MetaChip overlay={hasImage} icon={<Clock3 className="h-3.5 w-3.5" />} label={announcement.time} />}
+            {usesDuration && announcement.time && <MetaChip overlay={hasImage} icon={<Clock3 className="h-3.5 w-3.5" />} label={announcement.time} />}
             {announcement.venue && <MetaChip overlay={hasImage} icon={<MapPin className="h-3.5 w-3.5" />} label={announcement.venue} />}
             {announcement.audienceLabel && <MetaChip overlay={hasImage} icon={<FileText className="h-3.5 w-3.5" />} label={announcement.audienceLabel} />}
           </div>
@@ -135,27 +138,31 @@ export function AnnouncementAttachment({ announcement }: { announcement: Announc
 }
 
 export function AnnouncementDetailMeta({ announcement }: { announcement: Announcement }) {
+  const usesDuration = announcement.type === "event" || announcement.type === "survey";
+
   return (
     <div className="grid gap-2.5 sm:grid-cols-2">
       <DetailItem label="Type" value={formatTypeLabel(announcement.type)} />
       <DetailItem label="Date posted" value={formatPostedDate(announcement.created_at || announcement.date)} />
       <DetailItem label={announcement.type === "survey" ? "Survey date" : announcement.type === "event" ? "Event date" : "Publication date"} value={formatDisplayDate(announcement.date)} />
       <DetailItem label="Status" value={formatStatusLabel(announcement.status)} />
-      <DetailItem
-        label="Duration"
-        value={
-          <DurationBadge
-            status={announcement.computed_status || announcement.duration_status}
-            remainingTime={announcement.remaining_time}
-            startDatetime={announcement.start_datetime}
-            endDatetime={announcement.end_datetime}
-          />
-        }
-      />
-      {announcement.start_datetime && <DetailItem label="Starts" value={formatDateTime(announcement.start_datetime)} />}
-      {announcement.end_datetime && <DetailItem label="Ends" value={formatDateTime(announcement.end_datetime)} />}
+      {usesDuration && (
+        <DetailItem
+          label="Duration"
+          value={
+            <DurationBadge
+              status={announcement.computed_status || announcement.duration_status}
+              remainingTime={announcement.remaining_time}
+              startDatetime={announcement.start_datetime}
+              endDatetime={announcement.end_datetime}
+            />
+          }
+        />
+      )}
+      {usesDuration && announcement.start_datetime && <DetailItem label="Starts" value={formatDateTime(announcement.start_datetime)} />}
+      {usesDuration && announcement.end_datetime && <DetailItem label="Ends" value={formatDateTime(announcement.end_datetime)} />}
       {announcement.audienceLabel && <DetailItem label="Audience" value={announcement.audienceLabel} />}
-      {announcement.time && <DetailItem label={announcement.type === "survey" ? "Deadline time" : "Time"} value={announcement.time} />}
+      {usesDuration && announcement.time && <DetailItem label={announcement.type === "survey" ? "Deadline time" : "Time"} value={announcement.time} />}
       {announcement.venue && <DetailItem label="Venue" value={announcement.venue} />}
       {announcement.organizer && <DetailItem label="Organizer" value={announcement.organizer} />}
       {announcement.image_url && (
