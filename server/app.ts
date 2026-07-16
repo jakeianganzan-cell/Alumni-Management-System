@@ -591,6 +591,30 @@ const columnExists = async (tableName: string, columnName: string) => {
     }
 };
 
+const ensureAlumniProfileColumns = async () => {
+    const columns = [
+        { table: "profiles", name: "bor_number", sql: "ALTER TABLE profiles ADD COLUMN bor_number VARCHAR(100) NULL" },
+        { table: "profiles", name: "bor_date", sql: "ALTER TABLE profiles ADD COLUMN bor_date DATE NULL" },
+        { table: "profiles", name: "graduation_batch", sql: "ALTER TABLE profiles ADD COLUMN graduation_batch VARCHAR(100) NULL" },
+        { table: "profiles", name: "academic_year", sql: "ALTER TABLE profiles ADD COLUMN academic_year VARCHAR(30) NULL" },
+        { table: "profiles", name: "graduation_semester", sql: "ALTER TABLE profiles ADD COLUMN graduation_semester VARCHAR(50) NULL" },
+        { table: "imported_alumni_records", name: "bor_number", sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_number VARCHAR(100) NULL" },
+        { table: "imported_alumni_records", name: "bor_date", sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_date DATE NULL" },
+        { table: "imported_alumni_records", name: "graduation_batch", sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_batch VARCHAR(100) NULL" },
+        { table: "imported_alumni_records", name: "academic_year", sql: "ALTER TABLE imported_alumni_records ADD COLUMN academic_year VARCHAR(30) NULL" },
+        { table: "imported_alumni_records", name: "graduation_semester", sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_semester VARCHAR(50) NULL" },
+        { table: "imported_alumni_records", name: "email_status", sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending'" },
+        { table: "imported_alumni_records", name: "email_error", sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_error TEXT NULL" }
+    ];
+
+    for (const column of columns) {
+        if (!(await tableExists(column.table)) || await columnExists(column.table, column.name)) {
+            continue;
+        }
+
+        await db.execute(column.sql);
+    }
+};
 const getAnnouncementTableName = async () => {
     try {
         if (await tableExists("announcements")) {
@@ -2961,8 +2985,8 @@ const normalizeConcernStatus = (value: unknown) => {
 
 const normalizeConcernDetails = (value: unknown) => String(value || "").trim();
 
-const validateSupportedCourse = (value: unknown) => {
-    const normalizedCourse = normalizeSupportedCourse(value);
+const validateSupportedCourse = (value: unknown, programOptions: CourseOption[] = COURSE_OPTIONS) => {
+    const normalizedCourse = normalizeSupportedCourse(value, programOptions);
 
     if (!normalizedCourse) {
         return {
@@ -3029,11 +3053,11 @@ const getEmailValidationMessage = (emailAddress: string) => {
     return "";
 };
 
-const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
+const validateImportRow = (row: AlumniImportInputRow, rowNumber: number, programOptions: CourseOption[] = COURSE_OPTIONS) => {
     const fullName = normalizeText(row.fullName || row.name);
     const graduationYear = normalizeBatch(row.graduationYear || row.year);
     const emailAddress = normalizeEmail(row.emailAddress || row.email);
-    const courseValidation = validateSupportedCourse(row.program || row.course, programs);
+    const courseValidation = validateSupportedCourse(row.program || row.course, programOptions);
     const contactNumber = normalizePhone(row.contactNumber);
     const borNumber = normalizeText(row.borNumber) || null;
 
@@ -5372,6 +5396,7 @@ const initializeDatabaseBackedStartup = async () => {
     await ensureDefaultAdmin();
     await ensureChairmanAccounts();
     await ensureDatabaseColumns();
+    await ensureAlumniProfileColumns();
     await ensureConcernGuestReportSupport();
     await ensureEmailQueueTables();
     await ensureAnnouncementEventSurveyEngagementTables();
@@ -6479,6 +6504,7 @@ app.delete("/api/account/my-posts/:type/:id", authenticateToken, async (req: Aut
 ========================= */
 app.get("/api/profiles", authenticateToken, async (_req, res) => {
     try {
+        await ensureAlumniProfileColumns();
         const rows = parseRows(await db.query(
             `SELECT 
                 p.id,
@@ -6508,6 +6534,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
     const conn = await db.getConnection();
 
     try {
+        await ensureAlumniProfileColumns();
         const {
             name,
             email,
@@ -6651,6 +6678,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
     const conn = await db.getConnection();
 
     try {
+        await ensureAlumniProfileColumns();
         const importSchoolYear = normalizeBatch(String(req.headers["x-school-year"] || ""));
 
         if (!/^\d{4}$/.test(importSchoolYear)) {
@@ -12964,6 +12992,10 @@ app.get("/api/admin/tracer/:alumniId", authenticateToken, assertTracerAdminAcces
 app.use("/api/email", authenticateToken, requireAdmin, emailRoutes);
 
 export default app;
+
+
+
+
 
 
 
