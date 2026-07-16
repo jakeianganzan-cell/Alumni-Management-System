@@ -33,6 +33,7 @@ export interface SystemSettings {
   facebookLink: string;
   twitterLink: string;
   instagramLink: string;
+  programs: CourseOption[];
   themeMode: "light" | "dark" | "auto" | "custom";
   updatedAt: string | null;
 }
@@ -68,6 +69,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   facebookLink: "",
   twitterLink: "",
   instagramLink: "",
+  programs: COURSE_OPTIONS,
   themeMode: "light",
   updatedAt: null,
 };
@@ -113,6 +115,7 @@ const normalizeSettings = (value: Partial<SystemSettings> | null | undefined): S
   ...DEFAULT_SYSTEM_SETTINGS,
   ...(value || {}),
   loginBackgrounds: Array.isArray(value?.loginBackgrounds) ? value.loginBackgrounds : [],
+  programs: normalizeCourseOptions(value?.programs),
   themeMode: ["light", "dark", "auto", "custom"].includes(String(value?.themeMode))
     ? value?.themeMode as SystemSettings["themeMode"]
     : DEFAULT_SYSTEM_SETTINGS.themeMode,

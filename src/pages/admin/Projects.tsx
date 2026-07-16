@@ -17,7 +17,7 @@ type Project = { id: number; title: string; description: string; category: strin
 type Attachment = { id: number; name: string; type: string; url: string; category: string; createdAt: string };
 type Series = { label: string; value: number };
 type Summary = { totalProjects: number; plannedProjects: number; ongoingProjects: number; completedProjects: number; archivedProjects: number; totalEstimatedValue: number; byBatch: Series[]; byCategory: Series[]; annualTrends: Series[]; statusDistribution: Series[] };
-type Form = Omit<Project, "id" | "leadOfficer" | "fileCount" | "files">;
+type Form = Omit<Project, "id" | "leadOfficer" | "leadAlumni" | "fileCount" | "files">;
 const categories = ["School Support Project", "Infrastructure Project", "Scholarship Program", "Community Outreach", "Environmental Project", "Fundraising Project", "Educational Activity", "Alumni Association Project", "Batch Initiative", "Other"];
 const statuses: ProjectStatus[] = ["Planned", "Ongoing", "Completed", "Cancelled", "Archived"];
 const empty = (): Form => ({ title: "", description: "", category: categories[0], batchYear: "", leadOfficerId: "", leadAlumniId: "", organizationName: "", alumniGroup: "", startDate: "", endDate: "", status: "Planned", estimatedValue: 0, fundingSource: "", beneficiaries: "", accomplishments: "", remarks: "", relatedContributionId: "", contributionRecordId: "" });

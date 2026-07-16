@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Archive, CheckCircle2, ClipboardList, Download, Eye, FilePlus2, Loader2, Pencil, Printer, Search } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
-import { downloadBrandedExcel, openPrintableReport } from "@/lib/reportExport";
+import { downloadBrandedExcel, openPrintableReport, type ReportColumn } from "@/lib/reportExport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,7 @@ type FeeRecord = { alumniId: string; alumni: { name: string; email: string | nul
 type Summary = { totalAlumni: number; completeCount: number; incompleteCount: number; totalRequired: number; totalCollected: number; totalUnpaid: number; requiredFeeAssignments: number; paidFeeAssignments: number; unpaidFeeAssignments: number };
 type FeeForm = { feeName: string; amount: string; description: string; applicableBatchYear: string; applicableProgramId: string; dueDate: string; assignedOfficerId: string; isRequired: boolean; status: FeeTypeStatus };
 type MarkPaidForm = { amountPaid: string; paidDate: string; paymentNote: string };
+type FeeRecordExportRow = { alumni: string; alumniId: string; batch: string; program: string; status: CompletionStatus; required: number; paid: number; unpaid: number; unpaidFees: string; totalUnpaid: number };
 
 const statuses: CompletionStatus[] = ["Complete", "Incomplete"];
 const feeStatuses: FeeTypeStatus[] = ["Active", "Archived"];
@@ -146,8 +147,8 @@ export function AlumniFeeRecordsTab() {
     }
   };
 
-  const exportRows = records.map((record) => ({ alumni: record.alumni.name, alumniId: record.alumni.studentId || "", batch: record.alumni.batch || "", program: record.alumni.program || "", status: record.status, required: record.requiredFeeCount, paid: record.paidFeeCount, unpaid: record.unpaidFeeCount, unpaidFees: record.unpaidFees.map((fee) => `${fee.feeName} - PHP ${fee.amount.toLocaleString()}`).join("; "), totalUnpaid: record.totalUnpaid }));
-  const report = { title: "Alumni Fee Records", filename: "alumni-fee-records", rows: exportRows, columns: [{ key: "alumni", label: "Alumni" }, { key: "alumniId", label: "Alumni ID" }, { key: "batch", label: "Batch" }, { key: "program", label: "Program" }, { key: "status", label: "Status" }, { key: "required", label: "Required Fees" }, { key: "paid", label: "Paid Fees" }, { key: "unpaid", label: "Unpaid Fees" }, { key: "unpaidFees", label: "Need to Pay" }, { key: "totalUnpaid", label: "Total Unpaid" }], summary: [{ label: "Complete", value: summary.completeCount }, { label: "Incomplete", value: summary.incompleteCount }, { label: "Collected", value: `PHP ${summary.totalCollected.toLocaleString()}` }, { label: "Unpaid", value: `PHP ${summary.totalUnpaid.toLocaleString()}` }] };
+  const exportRows: FeeRecordExportRow[] = records.map((record) => ({ alumni: record.alumni.name, alumniId: record.alumni.studentId || "", batch: record.alumni.batch || "", program: record.alumni.program || "", status: record.status, required: record.requiredFeeCount, paid: record.paidFeeCount, unpaid: record.unpaidFeeCount, unpaidFees: record.unpaidFees.map((fee) => `${fee.feeName} - PHP ${fee.amount.toLocaleString()}`).join("; "), totalUnpaid: record.totalUnpaid }));
+  const report = { title: "Alumni Fee Records", filename: "alumni-fee-records", rows: exportRows, columns: [{ key: "alumni", label: "Alumni" }, { key: "alumniId", label: "Alumni ID" }, { key: "batch", label: "Batch" }, { key: "program", label: "Program" }, { key: "status", label: "Status" }, { key: "required", label: "Required Fees" }, { key: "paid", label: "Paid Fees" }, { key: "unpaid", label: "Unpaid Fees" }, { key: "unpaidFees", label: "Need to Pay" }, { key: "totalUnpaid", label: "Total Unpaid" }] satisfies ReportColumn<FeeRecordExportRow>[], summary: [{ label: "Complete", value: summary.completeCount }, { label: "Incomplete", value: summary.incompleteCount }, { label: "Collected", value: `PHP ${summary.totalCollected.toLocaleString()}` }, { label: "Unpaid", value: `PHP ${summary.totalUnpaid.toLocaleString()}` }] };
 
   return <div className="space-y-4">
     <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm text-amber-900 lg:flex-row lg:items-center lg:justify-between">

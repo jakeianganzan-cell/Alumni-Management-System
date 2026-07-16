@@ -104,13 +104,14 @@ export default function HomepageMediaPostDialog() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== "string") return;
+      const mediaUrl = reader.result;
       const mediaType: SlideMediaType = file.type.startsWith("video/") ? "video" : "image";
       setMessage("");
       setForm((current) => ({
         ...current,
         title: getUploadTitle(file),
         mediaType,
-        mediaUrl: reader.result,
+        mediaUrl,
         youtubeUrl: "",
       }));
     };
