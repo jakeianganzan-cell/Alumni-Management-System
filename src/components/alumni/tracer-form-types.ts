@@ -21,6 +21,8 @@ export interface TrainingRow {
   title: string;
   durationCredits: string;
   institution: string;
+  advancedStudiesLevel: "" | "Master's Degree" | "Doctoral Degree";
+  advancedStudiesStatus: "" | "Currently enrolled" | "Completed" | "On leave" | "Discontinued";
 }
 
 export interface ReferralRow {
@@ -337,6 +339,8 @@ export const createEmptyTrainingRow = (): TrainingRow => ({
   title: "",
   durationCredits: "",
   institution: "",
+  advancedStudiesLevel: "",
+  advancedStudiesStatus: "",
 });
 
 export const createEmptyReferralRow = (): ReferralRow => ({

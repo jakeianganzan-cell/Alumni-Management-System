@@ -87,12 +87,6 @@ interface NewAlumniForm {
   studentId: string;
   contactNumber: string;
   borNumber: string;
-  advancedStudiesLevel: string;
-  advancedStudiesStatus: string;
-  advancedStudiesProgram: string;
-  advancedStudiesSchool: string;
-  advancedStudiesStartYear: string;
-  advancedStudiesExpectedCompletionYear: string;
 }
 
 interface ImportRow {
@@ -147,7 +141,7 @@ interface ImportResponse {
   }>;
 }
 
-const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "", borNumber: "", advancedStudiesLevel: "", advancedStudiesStatus: "", advancedStudiesProgram: "", advancedStudiesSchool: "", advancedStudiesStartYear: "", advancedStudiesExpectedCompletionYear: "" };
+const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "", borNumber: "" };
 
 const normalizeImageSrc = (value: string | null) => resolveAssetUrl(value);
 
@@ -323,17 +317,6 @@ const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: S
       errors.push("Program is required.");
     } else if (!systemCourses.includes(row.program)) {
       errors.push("Program must match one of the supported school programs.");
-    }
-
-    const hasAdvancedStudiesDetails = Boolean(row.advancedStudiesStatus || row.advancedStudiesProgram || row.advancedStudiesSchool || row.advancedStudiesStartYear || row.advancedStudiesExpectedCompletionYear);
-    if (hasAdvancedStudiesDetails && !row.advancedStudiesLevel) {
-      errors.push("Advanced Studies Level is required when advanced studies details are provided.");
-    }
-    if (row.advancedStudiesStartYear && !/^\d{4}$/.test(row.advancedStudiesStartYear)) {
-      errors.push("Advanced Studies Start Year must be a 4-digit year.");
-    }
-    if (row.advancedStudiesExpectedCompletionYear && !/^\d{4}$/.test(row.advancedStudiesExpectedCompletionYear)) {
-      errors.push("Expected Completion Year must be a 4-digit year.");
     }
 
     if (row.emailAddress) {
@@ -730,12 +713,6 @@ export default function AdminAlumni() {
           photoBase64: photoPreview,
           sendEmail: true,
           borNumber: form.borNumber,
-          advancedStudiesLevel: form.advancedStudiesLevel,
-          advancedStudiesStatus: form.advancedStudiesStatus,
-          advancedStudiesProgram: form.advancedStudiesProgram,
-          advancedStudiesSchool: form.advancedStudiesSchool,
-          advancedStudiesStartYear: form.advancedStudiesStartYear,
-          advancedStudiesExpectedCompletionYear: form.advancedStudiesExpectedCompletionYear,
         }),
       });
 
@@ -1014,20 +991,6 @@ export default function AdminAlumni() {
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><FieldInput label="Full Name *" value={form.name} set={(value) => setForm((current) => ({ ...current, name: value }))} /><FieldInput label="Email Address *" type="email" value={form.email} set={(value) => setForm((current) => ({ ...current, email: value }))} /><FieldInput label="Student/Alumni ID" value={form.studentId} set={(value) => setForm((current) => ({ ...current, studentId: value }))} placeholder="Auto-generate if blank" /><FieldInput label="Contact Number" value={form.contactNumber} set={(value) => setForm((current) => ({ ...current, contactNumber: value }))} /></div>
               <div className="rounded-xl border border-border bg-muted/20 p-3"><p className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-navy">Academic Information</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="mb-1.5 block text-xs font-semibold text-navy">Graduation Year *</label><input value={form.batch} onChange={(event) => setForm((current) => ({ ...current, batch: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none" /></div><div><label className="mb-1.5 block text-xs font-semibold text-navy">Program *</label><select value={form.course} onChange={(event) => setForm((current) => ({ ...current, course: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{programOptions.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select></div><FieldInput label="BOR Number" value={form.borNumber} set={(value) => setForm((current) => ({ ...current, borNumber: value }))} /></div></div>
-              <div className="rounded-xl border border-border bg-muted/20 p-3">
-                <div className="mb-3">
-                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-navy">Advanced Studies</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Optional. Record whether the alumnus is pursuing a Master's or Doctoral degree.</p>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div><label className="mb-1.5 block text-xs font-semibold text-navy">Degree Level</label><select value={form.advancedStudiesLevel} onChange={(event) => setForm((current) => ({ ...current, advancedStudiesLevel: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{ADVANCED_STUDIES_LEVELS.map((option) => <option key={option} value={option}>{option || "No advanced studies"}</option>)}</select></div>
-                  <div><label className="mb-1.5 block text-xs font-semibold text-navy">Study Status</label><select value={form.advancedStudiesStatus} onChange={(event) => setForm((current) => ({ ...current, advancedStudiesStatus: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{ADVANCED_STUDIES_STATUSES.map((option) => <option key={option} value={option}>{option || "Select status"}</option>)}</select></div>
-                  <FieldInput label="Graduate Program" value={form.advancedStudiesProgram} set={(value) => setForm((current) => ({ ...current, advancedStudiesProgram: value }))} placeholder="e.g. Master of Education" />
-                  <FieldInput label="School / University" value={form.advancedStudiesSchool} set={(value) => setForm((current) => ({ ...current, advancedStudiesSchool: value }))} />
-                  <FieldInput label="Start Year" value={form.advancedStudiesStartYear} set={(value) => setForm((current) => ({ ...current, advancedStudiesStartYear: value }))} placeholder="2026" />
-                  <FieldInput label="Expected Completion Year" value={form.advancedStudiesExpectedCompletionYear} set={(value) => setForm((current) => ({ ...current, advancedStudiesExpectedCompletionYear: value }))} placeholder="2028" />
-                </div>
-              </div>
               {addError && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{addError}</div>}
               <div className="flex gap-3 pt-1"><button type="button" onClick={() => setShowAdd(false)} className="flex-1 rounded-lg border border-border py-2.5 text-sm font-medium text-navy hover:bg-muted">Cancel</button><button type="submit" disabled={addLoading || !canCreateAlumni} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:cursor-not-allowed disabled:opacity-50">{addLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating...</> : <><Mail className="h-4 w-4" />Create Account</>}</button></div>
             </form>
@@ -1043,7 +1006,7 @@ export default function AdminAlumni() {
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Import Alumni Records</DialogTitle>
-            <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number, Advanced Studies Level, Study Status, Graduate Program, School/University, Start Year, Expected Completion Year.</DialogDescription>
+            <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[220px_1fr] sm:items-end">
@@ -1100,7 +1063,7 @@ export default function AdminAlumni() {
                       <th className="px-3 py-2 text-left">Validation</th>
                     </tr>
                   </thead>
-                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-2">{row.graduationYear || "-"}</td><td className="px-3 py-2" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-2">{row.borNumber || "-"}</td><td className="px-3 py-2">{[row.advancedStudiesLevel, row.advancedStudiesStatus].filter(Boolean).join(" - ") || "-"}</td><td className="px-3 py-2">{row.emailAddress || "-"}</td><td className="px-3 py-2">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
+                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-2">{row.graduationYear || "-"}</td><td className="px-3 py-2" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-2">{row.borNumber || "-"}</td><td className="px-3 py-2">{row.emailAddress || "-"}</td><td className="px-3 py-2">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
                 </table>
               </div>
               <button type="button" onClick={handleImportSubmit} disabled={importSubmitting || importReadyCount === 0} className="inline-flex items-center justify-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-medium text-white hover:bg-navy-light disabled:opacity-60">{importSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Final Import</button>

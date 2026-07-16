@@ -46,9 +46,25 @@ export default function SectionC({ form, errors, setField, toggleArrayValue, add
                   </Button>
                 ) : null}
               </div>
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Title">
                   <Input value={row.title} onChange={(event) => updateTableRow("trainings", index, "title", event.target.value)} />
+                </Field>
+                <Field label="Advanced Degree Level">
+                  <select value={row.advancedStudiesLevel} onChange={(event) => updateTableRow("trainings", index, "advancedStudiesLevel", event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <option value="">Not an advanced degree</option>
+                    <option value="Master's Degree">Master's Degree</option>
+                    <option value="Doctoral Degree">Doctoral Degree</option>
+                  </select>
+                </Field>
+                <Field label="Study Status">
+                  <select value={row.advancedStudiesStatus} onChange={(event) => updateTableRow("trainings", index, "advancedStudiesStatus", event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <option value="">Select status</option>
+                    <option value="Currently enrolled">Currently enrolled</option>
+                    <option value="Completed">Completed</option>
+                    <option value="On leave">On leave</option>
+                    <option value="Discontinued">Discontinued</option>
+                  </select>
                 </Field>
                 <Field label="Duration/Credits">
                   <Input value={row.durationCredits} onChange={(event) => updateTableRow("trainings", index, "durationCredits", event.target.value)} />

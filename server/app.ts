@@ -3007,7 +3007,42 @@ const normalizeAdvancedStudiesStatus = (value: unknown) => {
 
 const normalizeOptionalYear = (value: unknown) => {
     const year = normalizeBatch(value);
-    return /^\d{4}$/.test(year) ? year : null;
+    return /^d{4}$/.test(year) ? year : null;
+};
+
+const getTracerAdvancedStudies = (value: unknown) => {
+    try {
+        const payload = typeof value === "string" ? JSON.parse(value) : value;
+        const trainings = payload && typeof payload === "object" && Array.isArray((payload as { trainings?: unknown[] }).trainings)
+            ? (payload as { trainings: unknown[] }).trainings
+            : [];
+
+        for (const training of trainings) {
+            const row = training && typeof training === "object" ? training as Record<string, unknown> : {};
+            const level = normalizeAdvancedStudiesLevel(row.advancedStudiesLevel || row.title);
+            if (!level) continue;
+
+            return {
+                advanced_studies_level: level,
+                advanced_studies_status: normalizeAdvancedStudiesStatus(row.advancedStudiesStatus) || "Currently enrolled",
+                advanced_studies_program: normalizeText(row.title) || null,
+                advanced_studies_school: normalizeText(row.institution) || null,
+                advanced_studies_start_year: null,
+                advanced_studies_expected_completion_year: null
+            };
+        }
+    } catch {
+        // A malformed legacy tracer payload simply has no advanced-studies result.
+    }
+
+    return {
+        advanced_studies_level: null,
+        advanced_studies_status: null,
+        advanced_studies_program: null,
+        advanced_studies_school: null,
+        advanced_studies_start_year: null,
+        advanced_studies_expected_completion_year: null
+    };
 };
 
 const normalizeSupportedCourse = (value: unknown, programs: CourseOption[] = COURSE_OPTIONS) => normalizeCourseCode(normalizeText(value), programs);
@@ -6682,16 +6717,22 @@ app.get("/api/profiles", authenticateToken, async (_req, res) => {
                 p.advanced_studies_school,
                 p.advanced_studies_start_year,
                 p.advanced_studies_expected_completion_year,
+                tf.ched_payload AS tracer_ched_payload,
                 p.contact_number,
                 p.photo,
                 p.created_at,
                 ur.role
             FROM profiles p
             LEFT JOIN user_roles ur ON ur.user_id = p.id
+            LEFT JOIN tracer_form tf ON tf.user_id = p.id AND tf.submission_status = 'completed'
             ORDER BY p.name ASC`
         ));
 
-        res.json(rows);
+        res.json(rows.map((row) => {
+            const advancedStudies = getTracerAdvancedStudies(row.tracer_ched_payload);
+            const { tracer_ched_payload: _tracerPayload, ...profile } = row;
+            return { ...profile, ...advancedStudies };
+        }));
     } catch (err: unknown) {
         console.error("GET PROFILES ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
