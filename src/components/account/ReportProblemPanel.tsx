@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Inbox, Loader2, MessageSquare, Reply, Send } from "lucide-react";
+import { Inbox, Loader2, MessageSquare, Reply, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ export default function ReportProblemPanel() {
   const [reports, setReports] = useState<ProblemReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
   const [form, setForm] = useState({
     subject: "",
     category: "General Concern",
@@ -83,6 +84,25 @@ export default function ReportProblemPanel() {
       toast.error(error instanceof Error ? error.message : "Failed to submit problem report.");
     } finally {
       setSubmitting(false);
+    }
+  };
+  const deleteReport = async (report: ProblemReport) => {
+    const confirmed = window.confirm("Are you sure you want to remove this problem report?");
+    if (!confirmed) return;
+
+    setDeletingReportId(report.id);
+    try {
+      const response = await fetchApi(`${API_URL}/concerns/${report.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      const data = await readApiResponse<{ message: string }>(response);
+      setReports((current) => current.filter((item) => item.id !== report.id));
+      toast.success(data.message || "Problem report removed successfully.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to remove problem report.");
+    } finally {
+      setDeletingReportId(null);
     }
   };
 
@@ -185,9 +205,21 @@ export default function ReportProblemPanel() {
                         {report.category} - {formatReportDate(report.created_at)}
                       </p>
                     </div>
-                    <span className="w-fit rounded-full bg-navy/10 px-3 py-1 text-[11px] font-semibold uppercase text-navy">
-                      {report.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="w-fit rounded-full bg-navy/10 px-3 py-1 text-[11px] font-semibold uppercase text-navy">
+                        {report.status}
+                      </span>
+                      <button
+                        type="button"
+                        title="Delete problem report"
+                        aria-label="Delete problem report"
+                        onClick={() => void deleteReport(report)}
+                        disabled={deletingReportId === report.id}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingReportId === report.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
                   <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground">{report.message}</p>
                   {report.admin_reply ? (

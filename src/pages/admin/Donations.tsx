@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
+import { AlumniFeeRecordsTab } from "@/components/admin/AlumniFeeRecordsTab";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -105,6 +106,7 @@ const DONATION_PAGE_SIZE = 10;
 
 export default function AdminDonations() {
   const { profile, user } = useAuth();
+  const [activeTab, setActiveTab] = useState<"review" | "fees">("review");
   const [search, setSearch] = useState("");
   const [donations, setDonations] = useState<Donation[]>([]);
   const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
@@ -401,6 +403,10 @@ export default function AdminDonations() {
   return (
     <AdminLayout title="Donation Monitoring">
       <div className="space-y-4">
+        <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          {[ ["review", "Donation Review"], ["fees", "Alumni Fee Records"] ].map(([key, label]) => <button key={key} type="button" onClick={() => setActiveTab(key as "review" | "fees")} className={`rounded-lg px-3 py-2 text-sm font-medium transition ${activeTab === key ? "bg-navy text-white shadow-sm" : "text-muted-foreground hover:bg-white hover:text-navy"}`}>{label}</button>)}
+        </div>
+        {activeTab === "review" && <>
         <div className="grid gap-3 lg:grid-cols-4">
           <SummaryCard label="Total Approved" value={`PHP ${totalApproved.toLocaleString()}`} toneClassName="bg-navy text-white" icon={<Heart className="h-4 w-4" />} />
           <SummaryCard label="Pending Review" value={String(pendingCount)} toneClassName="bg-white text-navy-dark" icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
@@ -451,18 +457,22 @@ export default function AdminDonations() {
           </CardHeader>
 
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-sm">
+            <div className="overflow-hidden">
+              <table className="w-full table-fixed text-[13px]">
+                <colgroup>
+                  <col className="w-[20%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[11%]" />
+                  <col className="w-[13%]" /><col className="w-[18%]" /><col className="w-[10%]" /><col className="w-[8%]" />
+                </colgroup>
                 <thead className="bg-slate-50">
                   <tr>
                     {["Donor", "Student ID", "Method", "Amount", "Date Submitted", "Purpose", "Status", "Action"].map((heading) => (
-                      <th key={heading} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-navy">
+                      <th key={heading} className={cn("px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.1em] text-navy", heading === "Status" || heading === "Action" ? "text-center" : "text-left")}>
                         {heading}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200">
+                <tbody className="divide-y divide-slate-200/80">
                   {loading ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -477,29 +487,29 @@ export default function AdminDonations() {
                     </tr>
                   ) : (
                     paginatedDonations.map((donation) => (
-                      <tr key={donation.id} className="hover:bg-slate-50/70">
-                        <td className="px-4 py-3.5" data-label="Donor">
+                      <tr key={donation.id} className="odd:bg-white even:bg-slate-50/60 transition-colors hover:bg-navy/5">
+                        <td className="px-3 py-2.5 align-middle" data-label="Donor">
                           <div>
-                            <p className="font-semibold text-navy-dark">{donation.profile.name}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">{donation.profile.email || "No email"}</p>
+                            <p className="truncate text-[13px] font-semibold text-navy-dark" title={donation.profile.name}>{donation.profile.name}</p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={donation.profile.email || "No email"}>{donation.profile.email || "No email"}</p>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Student ID">{donation.profile.student_id || "Not set"}</td>
-                        <td className="px-4 py-3.5" data-label="Method">
-                          <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", methodTone[donation.method] || "bg-slate-100 text-slate-700")}>
+                        <td className="truncate px-3 py-2.5 text-[13px] text-muted-foreground" data-label="Student ID" title={donation.profile.student_id || "Not set"}>{donation.profile.student_id || "Not set"}</td>
+                        <td className="px-3 py-2.5 align-middle" data-label="Method">
+                          <span className={cn("inline-flex max-w-full truncate rounded-full px-2 py-1 text-xs font-medium", methodTone[donation.method] || "bg-slate-100 text-slate-700")} title={donation.method}>
                             {donation.method}
                           </span>
                         </td>
-                        <td className="px-4 py-3.5 font-semibold text-navy-dark" data-label="Amount">PHP {donation.amount.toLocaleString()}</td>
-                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Date Submitted">{donation.created_at ? new Date(donation.created_at).toLocaleString() : "Not set"}</td>
-                        <td className="px-4 py-3.5 text-muted-foreground" data-label="Purpose">{donation.purpose || "General donation"}</td>
-                        <td className="px-4 py-3.5" data-label="Status">
+                        <td className="whitespace-nowrap px-3 py-2.5 text-[13px] font-semibold text-navy-dark" data-label="Amount">PHP {donation.amount.toLocaleString()}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-[13px] text-muted-foreground" data-label="Date Submitted" title={donation.created_at ? new Date(donation.created_at).toLocaleString() : "Not set"}>{donation.created_at ? new Date(donation.created_at).toLocaleDateString() : "Not set"}</td>
+                        <td className="truncate px-3 py-2.5 text-[13px] text-muted-foreground" data-label="Purpose" title={donation.purpose || "General donation"}>{donation.purpose || "General donation"}</td>
+                        <td className="px-3 py-2.5 text-center align-middle" data-label="Status">
                           <Badge className={statusTone[donation.status]}>{donation.status}</Badge>
                         </td>
-                        <td className="px-4 py-3.5" data-label="Action">
-                          <Button type="button" variant="outline" size="sm" onClick={() => openDonationDetail(donation.id)}>
-                            <Eye className="mr-2 h-3.5 w-3.5" />
-                            View Details
+                        <td className="px-3 py-2.5 text-center align-middle" data-label="Action">
+                          <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs" title="View donation details" onClick={() => openDonationDetail(donation.id)}>
+                            <Eye className="h-3.5 w-3.5" />
+                            <span className="ml-1.5">View</span>
                           </Button>
                         </td>
                       </tr>
@@ -517,6 +527,8 @@ export default function AdminDonations() {
             />
           </CardContent>
         </Card>
+        </>}
+        {activeTab === "fees" && <AlumniFeeRecordsTab />}
       </div>
 
       <Dialog open={Boolean(selectedDonation)} onOpenChange={(open) => !submittingAction && !loadingDetail && !open && setSelectedDonation(null)}>
@@ -641,7 +653,7 @@ export default function AdminDonations() {
             </div>
             <DialogTitle className="pr-8 text-xl text-navy-dark">Enter Verification Password</DialogTitle>
             <DialogDescription>
-              Verification is required before opening Donation Settings.
+              Verification is required before opening Payment Settings.
             </DialogDescription>
           </DialogHeader>
 

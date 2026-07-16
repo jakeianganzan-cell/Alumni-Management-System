@@ -224,6 +224,93 @@ const surveyQuestionIds = Array.from({ length: 18 }, (_, index) => 9201 + index)
 const dashboardSlideIds = Array.from({ length: 4 }, (_, index) => 9501 + index);
 const eventCommentIds = Array.from({ length: 24 }, (_, index) => 12001 + index);
 const officerSchoolYearLabels = ["2024 - 2025", "2025 - 2026"];
+const sampleAlumniProjects = [
+  {
+    title: "Sample: Batch 2018 Classroom Repair Drive",
+    description: "Batch-led repair and repainting support for two classrooms, including donated labor and basic materials.",
+    category: "Infrastructure Project",
+    batchYear: "2018",
+    leadOfficer: alumni[0],
+    leadAlumni: alumni[1],
+    organizationName: "SaCC Alumni Batch 2018",
+    startDate: "2026-01-15",
+    endDate: "2026-02-28",
+    status: "Completed",
+    beneficiaries: "Grade school learners and classroom advisers",
+    estimatedValue: 65000,
+    fundingSource: "Batch pledges and alumni donations",
+    relatedContributionId: "SAMPLE-PROJ-2018-CLASSROOM",
+    accomplishments: "Repainted classrooms, repaired fixtures, and turned over learning materials.",
+    remarks: "Demo alumni project record.",
+  },
+  {
+    title: "Sample: Alumni Scholarship Starter Fund",
+    description: "Seed fund for tuition and school supply assistance for qualified students.",
+    category: "Scholarship Program",
+    batchYear: "2019",
+    leadOfficer: alumni[1],
+    leadAlumni: alumni[4],
+    organizationName: "SaCC Alumni Scholarship Committee",
+    startDate: "2026-03-01",
+    endDate: "2026-12-15",
+    status: "Ongoing",
+    beneficiaries: "Selected financially challenged students",
+    estimatedValue: 120000,
+    fundingSource: "Monthly alumni pledges",
+    relatedContributionId: "SAMPLE-PROJ-2019-SCHOLARSHIP",
+    accomplishments: "Initial pledge campaign launched and first beneficiary screening completed.",
+    remarks: "Demo alumni project record.",
+  },
+  {
+    title: "Sample: Community Feeding and Wellness Day",
+    description: "A one-day outreach project with feeding, wellness orientation, and hygiene kit distribution.",
+    category: "Community Outreach",
+    batchYear: "2020",
+    leadOfficer: alumni[2],
+    leadAlumni: alumni[3],
+    organizationName: "SaCC Alumni Outreach Volunteers",
+    startDate: "2026-04-20",
+    endDate: "2026-04-20",
+    status: "Planned",
+    beneficiaries: "Nearby community children and families",
+    estimatedValue: 35000,
+    fundingSource: "Cash donations and in-kind goods",
+    relatedContributionId: "SAMPLE-PROJ-2020-OUTREACH",
+    accomplishments: "Program design and partner coordination prepared.",
+    remarks: "Demo alumni project record.",
+  },
+  {
+    title: "Sample: Green Campus Tree Growing Project",
+    description: "Alumni-sponsored tree growing and campus cleanup activity.",
+    category: "Environmental Project",
+    batchYear: "2024",
+    leadOfficer: alumni[6],
+    leadAlumni: alumni[7],
+    organizationName: "Young Alumni Green Team",
+    startDate: "2026-06-05",
+    endDate: "2026-08-30",
+    status: "Ongoing",
+    beneficiaries: "Campus community and partner barangay",
+    estimatedValue: 28000,
+    fundingSource: "Alumni sponsorships",
+    relatedContributionId: "SAMPLE-PROJ-2024-GREEN",
+    accomplishments: "Seedlings sourced and volunteer signup opened.",
+    remarks: "Demo alumni project record.",
+  },
+] as const;
+
+const sampleAlumniFeeRecords = [
+  { alumni: alumni[0], paymentType: "Alumni Membership Fee", amount: 500, paymentDate: "2026-01-12", paymentMode: "Cash", referenceNumber: "SAMPLE-FEE-2018-0001", status: "Paid", remarks: "Paid during alumni office visit." },
+  { alumni: alumni[1], paymentType: "Alumni ID Fee", amount: 250, paymentDate: "2026-01-18", paymentMode: "GCash", referenceNumber: "SAMPLE-FEE-2019-0002", status: "Paid", remarks: "Payment verified by admin." },
+  { alumni: alumni[2], paymentType: "Event Fee", amount: 300, paymentDate: "2026-02-02", paymentMode: "Bank Transfer", referenceNumber: "SAMPLE-FEE-2020-0003", status: "Pending", remarks: "Awaiting proof validation." },
+  { alumni: alumni[3], paymentType: "Project Contribution", amount: 1000, paymentDate: "2026-02-10", paymentMode: "Personal Handover", referenceNumber: "SAMPLE-FEE-2021-0004", status: "Paid", remarks: "Contribution for classroom repair drive." },
+  { alumni: alumni[4], paymentType: "Alumni Membership Fee", amount: 500, paymentDate: "2026-03-04", paymentMode: "Cash", referenceNumber: "SAMPLE-FEE-2022-0005", status: "Unpaid", remarks: "For follow-up." },
+  { alumni: alumni[5], paymentType: "Alumni ID Fee", amount: 250, paymentDate: "2026-03-16", paymentMode: "GCash", referenceNumber: "SAMPLE-FEE-2023-0006", status: "Pending", remarks: "Reference submitted, not yet checked." },
+  { alumni: alumni[6], paymentType: "Event Fee", amount: 350, paymentDate: "2026-04-01", paymentMode: "Cash", referenceNumber: "SAMPLE-FEE-2024-0007", status: "Paid", remarks: "Paid for homecoming participation." },
+  { alumni: alumni[7], paymentType: "Project Contribution", amount: 750, paymentDate: "2026-04-12", paymentMode: "Bank Transfer", referenceNumber: "SAMPLE-FEE-2024-0008", status: "Paid", remarks: "Green campus project support." },
+  { alumni: alumni[8], paymentType: "Alumni Membership Fee", amount: 500, paymentDate: "2026-05-05", paymentMode: "Other", referenceNumber: "SAMPLE-FEE-2017-0009", status: "Cancelled", remarks: "Duplicate sample entry cancelled." },
+  { alumni: alumni[9], paymentType: "Other", amount: 600, paymentDate: "2026-05-15", paymentMode: "Cash", referenceNumber: "SAMPLE-FEE-2016-0010", status: "Unpaid", remarks: "Pledged amount not yet received." },
+] as const;
 
 const image = (slug: string) => `https://images.unsplash.com/${slug}?auto=format&fit=crop&w=1200&q=80`;
 
@@ -271,6 +358,11 @@ async function createTables(conn: PoolConnection) {
       student_id VARCHAR(50) UNIQUE,
       course VARCHAR(255),
       batch VARCHAR(10),
+      bor_number VARCHAR(100),
+      bor_date DATE,
+      graduation_batch VARCHAR(100),
+      academic_year VARCHAR(30),
+      graduation_semester VARCHAR(50),
       contact_number VARCHAR(50),
       photo LONGTEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -642,6 +734,88 @@ async function createTables(conn: PoolConnection) {
     )
   `);
 
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS alumni_projects (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      description TEXT NULL,
+      category VARCHAR(100) NOT NULL,
+      batch_year VARCHAR(20) NULL,
+      lead_officer_id VARCHAR(36) NULL,
+      lead_alumni_id VARCHAR(36) NULL,
+      organization_name VARCHAR(255) NULL,
+      alumni_group VARCHAR(255) NULL,
+      start_date DATE NULL,
+      end_date DATE NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Planned',
+      beneficiaries TEXT NULL,
+      estimated_value DECIMAL(14,2) NULL,
+      funding_source VARCHAR(255) NULL,
+      related_contribution_id VARCHAR(100) NULL,
+      contribution_record_id VARCHAR(100) NULL,
+      accomplishments TEXT NULL,
+      remarks TEXT NULL,
+      created_by VARCHAR(36) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_alumni_projects_status (status),
+      INDEX idx_alumni_projects_category (category),
+      INDEX idx_alumni_projects_batch (batch_year),
+      INDEX idx_alumni_projects_dates (start_date),
+      FOREIGN KEY (lead_officer_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (lead_alumni_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS alumni_project_files (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      project_id BIGINT NOT NULL,
+      file_name VARCHAR(255) NOT NULL,
+      file_path LONGTEXT NOT NULL,
+      file_type VARCHAR(120) NULL,
+      file_url LONGTEXT NULL,
+      file_category VARCHAR(100) NOT NULL DEFAULT 'Project File',
+      uploaded_by VARCHAR(36) NULL,
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_alumni_project_files_project (project_id),
+      FOREIGN KEY (project_id) REFERENCES alumni_projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS alumni_fee_records (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      alumni_id VARCHAR(36) NOT NULL,
+      payment_type VARCHAR(100) NOT NULL,
+      amount DECIMAL(12, 2) NOT NULL,
+      payment_date DATE NOT NULL,
+      payment_mode VARCHAR(100) NOT NULL,
+      reference_number VARCHAR(150) DEFAULT NULL,
+      receipt_path LONGTEXT DEFAULT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+      encoded_by VARCHAR(36) DEFAULT NULL,
+      remarks TEXT DEFAULT NULL,
+      batch_year VARCHAR(20) DEFAULT NULL,
+      program VARCHAR(255) DEFAULT NULL,
+      department VARCHAR(255) DEFAULT NULL,
+      is_archived TINYINT(1) NOT NULL DEFAULT 0,
+      archived_at DATETIME DEFAULT NULL,
+      archived_by VARCHAR(36) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_alumni_fee_records_alumni (alumni_id),
+      INDEX idx_alumni_fee_records_status (status, is_archived),
+      INDEX idx_alumni_fee_records_payment_date (payment_date),
+      INDEX idx_alumni_fee_records_batch (batch_year),
+      FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (encoded_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
   await ensureColumn(conn, "user_roles", "archived", "archived TINYINT(1) NOT NULL DEFAULT 0");
   await ensureColumn(conn, "event_rsvps", "verification_status", "verification_status VARCHAR(50) DEFAULT 'Pending'");
   await ensureColumn(conn, "announcements", "google_form_link", "google_form_link TEXT NULL");
@@ -746,6 +920,18 @@ async function clearDemoData(conn: PoolConnection) {
   await conn.query(
     `DELETE FROM officer_school_year WHERE label IN (${placeholders(officerSchoolYearLabels)})`,
     officerSchoolYearLabels,
+  );
+  await conn.query(
+    `DELETE FROM alumni_project_files WHERE project_id IN (SELECT id FROM alumni_projects WHERE title IN (${placeholders(Array.from(sampleAlumniProjects))}) OR created_by IN (${userPlaceholders}))`,
+    [...sampleAlumniProjects.map((project) => project.title), ...userIds],
+  );
+  await conn.query(
+    `DELETE FROM alumni_projects WHERE title IN (${placeholders(Array.from(sampleAlumniProjects))}) OR created_by IN (${userPlaceholders})`,
+    [...sampleAlumniProjects.map((project) => project.title), ...userIds],
+  );
+  await conn.query(
+    `DELETE FROM alumni_fee_records WHERE reference_number IN (${placeholders(Array.from(sampleAlumniFeeRecords))}) OR alumni_id IN (${userPlaceholders})`,
+    [...sampleAlumniFeeRecords.map((record) => record.referenceNumber), ...userIds],
   );
   await conn.query(`DELETE FROM engagement_metrics WHERE alumni_id IN (${userPlaceholders})`, userIds);
   await conn.query(`DELETE FROM tracer_form WHERE user_id IN (${userPlaceholders})`, userIds);
@@ -1397,6 +1583,61 @@ async function insertEngagementMetrics(conn: PoolConnection) {
   }
 }
 
+async function insertAlumniProjectsAndFeeRecords(conn: PoolConnection) {
+  for (const project of sampleAlumniProjects) {
+    await execute(
+      conn,
+      `INSERT INTO alumni_projects
+        (title, description, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, start_date, end_date, status, beneficiaries, estimated_value, funding_source, related_contribution_id, contribution_record_id, accomplishments, remarks, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        project.title,
+        project.description,
+        project.category,
+        project.batchYear,
+        project.leadOfficer.id,
+        project.leadAlumni.id,
+        project.organizationName,
+        project.organizationName,
+        project.startDate,
+        project.endDate,
+        project.status,
+        project.beneficiaries,
+        project.estimatedValue,
+        project.fundingSource,
+        project.relatedContributionId,
+        project.relatedContributionId,
+        project.accomplishments,
+        project.remarks,
+        adminUsers[0].id,
+      ],
+    );
+  }
+
+  for (const record of sampleAlumniFeeRecords) {
+    await execute(
+      conn,
+      `INSERT INTO alumni_fee_records
+        (alumni_id, payment_type, amount, payment_date, payment_mode, reference_number, receipt_path, status, encoded_by, remarks, batch_year, program, department)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.alumni.id,
+        record.paymentType,
+        record.amount,
+        record.paymentDate,
+        record.paymentMode,
+        record.referenceNumber,
+        null,
+        record.status,
+        adminUsers[0].id,
+        record.remarks,
+        record.alumni.batchYear,
+        record.alumni.course,
+        record.alumni.course,
+      ],
+    );
+  }
+}
 async function insertOfficerBundles(conn: PoolConnection) {
   const bundles = [
     {
@@ -1502,13 +1743,14 @@ async function seed() {
     await insertDashboardSlides(conn);
     await insertEngagementMetrics(conn);
     await insertOfficerBundles(conn);
+    await insertAlumniProjectsAndFeeRecords(conn);
 
     await conn.commit();
 
     console.log("SaCC demo seed complete.");
     console.log(`Admin login: ${adminUsers[0].email} / ${DEFAULT_PASSWORD}`);
     console.log(`Alumni login: ${alumni[0].email} / ${DEFAULT_PASSWORD}`);
-    console.log("Inserted: 10 alumni, 2 admins, 10 achievements, 10 non-event announcements/surveys, 8 events, 30 RSVPs, 4 dashboard slideshow images, 20 Freedom Wall posts, 50 wall comments, 80 wall reactions, engagement metrics for every alumni, and 2 officer bundles.");
+    console.log("Inserted: 10 alumni, 2 admins, 10 achievements, 10 non-event announcements/surveys, 8 events, 30 RSVPs, 4 dashboard slideshow images, 20 Freedom Wall posts, 50 wall comments, 80 wall reactions, engagement metrics for every alumni, 2 officer bundles, 4 alumni projects, and 10 alumni fee records.");
   } catch (error) {
     await conn.query("SET FOREIGN_KEY_CHECKS = 1");
     await conn.rollback();

@@ -2,6 +2,8 @@ import { ReactNode, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { DEPARTMENT_LABELS, Department } from "@/lib/rbac";
+import { resolveAssetUrl } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   LayoutDashboard, Users, LogOut, Menu, X, LineChart,
   ChevronDown, User, Megaphone, Award, MessageSquare
@@ -25,17 +27,24 @@ const NAV_ITEMS = [
 
 export default function ChairmanLayout({ children, title, subtitle }: ChairmanLayoutProps) {
   const { profile, signOut } = useAuth();
+  const { settings } = useSystemSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
-  const handleLogout = () => { signOut(); navigate("/"); };
+  const handleLogout = () => {
+    if (!window.confirm("Are you sure you want to log out?")) return;
+
+    signOut();
+    navigate("/");
+  };
 
   const department = profile?.course && profile.course in DEPARTMENT_LABELS
     ? (profile.course as Department)
     : null;
   const departmentLabel = department ? DEPARTMENT_LABELS[department] : "Department";
+  const systemLogo = resolveAssetUrl(settings.logoPath) || ustpLogo;
 
   const Sidebar = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="portal-sidebar flex h-full flex-col border-r border-white/20">
@@ -49,10 +58,10 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
 
       <div className="flex flex-col items-center px-5 pt-6 pb-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
         <div className="portal-logo-frame">
-          <img src={ustpLogo} alt="SaCC" />
+          <img src={systemLogo} alt={settings.institutionName || settings.systemName} />
         </div>
         <div className="mt-2">
-          <h3 className="text-white text-sm font-bold text-center">Alumni Federation</h3>
+          <h3 className="text-center text-sm font-bold text-white">{settings.systemShortName}</h3>
         </div>
       </div>
 

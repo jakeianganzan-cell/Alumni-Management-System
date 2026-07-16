@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { EventProvider } from "@/context/EventContext";
 import { AnnouncementProvider } from "@/context/AnnouncementContext";
+import { SystemSettingsProvider } from "@/context/SystemSettingsContext";
 import { canAccessModule, type OfficerRole } from "@/lib/rbac";
 import type { AdminModule } from "@/lib/rbac";
 import Login from "./pages/Login";
@@ -13,13 +14,14 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import AdminAlumni from "./pages/admin/Alumni";
 import AdminGraduateTracer from "./pages/admin/GraduateTracer";
 import AdminEngagement from "./pages/admin/Engagement";
+import AdminProjects from "./pages/admin/Projects";
 import AdminCommunity from "./pages/admin/Community";
 import AdminAchievements from "./pages/admin/Achievements";
 import AdminAnnouncements from "./pages/admin/Announcements";
 import AlumniAnnouncements from "./pages/alumni/Announcements";
 import AdminDonations from "./pages/admin/Donations";
 import AdminNotifications from "./pages/admin/Notifications";
-import AdminOfficers from "./pages/admin/Officers";
+import OfficerBundlesModule from "./components/admin/OfficerBundlesModule";
 import AdminAccount from "./pages/admin/Account";
 import AccessDenied from "./pages/admin/AccessDenied";
 import AlumniDashboard from "./pages/alumni/Dashboard";
@@ -104,6 +106,7 @@ function AppRoutes() {
       <Route path="/admin/alumni" element={<AdminRoute module="alumni"><AdminAlumni /></AdminRoute>} />
       <Route path="/admin/tracer" element={<AdminRoute module="tracer"><AdminGraduateTracer /></AdminRoute>} />
       <Route path="/admin/engagement" element={<AdminRoute module="engagement"><AdminEngagement /></AdminRoute>} />
+      <Route path="/admin/projects" element={<AdminRoute module="engagement"><AdminProjects /></AdminRoute>} />
       <Route path="/admin/jobs" element={<Navigate to="/admin/announcements" replace />} />
       <Route path="/admin/community" element={<AdminRoute module="community"><AdminCommunity /></AdminRoute>} />
       <Route path="/admin/achievements" element={<AdminRoute module="achievements"><AdminAchievements /></AdminRoute>} />
@@ -113,7 +116,11 @@ function AppRoutes() {
       <Route path="/admin/events" element={<Navigate to="/admin/announcements" replace />} />
       <Route path="/admin/reports" element={<AdminRoute module="reports"><Navigate to="/admin/account?section=reports" replace /></AdminRoute>} />
       <Route path="/admin/notifications" element={<AdminRoute module="notifications"><AdminNotifications /></AdminRoute>} />
-      <Route path="/admin/officers" element={<AdminRoute module="officers"><AdminOfficers /></AdminRoute>} />
+      <Route path="/admin/officers" element={<AdminRoute module="officers"><OfficerBundlesModule mode="directory" /></AdminRoute>} />
+      <Route path="/admin/officers/add" element={<AdminRoute module="officers"><OfficerBundlesModule mode="add" /></AdminRoute>} />
+      <Route path="/admin/officers/bundles" element={<AdminRoute module="officers"><Navigate to="/admin/officers/add" replace /></AdminRoute>} />
+      <Route path="/admin/officers/edit/:id" element={<AdminRoute module="officers"><Navigate to="/admin/officers" replace /></AdminRoute>} />
+      <Route path="/admin/officers/view/:id" element={<AdminRoute module="officers"><Navigate to="/admin/officers" replace /></AdminRoute>} />
       <Route path="/admin/account" element={<AdminRoute module="dashboard"><AdminAccount /></AdminRoute>} />
 
       <Route path="/alumni" element={<AlumniRoute><AlumniDashboard /></AlumniRoute>} />
@@ -144,21 +151,23 @@ function AppRoutes() {
 }
 
 const App = () => (
-  <AuthProvider>
-    <AnnouncementProvider>
-      <EventProvider>
-        <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-              <AppRoutes />
-            </BrowserRouter>
-          </TooltipProvider>
-        </QueryClientProvider>
-      </EventProvider>
-    </AnnouncementProvider>
-  </AuthProvider>
+  <SystemSettingsProvider>
+    <AuthProvider>
+      <AnnouncementProvider>
+        <EventProvider>
+          <QueryClientProvider client={queryClient}>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <AppRoutes />
+              </BrowserRouter>
+            </TooltipProvider>
+          </QueryClientProvider>
+        </EventProvider>
+      </AnnouncementProvider>
+    </AuthProvider>
+  </SystemSettingsProvider>
 );
 
 export default App;

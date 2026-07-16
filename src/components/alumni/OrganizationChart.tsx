@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import salayBackground from "@/assets/salay-background.png";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 type DashboardOfficer = {
   name: string;
@@ -81,6 +82,7 @@ function VConn({ h = 6, mdH, className = "bg-border" }: { h?: number; mdH?: numb
 }
 
 export default function OrganizationChart() {
+  const { settings } = useSystemSettings();
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -125,7 +127,7 @@ export default function OrganizationChart() {
         <div className="mb-6 text-center md:mb-10">
           <h3 className="font-display text-xl font-bold text-white md:text-2xl">Organization Chart</h3>
           <p className="mt-1 text-sm text-white/75">
-            SaCC Alumni Association Officers{currentSchoolYear ? ` | ${currentSchoolYear}` : ""}
+            {settings.institutionName} Alumni Association Officers{currentSchoolYear ? ` | ${currentSchoolYear}` : ""}
           </p>
           <div className="mx-auto mt-3 h-1 w-16 rounded-full bg-gold" />
         </div>

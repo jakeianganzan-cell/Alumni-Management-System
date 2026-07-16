@@ -42,6 +42,52 @@ const getErrorCode = (error: unknown) => {
   return "";
 };
 
+const RETRIABLE_DB_ERROR_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "PROTOCOL_CONNECTION_LOST",
+  "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR",
+  "PROTOCOL_SEQUENCE_TIMEOUT"
+]);
+
+const sleep = (milliseconds: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+
+const isRetriableDatabaseError = (error: unknown) => {
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error).toLowerCase();
+
+  return (
+    RETRIABLE_DB_ERROR_CODES.has(code) ||
+    message.includes("read econnreset") ||
+    message.includes("connection lost") ||
+    message.includes("connection reset")
+  );
+};
+
+const withDatabaseRetry = async <T>(operation: () => Promise<T>, retries = 2): Promise<T> => {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt >= retries || !isRetriableDatabaseError(error)) {
+        throw error;
+      }
+
+      await sleep(150 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+};
+
 const getDatabaseTarget = () => `${DB_HOST}:${DB_PORT}/${DB_NAME}`;
 
 const readSslCa = () => {
@@ -130,7 +176,9 @@ const pool = mysql.createPool({
   ssl: getSslConfig(),
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
 });
 
 (async () => {
@@ -225,16 +273,16 @@ const mapComment = (row: CommentRow): Comment => ({
 
 export const db = {
   async getConnection() {
-    return await pool.getConnection();
+    return await withDatabaseRetry(() => pool.getConnection());
   },
 
   async query<T extends RowDataPacket>(sql: string, params?: DbParam[]): Promise<T[]> {
-    const [rows] = await pool.query<T[]>(sql, params);
+    const [rows] = await withDatabaseRetry(() => pool.query<T[]>(sql, params));
     return rows;
   },
 
   async execute(sql: string, params?: DbParam[]) {
-    const [result] = await pool.execute(sql, params);
+    const [result] = await withDatabaseRetry(() => pool.execute(sql, params));
     return result;
   },
 

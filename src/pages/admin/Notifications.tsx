@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, ApiError, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   AlertCircle,
   CheckCircle,
@@ -86,33 +87,33 @@ const MISSING_INFO_PLACEHOLDER = "[Missing information will be filled automatica
 const FOLLOW_UP_REQUIREMENTS_BLOCK =
   `\n\nOur records show that your alumni profile still needs attention:\n\n${MISSING_INFO_PLACEHOLDER}\n\nPlease log in to the alumni portal and complete or update the missing details.`;
 
-const EMAIL_TEMPLATES: Record<EmailPurpose, { subject: string; message: string }> = {
+const getEmailTemplates = (institutionName: string): Record<EmailPurpose, { subject: string; message: string }> => ({
   graduate_tracer_reminder: {
     subject: "Reminder: Please Complete Your Graduate Tracer Survey",
     message:
-      `Dear Alumni,\n\nPlease complete your Graduate Tracer Survey in the alumni portal. Your response helps the school monitor graduate outcomes, improve academic programs, and support future alumni services.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nThank you for your cooperation.\n\nBest regards,\nSaCC Alumni Association`,
+      `Dear Alumni,\n\nPlease complete your Graduate Tracer Survey in the alumni portal. Your response helps the school monitor graduate outcomes, improve academic programs, and support future alumni services.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nThank you for your cooperation.\n\nBest regards,\n${institutionName} Alumni Association`,
   },
   event_invitation: {
     subject: "Invitation: Upcoming Alumni Event",
     message:
-      "Dear Alumni,\n\nYou are invited to join our upcoming alumni event.\n\nDate: [Date]\nTime: [Time]\nVenue: [Venue]\n\nPlease check the alumni portal or reply to this email for confirmation and event details.\n\nBest regards,\nSaCC Alumni Association",
+      `Dear Alumni,\n\nYou are invited to join our upcoming alumni event.\n\nDate: [Date]\nTime: [Time]\nVenue: [Venue]\n\nPlease check the alumni portal or reply to this email for confirmation and event details.\n\nBest regards,\n${institutionName} Alumni Association`,
   },
   important_announcement: {
-    subject: "Important Announcement from SaCC Alumni Association",
+    subject: `Important Announcement from ${institutionName} Alumni Association`,
     message:
-      "Dear Alumni,\n\n[Write the important announcement here.]\n\nPlease review the details and contact the alumni office if you have questions.\n\nBest regards,\nSaCC Alumni Association",
+      `Dear Alumni,\n\n[Write the important announcement here.]\n\nPlease review the details and contact the alumni office if you have questions.\n\nBest regards,\n${institutionName} Alumni Association`,
   },
   document_request: {
     subject: "Document Request from Alumni Office",
     message:
-      `Dear Alumni,\n\nThe alumni office is requesting the following document or information:\n\n[Document or information needed]${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nPlease submit it through the alumni portal or coordinate with the office as soon as possible.\n\nBest regards,\nSaCC Alumni Association`,
+      `Dear Alumni,\n\nThe alumni office is requesting the following document or information:\n\n[Document or information needed]${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nPlease submit it through the alumni portal or coordinate with the office as soon as possible.\n\nBest regards,\n${institutionName} Alumni Association`,
   },
   account_verification_reminder: {
     subject: "Reminder: Verify Your Alumni Portal Account",
     message:
-      `Dear Alumni,\n\nPlease verify and update your alumni portal account information. Keeping your account current helps the school contact you for tracer, event, and alumni records updates.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nBest regards,\nSaCC Alumni Association`,
+      `Dear Alumni,\n\nPlease verify and update your alumni portal account information. Keeping your account current helps the school contact you for tracer, event, and alumni records updates.${FOLLOW_UP_REQUIREMENTS_BLOCK}\n\nBest regards,\n${institutionName} Alumni Association`,
   },
-};
+});
 
 const statusConfig: Record<EmailStatus, { label: string; color: string; icon: typeof CheckCircle }> = {
   sent: { label: "Sent", color: "bg-emerald-100 text-emerald-700", icon: CheckCircle },
@@ -150,6 +151,8 @@ const getMailingSendErrorMessage = (error: unknown) => {
 };
 
 export default function AdminNotifications() {
+  const { settings } = useSystemSettings();
+  const emailTemplates = useMemo(() => getEmailTemplates(settings.institutionName), [settings.institutionName]);
   const [tab, setTab] = useState<ComposeTab>("compose");
   const [logs, setLogs] = useState<EmailLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
@@ -168,8 +171,8 @@ export default function AdminNotifications() {
   const [selectedReason, setSelectedReason] = useState("");
 
   const [purpose, setPurpose] = useState<EmailPurpose>("graduate_tracer_reminder");
-  const [subject, setSubject] = useState(EMAIL_TEMPLATES.graduate_tracer_reminder.subject);
-  const [message, setMessage] = useState(EMAIL_TEMPLATES.graduate_tracer_reminder.message);
+  const [subject, setSubject] = useState(() => getEmailTemplates(settings.institutionName).graduate_tracer_reminder.subject);
+  const [message, setMessage] = useState(() => getEmailTemplates(settings.institutionName).graduate_tracer_reminder.message);
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState("");
@@ -256,8 +259,8 @@ export default function AdminNotifications() {
 
   const applyTemplate = (nextPurpose: EmailPurpose) => {
     setPurpose(nextPurpose);
-    setSubject(EMAIL_TEMPLATES[nextPurpose].subject);
-    setMessage(EMAIL_TEMPLATES[nextPurpose].message);
+    setSubject(emailTemplates[nextPurpose].subject);
+    setMessage(emailTemplates[nextPurpose].message);
   };
 
   const selectedAlumniIds = useMemo(() => new Set(selectedAlumni.map((alumnus) => alumnus.id)), [selectedAlumni]);
@@ -613,7 +616,7 @@ export default function AdminNotifications() {
                     <FileText className="h-4 w-4 text-navy" />
                     <p className="text-sm font-semibold text-navy-dark">{PURPOSE_LABELS[key]}</p>
                   </div>
-                  <p className="line-clamp-2 text-xs text-muted-foreground">{EMAIL_TEMPLATES[key].subject}</p>
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{emailTemplates[key].subject}</p>
                 </button>
               ))}
             </aside>

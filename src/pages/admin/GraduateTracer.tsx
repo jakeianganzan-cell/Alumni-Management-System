@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { Download, Eye, FileSpreadsheet, FileText, Filter, Loader2, RefreshCw, Search } from "lucide-react";
+import { Download, Eye, FileSpreadsheet, FileText, Filter, Loader2, Search } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
 
@@ -257,8 +257,6 @@ export default function AdminGraduateTracer() {
 
   const allCurrentRowsSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.user_id));
 
-  const topEmployment = analytics?.charts.employmentStatus.slice(0, 4) ?? [];
-  const topCompetencies = analytics?.charts.usefulCompetencies.slice(0, 5) ?? [];
   const actionMessage = downloading
     ? downloading.startsWith("preview-")
       ? "Opening the tracer preview. Please wait..."
@@ -266,88 +264,6 @@ export default function AdminGraduateTracer() {
     : loading
         ? "Loading tracer submissions..."
         : null;
-
-  const analyticsSnapshotSection = (
-    <div className="mt-5 grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-      <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-navy-dark">Tracer Analytics Snapshot</p>
-          </div>
-          <button
-            onClick={() => void fetchAnalytics()}
-            disabled={loadingAnalytics}
-            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loadingAnalytics ? <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 inline h-3.5 w-3.5" />}
-            {loadingAnalytics ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Employment Status</p>
-            <div className="mt-3 space-y-2 text-sm">
-              {topEmployment.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
-              {topEmployment.map((item) => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <span>{item.label}</span>
-                  <span className="font-semibold text-navy-dark">{item.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Top Useful Competencies</p>
-            <div className="mt-3 space-y-2 text-sm">
-              {topCompetencies.length === 0 ? <p className="text-muted-foreground">No data yet.</p> : null}
-              {topCompetencies.map((item) => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <span>{item.label}</span>
-                  <span className="font-semibold text-navy-dark">{item.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Unemployment Rate</p>
-            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.unemploymentRate}%` : "..."}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Self-employed Rate</p>
-            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.selfEmploymentRate}%` : "..."}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Avg. First-job Wait</p>
-            <p className="mt-2 text-xl font-bold text-navy-dark sm:text-2xl">{analytics ? `${analytics.totals.averageWaitingMonths} mo` : "..."}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-border bg-card p-5 shadow-card">
-        <p className="text-sm font-semibold text-navy-dark">Report Exports</p>
-        <div className="mt-4 grid gap-2">
-          <button
-            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
-            disabled={downloading !== null}
-            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span className="text-sm font-medium text-slate-700">{downloading === "report-excel" ? "Preparing Excel export..." : "Excel Workbook Export"}</span>
-            {downloading === "report-excel" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileSpreadsheet className="h-4 w-4 text-slate-500" />}
-          </button>
-          <button
-            onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
-            disabled={downloading !== null}
-            className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span className="text-sm font-medium text-slate-700">{downloading === "report-pdf" ? "Preparing printable report..." : "Printable PDF Report"}</span>
-            {downloading === "report-pdf" ? <Loader2 className="h-4 w-4 animate-spin text-slate-500" /> : <FileText className="h-4 w-4 text-slate-500" />}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <AdminLayout title="Graduate Tracer Management">
@@ -374,8 +290,8 @@ export default function AdminGraduateTracer() {
               <span>{actionMessage}</span>
             </div>
           ) : null}
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -411,22 +327,46 @@ export default function AdminGraduateTracer() {
               <button
                 onClick={() => void fetchRows(1)}
                 disabled={loading}
-                className="rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-9 items-center justify-center rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? "Applying..." : "Apply"}
               </button>
             </div>
-            <button
-              onClick={() => void runBulkPdfDownload()}
-              disabled={downloading !== null}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-navy hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {downloading === "bulk-pdf"
-                ? "Preparing PDFs..."
-                : selectedIds.size > 0
-                  ? `Download Selected PDFs (${selectedIds.size})`
-                  : "Download Filtered PDFs"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=excel`, `graduate-tracer-report.xls`, "report-excel")}
+                disabled={downloading !== null}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Excel Workbook Export"
+              >
+                {downloading === "report-excel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+                <span>{downloading === "report-excel" ? "Preparing..." : "Excel"}</span>
+              </button>
+              <button
+                onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
+                disabled={downloading !== null}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Printable PDF Report"
+              >
+                {downloading === "report-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                <span>{downloading === "report-pdf" ? "Preparing..." : "PDF Report"}</span>
+              </button>
+              <button
+                onClick={() => void runBulkPdfDownload()}
+                disabled={downloading !== null}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-navy hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                title={selectedIds.size > 0 ? "Download Selected PDFs" : "Download Filtered PDFs"}
+              >
+                {downloading === "bulk-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                <span>
+                  {downloading === "bulk-pdf"
+                    ? "Preparing..."
+                    : selectedIds.size > 0
+                      ? `Selected PDFs (${selectedIds.size})`
+                      : "Filtered PDFs"}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -505,7 +445,7 @@ export default function AdminGraduateTracer() {
                         </span>
                       </td>
                       <td className="px-4 py-3" data-label="Actions">
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <button
                             onClick={() => void runPdfPreview(`${API_URL}/admin/tracer/${row.user_id}/pdf/preview`, `preview-${row.id}`)}
                             disabled={downloading !== null}
@@ -554,7 +494,6 @@ export default function AdminGraduateTracer() {
         </div>
       </div>
 
-      {analyticsSnapshotSection}
     </AdminLayout>
   );
 }

@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Calendar, Bell, ChevronRight, MessageCircle, Send, CheckCircle, UserCheck, XCircle } from "lucide-react";
+import { Calendar, Bell, ChevronRight, MessageCircle, Send, CheckCircle, UserCheck, XCircle, FolderKanban } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import salayBackground from "@/assets/salay-background.png";
 import DurationBadge from "@/components/DurationBadge";
 import HomepageSlideshow from "@/components/HomepageSlideshow";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 interface CommentData {
   id: string;
@@ -52,6 +53,25 @@ interface DonationActivity {
   donorName: string;
 }
 
+interface AlumniProject {
+  id: number;
+  title: string;
+  description: string;
+  category: string;
+  batchYear: string;
+  leadOfficer: string;
+  leadAlumni: string;
+  organizationName: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  estimatedValue: number;
+  fundingSource: string;
+  beneficiaries: string;
+  accomplishments: string;
+  remarks: string;
+  fileCount: number;
+}
 interface DashboardResponse {
   events?: AnnouncementData[];
   surveys?: SurveyData[];
@@ -60,6 +80,7 @@ interface DashboardResponse {
   comments?: DashboardCommentResponse[];
   slideshow?: SlideData[];
   donationUpdates?: DonationActivity[];
+  alumniProjects?: AlumniProject[];
 }
 
 type EventRsvpStatus = "Going" | "Interested" | "Not Going";
@@ -194,6 +215,7 @@ const formatActivityDate = (value: string | null) => {
 
 export default function AlumniDashboard() {
   const { user, profile } = useAuth();
+  const { settings } = useSystemSettings();
   const [announcements, setAnnouncements] = useState<AnnouncementData[]>([]);
   const [surveys, setSurveys] = useState<SurveyData[]>([]);
   const [slideshow, setSlideshow] = useState<SlideData[]>([]);
@@ -209,6 +231,8 @@ export default function AlumniDashboard() {
   const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [donationActivity, setDonationActivity] = useState<DonationActivity[]>([]);
+  const [alumniProjects, setAlumniProjects] = useState<AlumniProject[]>([]);
+  const [selectedProject, setSelectedProject] = useState<AlumniProject | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -226,6 +250,7 @@ export default function AlumniDashboard() {
         setSurveys(data.surveys || []);
         setSlideshow(data.slideshow || []);
         setDonationActivity((data.donationUpdates || []).slice(0, 4));
+        setAlumniProjects((data.alumniProjects || []).slice(0, 8));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
           (data.officers || []).map((officer) => ({
@@ -437,7 +462,7 @@ export default function AlumniDashboard() {
 
   if (loading) {
     return (
-      <AlumniLayout title="Salay Community College">
+      <AlumniLayout title={settings.institutionName}>
         <div className="flex justify-center py-12">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-navy border-t-transparent" />
         </div>
@@ -446,7 +471,7 @@ export default function AlumniDashboard() {
   }
 
   return (
-    <AlumniLayout title="Salay Community College" subtitle="SaCC Alumni Association">
+    <AlumniLayout title={settings.institutionName} subtitle={settings.systemShortName}>
       <HomepageSlideshow slides={slideshow} className="mb-8" />
 
       <div
@@ -461,7 +486,7 @@ export default function AlumniDashboard() {
           <div className="mb-6 text-center md:mb-10">
             <h3 className="font-display text-xl font-bold text-white md:text-2xl">Organization Chart</h3>
             <p className="mt-1 text-sm text-white/75">
-              SaCC Alumni Association Officers{currentSchoolYear ? ` | ${currentSchoolYear}` : ""}
+              Alumni Association Officers{currentSchoolYear ? ` | ${currentSchoolYear}` : ""}
             </p>
             <div className="mx-auto mt-3 h-1 w-16 rounded-full bg-gold" />
           </div>
@@ -577,6 +602,17 @@ export default function AlumniDashboard() {
           ))}
         </DashboardContentSection>
 
+        <DashboardContentSection
+          title="Alumni Projects"
+          description="Current and completed alumni initiatives posted by the institution."
+          count={alumniProjects.length}
+          emptyText="No alumni projects are posted yet."
+        >
+          {alumniProjects.map((project) => (
+            <ProjectCard key={project.id} project={project} onOpen={setSelectedProject} />
+          ))}
+        </DashboardContentSection>
+
       </div>
 
       <DonationActivitySection donations={donationActivity} />
@@ -584,7 +620,7 @@ export default function AlumniDashboard() {
       <div className="mb-4 hidden items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-display font-bold text-navy-dark">Announcements, Events & Surveys</h3>
-          <p className="text-xs text-muted-foreground">Stay updated with the latest activities, alumni notices, and response requests from SaCC Alumni.</p>
+          <p className="text-xs text-muted-foreground">Stay updated with the latest activities, alumni notices, and response requests from {settings.institutionName}.</p>
         </div>
         <div className="flex items-center gap-1">
           <Bell className="h-4 w-4 text-navy" />
@@ -767,10 +803,109 @@ export default function AlumniDashboard() {
           )}
         </DialogContent>
       </Dialog>
+      <Dialog open={Boolean(selectedProject)} onOpenChange={(open) => !open && setSelectedProject(null)}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          {selectedProject && (
+            <>
+              <DialogHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className={projectStatusClass(selectedProject.status)}>{selectedProject.status || "Planned"}</Badge>
+                  <Badge variant="outline">{selectedProject.category || "Project"}</Badge>
+                  {selectedProject.batchYear && <Badge variant="outline">Batch {selectedProject.batchYear}</Badge>}
+                </div>
+                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedProject.title}</DialogTitle>
+                <DialogDescription>Complete alumni project details.</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ProjectDetail label="Schedule" value={projectSchedule(selectedProject)} />
+                  <ProjectDetail label="Lead / In-charge" value={selectedProject.leadOfficer || selectedProject.leadAlumni || "To be announced"} />
+                  <ProjectDetail label="Estimated Value" value={formatDonationAmount(selectedProject.estimatedValue || 0)} />
+                  <ProjectDetail label="Funding Source" value={selectedProject.fundingSource || "Not specified"} />
+                  <ProjectDetail label="Beneficiaries" value={selectedProject.beneficiaries || "Not specified"} />
+                  <ProjectDetail label="Attachments" value={`${selectedProject.fileCount || 0} file${selectedProject.fileCount === 1 ? "" : "s"}`} />
+                </div>
+
+                <div className="rounded-2xl border border-border/70 bg-muted/15 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Project description</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground">
+                    {selectedProject.description || "No description has been posted yet."}
+                  </p>
+                </div>
+
+                {selectedProject.accomplishments && (
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Accomplishments</p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-emerald-900">{selectedProject.accomplishments}</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </AlumniLayout>
   );
 }
 
+function projectStatusClass(status: string) {
+  const normalized = String(status || "Planned").toLowerCase();
+  if (normalized === "ongoing") return "bg-blue-100 text-blue-800 hover:bg-blue-100";
+  if (normalized === "completed") return "bg-emerald-100 text-emerald-800 hover:bg-emerald-100";
+  if (normalized === "cancelled") return "bg-rose-100 text-rose-800 hover:bg-rose-100";
+  return "bg-amber-100 text-amber-800 hover:bg-amber-100";
+}
+
+function projectSchedule(project: AlumniProject) {
+  const start = formatActivityDate(project.startDate || null);
+  const end = project.endDate ? formatActivityDate(project.endDate) : "Open schedule";
+  return project.startDate || project.endDate ? `${start} - ${end}` : "Schedule to be announced";
+}
+
+function ProjectDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-navy-dark">{value}</p>
+    </div>
+  );
+}
+
+function ProjectCard({ project, onOpen }: { project: AlumniProject; onOpen: (project: AlumniProject) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(project)}
+      className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+    >
+      <div className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-700 transition group-hover:bg-blue-100">
+        <FolderKanban className="h-5 w-5" />
+      </div>
+      <div className="mb-3 flex max-w-[calc(100%-3rem)] flex-wrap items-center gap-2">
+        <Badge className={projectStatusClass(project.status)}>{project.status || "Planned"}</Badge>
+        <Badge variant="outline">{project.category || "Project"}</Badge>
+      </div>
+      <h4 className="line-clamp-2 text-base font-semibold leading-tight text-navy-dark md:text-sm">{project.title}</h4>
+      <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground md:mt-1 md:line-clamp-2 md:text-xs md:leading-5">
+        {project.description || project.accomplishments || "Project details will be posted by the alumni office."}
+      </p>
+      <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Calendar className="h-3.5 w-3.5 text-navy" />
+          {projectSchedule(project)}
+        </span>
+        <span className="truncate font-semibold text-navy-dark">
+          {project.leadOfficer || project.leadAlumni || "Lead to be announced"}
+        </span>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {project.batchYear && <Badge variant="outline">Batch {project.batchYear}</Badge>}
+        {project.estimatedValue > 0 && <Badge variant="outline">{formatDonationAmount(project.estimatedValue)}</Badge>}
+      </div>
+    </button>
+  );
+}
 function DashboardContentSection({
   title,
   description,

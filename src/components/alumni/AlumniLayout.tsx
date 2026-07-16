@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import NotificationBell from "@/components/NotificationBell";
 import { resolveAssetUrl } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   Calendar,
   ChevronDown,
@@ -49,16 +50,20 @@ export default function AlumniLayout({
   subtitle?: string;
 }) {
   const { profile, signOut } = useAuth();
+  const { settings } = useSystemSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
+  const systemLogo = resolveAssetUrl(settings.logoPath) || ustpLogo;
   const visibleNavItems = isMobile ? NAV_ITEMS.filter((item) => item.path !== "/alumni/about") : NAV_ITEMS;
   const mobileHeaderTitle = title;
 
   const handleLogout = () => {
+    if (!window.confirm("Are you sure you want to log out?")) return;
+
     signOut();
     navigate("/");
   };
@@ -75,8 +80,11 @@ export default function AlumniLayout({
 
       <div className="flex flex-col items-center px-5 pb-5 pt-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
         <div className="portal-logo-frame">
-          <img src={ustpLogo} alt="SaCC" />
+          <img src={systemLogo} alt={settings.institutionName || settings.systemName} />
         </div>
+        <p className="mt-3 max-w-full truncate text-xs font-bold uppercase tracking-[0.14em] text-white">
+          {settings.systemShortName}
+        </p>
       </div>
 
       <div className="px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
@@ -142,7 +150,7 @@ export default function AlumniLayout({
                 className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm"
                 aria-label="Go to alumni dashboard"
               >
-                <img src={ustpLogo} alt="SaCC" className="h-8 w-8 object-contain" />
+                <img src={systemLogo} alt={settings.institutionName || settings.systemName} className="h-8 w-8 object-contain" />
               </button>
             </div>
           ) : (

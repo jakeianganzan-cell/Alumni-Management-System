@@ -1,4 +1,9 @@
-export const COURSE_OPTIONS = [
+export interface CourseOption {
+  code: string;
+  label: string;
+}
+
+export const COURSE_OPTIONS: CourseOption[] = [
   {
     code: "BTLED",
     label: "Bachelor of Technology and Livelihood Education (BTLED)",
@@ -15,22 +20,51 @@ export const COURSE_OPTIONS = [
     code: "BSM",
     label: "Bachelor of Science in Midwifery (BSM)",
   },
-] as const;
+];
 
-export type CourseCode = (typeof COURSE_OPTIONS)[number]["code"];
+export type CourseCode = string;
 
-export const COURSE_LABELS: Record<CourseCode, string> = COURSE_OPTIONS.reduce(
-  (labels, option) => {
+export const normalizeCourseKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, " ");
+
+export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
+  const source = Array.isArray(value) ? value : COURSE_OPTIONS;
+  const seen = new Set<string>();
+  const normalized: CourseOption[] = [];
+
+  for (const item of source) {
+    const rawCode = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.code || "");
+    const code = normalizeCourseKey(rawCode);
+    const rawLabel = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.label || "");
+    const label = rawLabel.trim().replace(/\s+/g, " ") || code;
+
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    normalized.push({ code, label });
+  }
+
+  return normalized.length > 0 ? normalized : COURSE_OPTIONS;
+};
+
+export const getCourseLabels = (options: CourseOption[] = COURSE_OPTIONS): Record<string, string> =>
+  normalizeCourseOptions(options).reduce<Record<string, string>>((labels, option) => {
     labels[option.code] = option.label;
     return labels;
-  },
-  {} as Record<CourseCode, string>,
-);
+  }, {});
 
+export const COURSE_LABELS = getCourseLabels(COURSE_OPTIONS);
 export const SYSTEM_COURSES = COURSE_OPTIONS.map((option) => option.code);
 export const ALL_COURSES_OPTION = "All Courses";
 
-export const formatCourseLabel = (value: string | null | undefined) => {
+export const findCourseOption = (value: unknown, options: CourseOption[] = COURSE_OPTIONS) => {
+  const normalized = normalizeCourseKey(String(value || ""));
+  if (!normalized) return null;
+
+  return normalizeCourseOptions(options).find((option) =>
+    normalizeCourseKey(option.code) === normalized || normalizeCourseKey(option.label) === normalized
+  ) || null;
+};
+
+export const formatCourseLabel = (value: string | null | undefined, options: CourseOption[] = COURSE_OPTIONS) => {
   if (!value) return "";
-  return COURSE_LABELS[value as CourseCode] ?? value;
+  return findCourseOption(value, options)?.label ?? value;
 };

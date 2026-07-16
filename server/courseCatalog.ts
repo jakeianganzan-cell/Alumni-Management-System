@@ -1,4 +1,12 @@
-export const COURSE_OPTIONS = [
+export interface CourseOption {
+  code: string;
+  label: string;
+  chairmanEmail?: string;
+  chairmanName?: string;
+  chairmanPassword?: string;
+}
+
+export const COURSE_OPTIONS: CourseOption[] = [
   {
     code: "BTLED",
     label: "Bachelor of Technology and Livelihood Education (BTLED)",
@@ -27,11 +35,11 @@ export const COURSE_OPTIONS = [
     chairmanName: "BSM Department Chairman",
     chairmanPassword: "ChairmanBSM2026!",
   },
-] as const;
+];
 
-export type CourseCode = (typeof COURSE_OPTIONS)[number]["code"];
+export type CourseCode = string;
 
-const COURSE_ALIASES: Record<string, CourseCode> = {
+const COURSE_ALIASES: Record<string, string> = {
   BTLED: "BTLED",
   "BACHELOR OF TECHNOLOGY AND LIVELIHOOD EDUCATION": "BTLED",
   BECED: "BECED",
@@ -43,32 +51,55 @@ const COURSE_ALIASES: Record<string, CourseCode> = {
   "BACHELOR OF SCIENCE IN MIDWIFERY": "BSM",
 };
 
-export const COURSE_LABELS: Record<CourseCode, string> = COURSE_OPTIONS.reduce(
-  (labels, option) => {
+const normalizeCourseKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, " ");
+
+export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
+  const source = Array.isArray(value) ? value : COURSE_OPTIONS;
+  const seen = new Set<string>();
+  const normalized: CourseOption[] = [];
+
+  for (const item of source) {
+    const rawCode = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.code || "");
+    const code = normalizeCourseKey(rawCode);
+    const rawLabel = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.label || "");
+    const label = rawLabel.trim().replace(/\s+/g, " ") || code;
+
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    normalized.push({ code, label });
+  }
+
+  return normalized.length > 0 ? normalized : COURSE_OPTIONS.map(({ code, label }) => ({ code, label }));
+};
+
+export const getCourseLabels = (options: CourseOption[] = COURSE_OPTIONS): Record<string, string> =>
+  normalizeCourseOptions(options).reduce<Record<string, string>>((labels, option) => {
     labels[option.code] = option.label;
     return labels;
-  },
-  {} as Record<CourseCode, string>,
-);
+  }, {});
 
+export const COURSE_LABELS = getCourseLabels(COURSE_OPTIONS);
 export const SYSTEM_COURSES = COURSE_OPTIONS.map((option) => option.code);
 export const SYSTEM_COURSE_SET = new Set<string>(SYSTEM_COURSES);
 
-const normalizeCourseKey = (value: string) => value.trim().toUpperCase().replace(/\s+/g, " ");
-
-export const normalizeCourseCode = (value: unknown): CourseCode | null => {
+export const normalizeCourseCode = (value: unknown, options: CourseOption[] = COURSE_OPTIONS): CourseCode | null => {
   const normalized = normalizeCourseKey(String(value || ""));
   if (!normalized) return null;
-  const directMatch = COURSE_ALIASES[normalized];
-  if (directMatch) return directMatch;
 
-  const labelMatch = COURSE_OPTIONS.find((option) => normalizeCourseKey(option.label) === normalized);
+  const courseOptions = normalizeCourseOptions(options);
+  const directMatch = courseOptions.find((option) => normalizeCourseKey(option.code) === normalized);
+  if (directMatch) return directMatch.code;
+
+  const labelMatch = courseOptions.find((option) => normalizeCourseKey(option.label) === normalized);
   if (labelMatch) return labelMatch.code;
+
+  const aliasMatch = COURSE_ALIASES[normalized];
+  if (aliasMatch && courseOptions.some((option) => option.code === aliasMatch)) return aliasMatch;
 
   return null;
 };
 
-export const isSupportedCourse = (value: unknown): value is CourseCode => {
-  const normalized = normalizeCourseCode(value);
+export const isSupportedCourse = (value: unknown, options: CourseOption[] = COURSE_OPTIONS): value is CourseCode => {
+  const normalized = normalizeCourseCode(value, options);
   return normalized !== null;
 };

@@ -22,7 +22,7 @@ export interface TracerPdfRecord {
   ched_payload?: Record<string, unknown> | null;
 }
 
-const SCHOOL_NAME = "Salay Community College";
+const SCHOOL_NAME = process.env.INSTITUTION_NAME || "Your Institution";
 
 const isUsableExecutable = (candidate?: string | null) => {
   if (!candidate) {
@@ -95,7 +95,7 @@ const loadPngDataUri = (candidates: string[]) => {
   return "";
 };
 
-const SACC_LOGO_DATA_URI = loadPngDataUri([
+const SCHOOL_LOGO_DATA_URI = loadPngDataUri([
   path.resolve(process.cwd(), "src/assets/salay.png"),
   path.resolve(process.cwd(), "../src/assets/salay.png"),
 ]);
@@ -454,7 +454,7 @@ export const renderTracerPdfHtml = (record: TracerPdfRecord) => {
     <body>
       <div class="document">
         <div class="header">
-          <div class="seal-logo">${SACC_LOGO_DATA_URI ? `<img src="${SACC_LOGO_DATA_URI}" alt="SaCC logo" />` : "SaCC"}</div>
+          <div class="seal-logo">${SCHOOL_LOGO_DATA_URI ? `<img src="${SCHOOL_LOGO_DATA_URI}" alt="Institution logo" />` : "Logo"}</div>
           <div>
             <p>REPUBLIC OF THE PHILIPPINES</p>
             <p>Commission on Higher Education</p>

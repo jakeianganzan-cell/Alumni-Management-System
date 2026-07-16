@@ -60,7 +60,7 @@ interface SimpleCountRow extends RowDataPacket {
   totalAlumni?: number;
 }
 
-const SCHOOL_NAME = "Salay Community College";
+const SCHOOL_NAME = process.env.INSTITUTION_NAME || "Your Institution";
 const SCHOOL_OFFICE = "Alumni Affairs and Graduate Tracer Unit";
 const REPORT_TITLE = "Graduate Tracer Analytics Report";
 const REPORT_SUBTITLE = "CHED-ready institutional reporting template";

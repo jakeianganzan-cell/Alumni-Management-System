@@ -75,7 +75,7 @@ const formatConcernDate = (value?: string | null) => {
   });
 };
 
-export default function ReportExportsPanel() {
+export default function ReportExportsPanel({ showExports = false }: { showExports?: boolean }) {
   const { profile, user } = useAuth();
   const [generating, setGenerating] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -335,6 +335,7 @@ export default function ReportExportsPanel() {
 
   return (
     <div className="space-y-6">
+      {showExports && (
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
       <div className="border-b border-border pb-4">
         <h3 className="font-display text-2xl font-bold text-navy-dark">Export Center</h3>
@@ -385,6 +386,7 @@ export default function ReportExportsPanel() {
         </div>
       )}
       </div>
+      )}
 
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">

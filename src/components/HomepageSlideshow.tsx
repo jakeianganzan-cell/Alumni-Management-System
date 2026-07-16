@@ -8,6 +8,7 @@ import {
   type SlideMediaType,
 } from "@/lib/slideshowMedia";
 import { Loader2, Play, Volume2, VolumeX } from "lucide-react";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 type YouTubePlayer = {
   destroy: () => void;
@@ -69,13 +70,6 @@ interface PreparedSlide extends HomepageSlide {
   resolvedUrl: string;
   mediaKind: SlideMediaType;
 }
-
-const fallbackSlide: HomepageSlide = {
-  id: "homepage-fallback",
-  title: "Salay Community College Alumni",
-  caption: "Featured announcements, events, achievements, and alumni updates will appear here.",
-  imageUrl: null,
-};
 
 let youtubeApiPromise: Promise<void> | null = null;
 
@@ -425,6 +419,7 @@ function UploadedVideoSlide({
 }
 
 export default function HomepageSlideshow({ slides, intervalMs = 6000, className = "" }: HomepageSlideshowProps) {
+  const { settings } = useSystemSettings();
   const [activeSlide, setActiveSlide] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
   const [videoMuted, setVideoMuted] = useState(true);
@@ -432,7 +427,13 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
   const [videoDurations, setVideoDurations] = useState<Record<string, number>>({});
   const [videoProgress, setVideoProgress] = useState<Record<string, number>>({});
 
-  const visibleSlides = useMemo(() => (slides.length > 0 ? slides : [fallbackSlide]).map(prepareSlide), [slides]);
+  const fallbackSlide = useMemo<HomepageSlide>(() => ({
+    id: "homepage-fallback",
+    title: `${settings.institutionName} Alumni`,
+    caption: "Featured announcements, events, achievements, and alumni updates will appear here.",
+    imageUrl: null,
+  }), [settings.institutionName]);
+  const visibleSlides = useMemo(() => (slides.length > 0 ? slides : [fallbackSlide]).map(prepareSlide), [fallbackSlide, slides]);
   const hasMultipleSlides = visibleSlides.length > 1;
   const currentSlide = visibleSlides[activeSlide] || visibleSlides[0];
   const currentIsVideo = currentSlide?.mediaKind === "video" || currentSlide?.mediaKind === "youtube";

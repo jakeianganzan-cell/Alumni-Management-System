@@ -26,7 +26,7 @@ router.post("/send-reminder", async (req, res) => {
         <h2>Alumni Reminder</h2>
         <p>${String(message)}</p>
         <br/>
-        <p>Thank you,<br/>${process.env.BREVO_SENDER_NAME || "Salay Community College"}</p>
+        <p>Thank you,<br/>${process.env.BREVO_SENDER_NAME || "Alumni Office"}</p>
       `,
     });
 

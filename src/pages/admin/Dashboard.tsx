@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { Calendar, GraduationCap, Heart, MapPin, TrendingUp, Users, Briefcase, Clock3 } from "lucide-react";
+import { Calendar, Heart, MapPin, TrendingUp, Users, Briefcase, Clock3, MonitorSmartphone } from "lucide-react";
 import { API_URL, getAuthToken, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -84,6 +84,12 @@ interface RecentDonor {
   message?: string | null;
 }
 
+interface SessionStats {
+  activeUsers: number;
+  activeSessions: number;
+}
+
+
 interface DashboardResponse {
   totalAlumni?: number;
   tracerCount?: number;
@@ -95,6 +101,7 @@ interface DashboardResponse {
   courseContributions?: CourseContributionPoint[];
   donationTrends?: DonationTrendPoint[];
   recentDonors?: RecentDonor[];
+  sessionStats?: SessionStats;
 }
 
 const formatCurrency = (value: number) =>
@@ -107,22 +114,34 @@ const formatDate = (value: string | null) => {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 };
 
+
 const chartColors = {
-  maroon: "hsl(0 100% 17%)",
-  maroonLight: "hsl(0 82% 28%)",
-  gray: "hsl(0 0% 32%)",
-  slate: "hsl(215 22% 42%)",
-  blue: "hsl(217 72% 45%)",
-  green: "hsl(151 65% 38%)",
-  amber: "hsl(38 92% 48%)",
+  blue: "#2563eb",
+  emerald: "#10b981",
+  amber: "#f59e0b",
+  rose: "#f43f5e",
+  slate: "#64748b",
+  grid: "#e2e8f0",
+};
+
+const tooltipStyle = {
+  border: "1px solid #e2e8f0",
+  borderRadius: "12px",
+  boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)",
+  fontSize: "12px",
+};
+
+const emptySessionStats: SessionStats = {
+  activeUsers: 0,
+  activeSessions: 0,
 };
 
 const formatCompactNumber = (value: number) =>
   value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 export default function AdminDashboard() {
+  const { settings } = useSystemSettings();
   const [totalAlumni, setTotalAlumni] = useState(0);
-  const [tracerCount, setTracerCount] = useState(0);
   const [totalDonations, setTotalDonations] = useState(0);
   const [recentTracer, setRecentTracer] = useState<TracerRow[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<EventRow[]>([]);
@@ -130,6 +149,7 @@ export default function AdminDashboard() {
   const [courseContributions, setCourseContributions] = useState<CourseContributionPoint[]>([]);
   const [donationTrends, setDonationTrends] = useState<DonationTrendPoint[]>([]);
   const [recentDonors, setRecentDonors] = useState<RecentDonor[]>([]);
+  const [sessionStats, setSessionStats] = useState<SessionStats>(emptySessionStats);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -154,7 +174,6 @@ export default function AdminDashboard() {
       const tracerRows = data.recentTracer || data.tracerData || [];
 
       setTotalAlumni(data.totalAlumni || 0);
-      setTracerCount(data.tracerCount || tracerRows.length || 0);
       setTotalDonations(data.totalDonations || 0);
       setRecentTracer(tracerRows.slice(0, 6));
       setUpcomingEvents((data.upcomingEvents || []).slice(0, 5));
@@ -162,6 +181,7 @@ export default function AdminDashboard() {
       setCourseContributions(data.courseContributions || []);
       setDonationTrends(data.donationTrends || []);
       setRecentDonors((data.recentDonors || []).slice(0, 5));
+      setSessionStats(data.sessionStats || emptySessionStats);
     } catch (err) {
       console.error("Dashboard error:", err);
     } finally {
@@ -195,9 +215,10 @@ export default function AdminDashboard() {
   };
 
   const stats = [
+    { label: "Active Users", value: sessionStats.activeUsers.toLocaleString(), icon: Users, color: "bg-navy text-white" },
+    { label: "Active Sessions", value: sessionStats.activeSessions.toLocaleString(), icon: MonitorSmartphone, color: "bg-blue-500 text-white" },
     { label: "Total Alumni", value: totalAlumni.toLocaleString(), icon: Users, color: "bg-navy text-white" },
     { label: "Employment Rate", value: `${employmentRate}%`, icon: Briefcase, color: "bg-emerald-500 text-white" },
-    { label: "Tracer Responses", value: tracerCount.toLocaleString(), icon: GraduationCap, color: "bg-blue-500 text-white" },
     { label: "Total Donations", value: formatCurrency(totalDonations), icon: Heart, color: "bg-rose-500 text-white" },
     { label: "Upcoming Events", value: upcomingEvents.length.toString(), icon: Calendar, color: "bg-gold text-navy-dark" },
   ];
@@ -211,13 +232,14 @@ export default function AdminDashboard() {
     [courseContributions]
   );
 
+  const topCourseChartData = useMemo(() => courseChartData.slice(0, 8), [courseChartData]);
+
   const hasMonthlyData = monthlyEngagement.some((item) => item.total > 0);
   const hasCourseData = courseContributions.some((item) => item.contributionScore > 0);
-  const topDonationTrend = donationTrends.reduce((sum, item) => sum + item.donatedAmount, 0);
 
   return (
-    <AdminLayout title="Dashboard" subtitle="SaCC Alumni Management System Overview">
-      <div className="grid grid-cols-1 gap-3 mb-5 sm:grid-cols-2 lg:grid-cols-5">
+    <AdminLayout title="Dashboard" subtitle={`${settings.institutionName} ${settings.systemName} Overview`}>
+      <div className="grid grid-cols-1 gap-3 mb-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {stats.map((stat, index) => (
           <div key={index} className="bg-card rounded-xl border border-border shadow-card p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -233,148 +255,6 @@ export default function AdminDashboard() {
             </div>
           </div>
         ))}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
-        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Engagement Per Month</h3>
-          </div>
-
-          <div className="p-4">
-            {loading ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading engagement graph...</div>
-            ) : !monthlyEngagement.length || !hasMonthlyData ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No monthly engagement activity found yet.</div>
-            ) : (
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyEngagement} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 88%)" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <Tooltip
-                      cursor={{ fill: "hsl(0 100% 17% / 0.06)" }}
-                      formatter={(value, name) => {
-                        const labels: Record<string, string> = {
-                          logins: "Logins",
-                          comments: "Comments",
-                          eventInterest: "Event Interest",
-                          surveyResponses: "Survey Responses",
-                          announcementInteractions: "Announcement Interactions",
-                          freedomWall: "Freedom Wall",
-                        };
-                        return [formatCompactNumber(Number(value)), labels[String(name)] || String(name)];
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: "11px" }} />
-                    <Bar dataKey="logins" name="Logins" stackId="activity" fill={chartColors.maroon} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="comments" name="Comments" stackId="activity" fill={chartColors.gray} />
-                    <Bar dataKey="eventInterest" name="Event Interest" stackId="activity" fill={chartColors.blue} />
-                    <Bar dataKey="surveyResponses" name="Survey Responses" stackId="activity" fill={chartColors.green} />
-                    <Bar dataKey="announcementInteractions" name="Announcements" stackId="activity" fill={chartColors.amber} />
-                    <Bar dataKey="freedomWall" name="Freedom Wall" stackId="activity" fill={chartColors.slate} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Contribution by Course</h3>
-          </div>
-
-          <div className="p-4">
-            {loading ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading contribution graph...</div>
-            ) : !courseChartData.length || !hasCourseData ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No course contribution activity found yet.</div>
-            ) : (
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={courseChartData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 88%)" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <YAxis type="category" dataKey="shortCourse" width={120} interval={0} tick={{ fontSize: 11, fill: "hsl(0 0% 35%)" }} axisLine={false} tickLine={false} />
-                    <Tooltip
-                      cursor={{ fill: "hsl(0 100% 17% / 0.06)" }}
-                      formatter={(value, name, item) => {
-                        const payload = item?.payload as CourseContributionPoint | undefined;
-                        if (name === "contributionScore" && payload) {
-                          return [
-                            `${formatCompactNumber(Number(value))} score`,
-                            `${payload.events} events, ${payload.surveyResponses} surveys, ${payload.donations} donations`,
-                          ];
-                        }
-                        return [formatCompactNumber(Number(value)), String(name)];
-                      }}
-                      labelFormatter={(label) => {
-                        const match = courseChartData.find((item) => item.shortCourse === label);
-                        return match?.courseLabel || label;
-                      }}
-                    />
-                    <Bar dataKey="contributionScore" name="Contribution Score" fill={chartColors.maroonLight} radius={[0, 6, 6, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 mb-4 xl:grid-cols-2">
-        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Recent Donors</h3>
-          </div>
-          <div className="divide-y divide-border">
-            {recentDonors.length > 0 ? (
-              recentDonors.map((donor) => (
-                <div key={donor.id} className="flex items-start justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-navy-dark">{donor.donorName}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donor.purpose || donor.message || "General donation"}</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">{formatDate(donor.donatedAt)}</p>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
-                    {formatCurrency(donor.amount)}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No recent donor activity yet.
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Donation Trends</h3>
-          </div>
-          <div className="p-4">
-            {donationTrends.some((item) => item.donatedAmount > 0) ? (
-              <div className="h-[280px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={donationTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 88%)" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <Tooltip formatter={(value, name) => [name === "donatedAmount" ? formatCurrency(Number(value)) : formatCompactNumber(Number(value)), name === "donatedAmount" ? "Approved Amount" : "Donation Count"]} />
-                    <Line type="monotone" dataKey="donatedAmount" stroke={chartColors.maroon} strokeWidth={3} dot={{ r: 3, fill: chartColors.maroon }} />
-                    <Line type="monotone" dataKey="donationCount" stroke={chartColors.green} strokeWidth={2} dot={{ r: 3, fill: chartColors.green }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">No approved donation trend data yet.</div>
-            )}
-          </div>
-        </section>
-
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
@@ -470,6 +350,139 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b bg-muted/30">
+            <h3 className="font-bold text-sm text-navy-dark">Engagement Per Month</h3>
+          </div>
+
+          <div className="p-4">
+            {loading ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading engagement graph...</div>
+            ) : !monthlyEngagement.length || !hasMonthlyData ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No monthly engagement activity found yet.</div>
+            ) : (
+              <div className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyEngagement} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      cursor={{ fill: "rgba(37, 99, 235, 0.08)" }}
+                      formatter={(value) => [formatCompactNumber(Number(value)), "Total activity"]}
+                    />
+                    <Bar dataKey="total" name="Total activity" fill={chartColors.blue} radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b bg-muted/30">
+            <h3 className="font-bold text-sm text-navy-dark">Contribution by Course</h3>
+          </div>
+
+          <div className="p-4">
+            {loading ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading contribution graph...</div>
+            ) : !topCourseChartData.length || !hasCourseData ? (
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No course contribution activity found yet.</div>
+            ) : (
+              <div className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topCourseChartData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <YAxis type="category" dataKey="shortCourse" width={120} interval={0} tick={{ fontSize: 11, fill: "hsl(0 0% 35%)" }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      cursor={{ fill: "rgba(37, 99, 235, 0.08)" }}
+                      formatter={(value, name, item) => {
+                        const payload = item?.payload as CourseContributionPoint | undefined;
+                        if (name === "contributionScore" && payload) {
+                          return [
+                            `${formatCompactNumber(Number(value))} score`,
+                            `${payload.events} events, ${payload.surveyResponses} surveys, ${payload.donations} donations`,
+                          ];
+                        }
+                        return [formatCompactNumber(Number(value)), String(name)];
+                      }}
+                      labelFormatter={(label) => {
+                        const match = topCourseChartData.find((item) => item.shortCourse === label);
+                        return match?.courseLabel || label;
+                      }}
+                    />
+                    <Bar dataKey="contributionScore" name="Contribution Score" fill={chartColors.emerald} radius={[0, 6, 6, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 mb-4 xl:grid-cols-2">
+        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b bg-muted/30">
+            <h3 className="font-bold text-sm text-navy-dark">Recent Donors</h3>
+          </div>
+          <div className="divide-y divide-border">
+            {recentDonors.length > 0 ? (
+              recentDonors.map((donor) => (
+                <div key={donor.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-navy-dark">{donor.donorName}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donor.purpose || donor.message || "General donation"}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{formatDate(donor.donatedAt)}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
+                    {formatCurrency(donor.amount)}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No recent donor activity yet.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b bg-muted/30">
+            <h3 className="font-bold text-sm text-navy-dark">Donation Trends</h3>
+          </div>
+          <div className="p-4">
+            {donationTrends.some((item) => item.donatedAmount > 0) ? (
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={donationTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCurrency(Number(value)), "Approved donations"]} />
+                    <Line type="monotone" dataKey="donatedAmount" stroke={chartColors.rose} strokeWidth={3} dot={{ r: 3, fill: chartColors.rose }} activeDot={{ r: 5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">No approved donation trend data yet.</div>
+            )}
+          </div>
+        </section>
+
+      </div>
+
+      
     </AdminLayout>
   );
 }
+
+
+
+
+
+

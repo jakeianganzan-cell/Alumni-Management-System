@@ -5,19 +5,25 @@ import { canAccessModule, type OfficerRole } from "@/lib/rbac";
 import type { AdminModule } from "@/lib/rbac";
 import { useIsMobile } from "@/hooks/use-mobile";
 import NotificationBell from "@/components/NotificationBell";
+import HomepageMediaPostDialog from "@/components/admin/HomepageMediaPostDialog";
+import { openHomepageMediaDialog } from "@/lib/homepageMediaEvents";
 import { resolveAssetUrl } from "@/lib/api";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   BarChart3,
   Calendar,
   ChevronDown,
   FileText,
+  FolderKanban,
   Heart,
+  ImagePlus,
   LayoutDashboard,
   LogOut,
   Mail,
   Menu,
   MessageSquareText,
   Shield,
+  Settings,
   Trophy,
   User,
   Users,
@@ -30,6 +36,7 @@ const ALL_NAV_ITEMS = [
   { icon: Users, label: "Alumni Records", path: "/admin/alumni", module: "alumni" },
   { icon: FileText, label: "Graduate Tracer", path: "/admin/tracer", module: "tracer" },
   { icon: BarChart3, label: "Engagement", path: "/admin/engagement", module: "engagement" },
+  { icon: FolderKanban, label: "Alumni Projects", path: "/admin/projects", module: "engagement" },
   { icon: Trophy, label: "Achievements", path: "/admin/achievements", module: "achievements" },
   { icon: MessageSquareText, label: "Freedom Wall", path: "/admin/community", module: "community" },
   { icon: Calendar, label: "Announcements", path: "/admin/announcements", module: "events" },
@@ -91,14 +98,18 @@ export default function AdminLayout({
   subtitle?: string;
 }) {
   const { profile, role, signOut } = useAuth();
+  const { settings } = useSystemSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
+  const systemLogo = resolveAssetUrl(settings.logoPath) || ustpLogo;
 
   const handleLogout = () => {
+    if (!window.confirm("Are you sure you want to log out?")) return;
+
     signOut();
     navigate("/");
   };
@@ -121,8 +132,11 @@ export default function AdminLayout({
 
       <div className="flex flex-col items-center px-5 pb-5 pt-6" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
         <div className="portal-logo-frame">
-          <img src={ustpLogo} alt="SaCC" />
+          <img src={systemLogo} alt={settings.institutionName || settings.systemName} />
         </div>
+        <p className="mt-3 max-w-full truncate text-xs font-bold uppercase tracking-[0.14em] text-white">
+          {settings.systemShortName}
+        </p>
       </div>
 
       <div className="px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.20)" }}>
@@ -165,7 +179,7 @@ export default function AdminLayout({
   );
 
   return (
-    <div className="portal-shell flex h-screen overflow-hidden">
+    <div className="portal-shell admin-portal flex h-screen overflow-hidden">
       {!isMobile && <div className="hidden w-64 flex-shrink-0 flex-col shadow-xl lg:flex"><Sidebar /></div>}
 
       {sidebarOpen && (
@@ -193,6 +207,16 @@ export default function AdminLayout({
 
           <div className="flex items-center gap-2">
             <NotificationBell />
+
+            <button
+              type="button"
+              onClick={() => openHomepageMediaDialog()}
+              className="portal-header-button"
+              aria-label="Post homepage media"
+              title="Post media"
+            >
+              <ImagePlus className="h-5 w-5" />
+            </button>
 
             <div className="relative">
               <button
@@ -246,6 +270,15 @@ export default function AdminLayout({
                           <Shield className="h-4 w-4 text-muted-foreground" /> Officers
                         </button>
                       )}
+                      <button
+                        onClick={() => {
+                          navigate("/admin/account?section=settings");
+                          setAccountMenuOpen(false);
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
+                      >
+                        <Settings className="h-4 w-4 text-muted-foreground" /> Settings
+                      </button>
                       <div className="my-1 border-t border-border" />
                       <button
                         onClick={handleLogout}
@@ -260,6 +293,8 @@ export default function AdminLayout({
             </div>
           </div>
         </header>
+
+        <HomepageMediaPostDialog />
 
         <main className={`portal-main ${isMobile ? "pb-20" : ""}`}>{children}</main>
 
@@ -288,3 +323,4 @@ export default function AdminLayout({
     </div>
   );
 }
+

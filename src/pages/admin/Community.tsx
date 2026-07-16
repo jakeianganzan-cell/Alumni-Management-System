@@ -155,20 +155,24 @@ export default function AdminCommunity() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-2xl border border-border">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px]">
+              <div className="overflow-hidden">
+                <table className="w-full table-fixed text-[13px]">
+                <colgroup>
+                  <col className="w-[15%]" /><col className="w-[28%]" /><col className="w-[11%]" /><col className="w-[12%]" />
+                  <col className="w-[17%]" /><col className="w-[10%]" /><col className="w-[7%]" />
+                </colgroup>
                   <thead className="bg-muted/35">
                     <tr>
-                      <th className={tableHeadClassName}>Author</th>
-                      <th className={tableHeadClassName}>Content</th>
-                      <th className={tableHeadClassName}>Category</th>
-                      <th className={tableHeadClassName}>Engagement</th>
-                      <th className={tableHeadClassName}>Status</th>
-                      <th className={tableHeadClassName}>Time</th>
-                      <th className={tableHeadClassName}>Actions</th>
+                      <th className={`${tableHeadClassName} text-left`}>Author</th>
+                      <th className={`${tableHeadClassName} text-left`}>Content</th>
+                      <th className={`${tableHeadClassName} text-left`}>Category</th>
+                      <th className={`${tableHeadClassName} text-center`}>Engagement</th>
+                      <th className={`${tableHeadClassName} text-center`}>Status</th>
+                      <th className={`${tableHeadClassName} text-center`}>Time</th>
+                      <th className={`${tableHeadClassName} text-center`}>Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border">
+                  <tbody className="divide-y divide-border/80">
                     {loading ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-10 text-center">
@@ -184,32 +188,32 @@ export default function AdminCommunity() {
                       </tr>
                     ) : (
                       paginatedPosts.map((post) => (
-                        <tr key={post.id}>
-                          <td className="px-4 py-3.5" data-label="Author">
-                            <p className="text-sm font-semibold text-navy-dark">{post.author}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Batch {post.authorBatch}</p>
+                        <tr key={post.id} className="odd:bg-white even:bg-slate-50/60 transition-colors hover:bg-navy/5">
+                          <td className="px-3 py-2.5 align-middle" data-label="Author">
+                            <p className="truncate text-[13px] font-semibold text-navy-dark" title={post.author}>{post.author}</p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={`Batch ${post.authorBatch}`}>Batch {post.authorBatch}</p>
                           </td>
-                          <td className="px-4 py-3.5" data-label="Content">
-                            <p className="max-w-md whitespace-normal text-sm text-muted-foreground md:truncate">{post.content}</p>
+                          <td className="px-3 py-2.5 align-middle" data-label="Content">
+                            <p className="truncate text-[13px] text-muted-foreground" title={post.content}>{post.content}</p>
                           </td>
-                          <td className="px-4 py-3.5" data-label="Category">
-                            <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[11px] font-medium text-blue-700">
+                          <td className="px-3 py-2.5 align-middle" data-label="Category">
+                            <span className="inline-flex max-w-full truncate rounded-full bg-blue-100 px-2 py-1 text-[11px] font-medium text-blue-700" title={post.category}>
                               {post.category}
                             </span>
                           </td>
-                          <td className={tableCellClassName} data-label="Engagement">
+                          <td className={`${tableCellClassName} text-center`} data-label="Engagement">
                             {post.likes} likes | {post.comments} comments
                           </td>
-                          <td className="px-4 py-3.5" data-label="Status">
-                            <div className="flex flex-wrap gap-2">
+                          <td className="px-3 py-2.5 text-center align-middle" data-label="Status">
+                            <div className="flex flex-wrap justify-center gap-1.5">
                               <StatusPill tone={getPostStatusTone(post.status)} label={formatPostStatus(post.status)} />
                               {post.isPinned && <StatusPill tone="bg-amber-100 text-amber-700" label="Pinned" />}
                               {post.isFlagged && <StatusPill tone="bg-rose-100 text-rose-700" label="Flagged" />}
                             </div>
                           </td>
-                          <td className={tableCellClassName} data-label="Time">{post.timestamp}</td>
-                          <td className="px-4 py-3.5" data-label="Actions">
-                            <div className="flex flex-wrap items-center gap-1">
+                          <td className={`${tableCellClassName} truncate text-center`} data-label="Time" title={post.timestamp}>{post.timestamp}</td>
+                          <td className="px-3 py-2.5 text-center align-middle" data-label="Actions">
+                            <div className="flex flex-wrap items-center justify-center gap-1">
                               <IconButton
                                 label={post.isPinned ? "Unpin" : "Pin"}
                                 onClick={() => void togglePin(post)}
@@ -313,12 +317,12 @@ function getPostStatusTone(status: string) {
 
 function IconButton({ label, onClick, icon }: { label: string; onClick: () => void; icon: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={label} className="rounded-lg border border-transparent p-1.5 transition hover:border-border hover:bg-muted" type="button">
+    <button onClick={onClick} title={label} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent p-1.5 transition hover:border-border hover:bg-muted" type="button">
       {icon}
     </button>
   );
 }
 
 const searchInputClassName = "w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-navy";
-const tableHeadClassName = "px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground";
-const tableCellClassName = "px-4 py-3.5 text-sm text-muted-foreground";
+const tableHeadClassName = "px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.1em] text-navy";
+const tableCellClassName = "px-3 py-2.5 text-[13px] text-muted-foreground";

@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import schoolLogo from "@/assets/salay.png";
+import { DEFAULT_SYSTEM_SETTINGS, SYSTEM_SETTINGS_CACHE_KEY, type SystemSettings } from "@/context/SystemSettingsContext";
+import { resolveAssetUrl } from "@/lib/api";
 
 export interface ReportColumn<T> {
   key: keyof T;
@@ -15,7 +17,14 @@ export interface ReportExportOptions<T extends Record<string, string | number | 
   summary?: Array<{ label: string; value: string | number }>;
 }
 
-const SCHOOL_NAME = "Salay Community College";
+const getCachedBranding = (): SystemSettings => {
+  try {
+    const cached = localStorage.getItem(SYSTEM_SETTINGS_CACHE_KEY);
+    return cached ? { ...DEFAULT_SYSTEM_SETTINGS, ...JSON.parse(cached) } : DEFAULT_SYSTEM_SETTINGS;
+  } catch {
+    return DEFAULT_SYSTEM_SETTINGS;
+  }
+};
 
 const formatGeneratedDate = () =>
   new Date().toLocaleString(undefined, {
@@ -36,7 +45,9 @@ const downloadBlob = (blob: Blob, filename: string) => {
 };
 
 const getLogoDataUrl = async () => {
-  const response = await fetch(schoolLogo);
+  const branding = getCachedBranding();
+  const logoUrl = resolveAssetUrl(branding.logoPath) || schoolLogo;
+  const response = await fetch(logoUrl);
   const blob = await response.blob();
 
   return await new Promise<string>((resolve, reject) => {
@@ -50,8 +61,11 @@ const getLogoDataUrl = async () => {
 const sanitizeSheetName = (value: string) => value.replace(/[\\/*?:[\]]/g, " ").slice(0, 31) || "Report";
 
 export const downloadBrandedExcel = async <T extends Record<string, string | number | null | undefined>>(options: ReportExportOptions<T>) => {
+  const branding = getCachedBranding();
+  const schoolName = branding.institutionName || branding.systemName;
+  const primaryColor = branding.primaryColor.replace("#", "").toUpperCase() || "550000";
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = SCHOOL_NAME;
+  workbook.creator = schoolName;
   workbook.created = new Date();
   const worksheet = workbook.addWorksheet(sanitizeSheetName(options.title), {
     views: [{ state: "frozen", ySplit: 8 }],
@@ -59,8 +73,8 @@ export const downloadBrandedExcel = async <T extends Record<string, string | num
 
   worksheet.properties.defaultRowHeight = 20;
   worksheet.mergeCells("B1:F1");
-  worksheet.getCell("B1").value = SCHOOL_NAME;
-  worksheet.getCell("B1").font = { bold: true, size: 16, color: { argb: "FF550000" } };
+  worksheet.getCell("B1").value = schoolName;
+  worksheet.getCell("B1").font = { bold: true, size: 16, color: { argb: `FF${primaryColor}` } };
   worksheet.mergeCells("B2:F2");
   worksheet.getCell("B2").value = options.title;
   worksheet.getCell("B2").font = { bold: true, size: 13 };
@@ -74,13 +88,13 @@ export const downloadBrandedExcel = async <T extends Record<string, string | num
     const logoId = workbook.addImage({ base64: logoDataUrl, extension: "png" });
     worksheet.addImage(logoId, { tl: { col: 0, row: 0 }, ext: { width: 72, height: 72 } });
   } catch {
-    worksheet.getCell("A1").value = SCHOOL_NAME;
+    worksheet.getCell("A1").value = schoolName;
   }
 
   let rowIndex = 6;
   if (options.summary?.length) {
     worksheet.getCell(rowIndex, 1).value = "Summary";
-    worksheet.getCell(rowIndex, 1).font = { bold: true, color: { argb: "FF550000" } };
+    worksheet.getCell(rowIndex, 1).font = { bold: true, color: { argb: `FF${primaryColor}` } };
     rowIndex += 1;
     options.summary.forEach((item) => {
       worksheet.getCell(rowIndex, 1).value = item.label;
@@ -97,7 +111,7 @@ export const downloadBrandedExcel = async <T extends Record<string, string | num
     const cell = headerRow.getCell(index + 1);
     cell.value = column.label;
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF550000" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${primaryColor}` } };
     cell.alignment = { vertical: "middle", horizontal: "center" };
   });
 
@@ -141,6 +155,10 @@ const escapeHtml = (value: string | number | null | undefined) =>
     .replace(/"/g, "&quot;");
 
 export const openPrintableReport = <T extends Record<string, string | number | null | undefined>>(options: ReportExportOptions<T>) => {
+  const branding = getCachedBranding();
+  const schoolName = branding.institutionName || branding.systemName;
+  const logoUrl = resolveAssetUrl(branding.logoPath) || schoolLogo;
+  const primaryColor = branding.primaryColor || "#550000";
   const reportWindow = window.open("", "_blank", "noopener,noreferrer,width=1100,height=800");
   if (!reportWindow) throw new Error("Allow pop-ups to open the printable report.");
 
@@ -162,9 +180,9 @@ export const openPrintableReport = <T extends Record<string, string | number | n
     @page { size: A4; margin: 18mm 14mm; @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 10px; color: #555; } }
     * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; color: #172033; margin: 0; font-size: 12px; }
-    header { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #550000; padding-bottom: 14px; margin-bottom: 18px; }
+    header { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid ${primaryColor}; padding-bottom: 14px; margin-bottom: 18px; }
     header img { width: 64px; height: 64px; object-fit: contain; }
-    h1 { margin: 0; color: #550000; font-size: 22px; }
+    h1 { margin: 0; color: ${primaryColor}; font-size: 22px; }
     h2 { margin: 4px 0 0; font-size: 16px; }
     .meta { margin-top: 4px; color: #555; line-height: 1.5; }
     .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }
@@ -172,7 +190,7 @@ export const openPrintableReport = <T extends Record<string, string | number | n
     .summary span { display: block; color: #5b6472; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
     .summary strong { display: block; margin-top: 4px; font-size: 14px; color: #172033; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    th { background: #550000; color: #fff; font-size: 11px; padding: 8px; border: 1px solid #550000; text-align: left; }
+    th { background: ${primaryColor}; color: #fff; font-size: 11px; padding: 8px; border: 1px solid ${primaryColor}; text-align: left; }
     td { padding: 7px; border: 1px solid #d8dde6; vertical-align: top; word-wrap: break-word; }
     tr:nth-child(even) td { background: #fafafa; }
     footer { margin-top: 16px; color: #555; font-size: 10px; text-align: right; }
@@ -181,9 +199,9 @@ export const openPrintableReport = <T extends Record<string, string | number | n
 </head>
 <body>
   <header>
-    <img src="${schoolLogo}" alt="${SCHOOL_NAME}" />
+    <img src="${logoUrl}" alt="${escapeHtml(schoolName)}" />
     <div>
-      <h1>${SCHOOL_NAME}</h1>
+      <h1>${escapeHtml(schoolName)}</h1>
       <h2>${escapeHtml(options.title)}</h2>
       <div class="meta">
         Date Generated: ${escapeHtml(formatGeneratedDate())}<br />
@@ -196,7 +214,7 @@ export const openPrintableReport = <T extends Record<string, string | number | n
     <thead><tr>${headerHtml}</tr></thead>
     <tbody>${bodyHtml || `<tr><td colspan="${options.columns.length}">No records available.</td></tr>`}</tbody>
   </table>
-  <footer>Generated by Alumni Management System</footer>
+  <footer>${escapeHtml(branding.footerCopyrightText || branding.systemName)}</footer>
   <script>window.onload = () => setTimeout(() => window.print(), 250);</script>
 </body>
 </html>`);

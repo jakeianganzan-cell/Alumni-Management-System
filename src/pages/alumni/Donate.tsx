@@ -3,6 +3,7 @@ import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { AlertCircle, Clock, Heart, Loader2, MapPin, QrCode, Smartphone, Upload, User, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 const PURPOSES = ["Scholarship Fund", "Campus Development", "General Fund", "Sports & Events", "Library Fund"];
 
@@ -23,14 +24,32 @@ const EMPTY_SETTINGS: DonationSettings = {
   personal_contact: "",
   personal_office: "",
 };
+interface AlumniFeeItem {
+  id: number;
+  feeName: string;
+  amount: number;
+  dueDate: string | null;
+  assignedOfficerName: string;
+  paymentInstruction: string;
+}
+
+interface AlumniFeeStatus {
+  status: "Complete" | "Incomplete";
+  totalUnpaid: number;
+  unpaidFees: AlumniFeeItem[];
+  paymentInstruction: string;
+}
 
 export default function AlumniDonate() {
   const { user, profile } = useAuth();
+  const { settings: brandingSettings } = useSystemSettings();
   const [method, setMethod] = useState<"GCash" | "Personal">("GCash");
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(true);
+  const [loadingFees, setLoadingFees] = useState(true);
+  const [feeStatus, setFeeStatus] = useState<AlumniFeeStatus | null>(null);
   const [showQrPreview, setShowQrPreview] = useState(false);
   const [formError, setFormError] = useState("");
   const [form, setForm] = useState({
@@ -87,6 +106,23 @@ export default function AlumniDonate() {
     };
 
     fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    const fetchFeeStatus = async () => {
+      try {
+        const response = await fetch(`${API_URL}/alumni/fee-records/me`, {
+          headers: getAuthHeaders(),
+        });
+        setFeeStatus(await readApiResponse<AlumniFeeStatus>(response));
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoadingFees(false);
+      }
+    };
+
+    fetchFeeStatus();
   }, []);
 
   const handleReceiptChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -198,8 +234,9 @@ export default function AlumniDonate() {
   }
 
   return (
-    <AlumniLayout title="Make a Donation" subtitle="Support SaCC students and programs">
-      <div className="mx-auto max-w-2xl">
+    <AlumniLayout title="Make a Donation" subtitle={`Support ${brandingSettings.institutionName} students and programs`}>
+      <div className="mx-auto max-w-2xl space-y-5">
+        <RequiredFeesPanel loading={loadingFees} feeStatus={feeStatus} />
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="rounded-xl border border-border bg-card p-5 shadow-card">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-display font-bold text-navy-dark">
@@ -470,6 +507,59 @@ export default function AlumniDonate() {
   );
 }
 
+function RequiredFeesPanel({ loading, feeStatus }: { loading: boolean; feeStatus: AlumniFeeStatus | null }) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-5 shadow-card">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-sm font-display font-bold text-navy-dark">Alumni Fee Records</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Required alumni fees are paid personally or in person to the assigned alumni officer or authorized staff. No online payment is processed here.
+          </p>
+        </div>
+        {loading ? (
+          <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+          </span>
+        ) : (
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${feeStatus?.status === "Complete" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+            {feeStatus?.status || "Incomplete"}
+          </span>
+        )}
+      </div>
+
+      {!loading && feeStatus && feeStatus.status === "Incomplete" && (
+        <div className="mt-4 space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Need to Pay</p>
+            <div className="mt-2 divide-y divide-border rounded-xl border border-border bg-background">
+              {feeStatus.unpaidFees.map((fee) => (
+                <div key={fee.id} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-navy-dark">{fee.feeName}</p>
+                    <p className="whitespace-nowrap text-sm font-semibold text-navy">PHP {fee.amount.toLocaleString()}</p>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Assigned officer: {fee.assignedOfficerName || "Authorized staff"} | Due: {fee.dueDate ? new Date(fee.dueDate).toLocaleDateString() : "No due date"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+            Payment Method: {feeStatus.paymentInstruction}
+          </div>
+        </div>
+      )}
+
+      {!loading && feeStatus?.status === "Complete" && (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          Your alumni fee record status is Complete.
+        </div>
+      )}
+    </section>
+  );
+}
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-border bg-white px-4 py-3">

@@ -17,7 +17,7 @@ export function AdminPageIntro({
 }) {
   return (
     <Card className={cn("border-border/70 shadow-sm", className)}>
-      <CardContent className="flex min-w-0 flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
+      <CardContent className="flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           {eyebrow && (
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -25,7 +25,7 @@ export function AdminPageIntro({
             </p>
           )}
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-navy-dark sm:text-xl">{title}</h2>
-          {description && <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>}
+          {description && <p className="mt-1.5 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</p>}
         </div>
         {action && <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:flex-shrink-0">{action}</div>}
       </CardContent>

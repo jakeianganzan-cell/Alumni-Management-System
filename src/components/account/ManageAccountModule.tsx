@@ -1,10 +1,10 @@
 import { ChangeEvent, DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bell, Camera, ClipboardList, Film, GripVertical, ImagePlus, Lock, LogOut, MessageSquareWarning, Pencil, Save, Shield, Trash2, User, X, Youtube } from "lucide-react";
+import { Bell, Camera, ChevronDown, Film, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, X, Youtube } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { canAccessModule, getRoleLabel, type OfficerRole } from "@/lib/rbac";
-import { COURSE_OPTIONS } from "@/lib/courseCatalog";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
   getYouTubeVideoId,
   getSlideMediaType,
@@ -12,16 +12,22 @@ import {
   toYouTubeEmbedUrl,
   type SlideMediaType,
 } from "@/lib/slideshowMedia";
+import { HOMEPAGE_MEDIA_UPDATED_EVENT, openHomepageMediaDialog } from "@/lib/homepageMediaEvents";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import ReportExportsPanel from "@/components/account/ReportExportsPanel";
 import ReportProblemPanel from "@/components/account/ReportProblemPanel";
 import MyPostsPanel from "@/components/account/MyPostsPanel";
+import SystemBrandingPanel from "@/components/account/SystemBrandingPanel";
+import SessionMonitoringPanel from "@/components/account/SessionMonitoringPanel";
+import EmailQueueSettingsPanel from "@/components/account/EmailQueueSettingsPanel";
 
 type ModuleMode = "alumni" | "admin";
-type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports";
+type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports" | "settings";
+type AdminSettingsPanel = "branding" | "sessions" | "email";
 
 interface ManageAccountModuleProps {
   mode: ModuleMode;
@@ -146,11 +152,15 @@ function getUploadTitle(file: File) {
 
 export default function ManageAccountModule({ mode }: ManageAccountModuleProps) {
   const { profile, user, role, signOut, refreshProfile } = useAuth();
+  const { settings: systemSettings } = useSystemSettings();
   const [searchParams, setSearchParams] = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isAdminView = mode === "admin";
   const canViewReports = isAdminView && isOfficerRole(role) && canAccessModule(role, "reports");
+  const programOptions = systemSettings.programs;
 
+  const [settingsPanel, setSettingsPanel] = useState<AdminSettingsPanel>("branding");
+  const [settingsCategoriesOpen, setSettingsCategoriesOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("profile");
   const [photoPreview, setPhotoPreview] = useState<string | null>(resolveAssetUrl(profile?.photo));
   const [photoValue, setPhotoValue] = useState<string | null>(profile?.photo ?? null);
@@ -207,17 +217,27 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
   useEffect(() => {
     const requestedSection = searchParams.get("section");
+    const requestedPanel = searchParams.get("panel");
 
     if (requestedSection === "reports" && canViewReports) {
       setActiveSection("reports");
-    } else if (requestedSection === "reports" && !canViewReports) {
-      setActiveSection("profile");
+    } else if (isAdminView && ["settings", "branding", "sessions", "email"].includes(requestedSection || "")) {
+      setActiveSection("settings");
+      setSettingsPanel(requestedSection === "sessions" || requestedPanel === "sessions" ? "sessions" : requestedSection === "email" || requestedPanel === "email" ? "email" : "branding");
     }
-  }, [canViewReports, searchParams]);
+  }, [canViewReports, isAdminView, searchParams]);
 
   useEffect(() => {
     void loadHomepageSlides();
   }, [loadHomepageSlides]);
+
+  useEffect(() => {
+    if (!isAdminView) return;
+
+    const refreshHomepageSlides = () => void loadHomepageSlides();
+    window.addEventListener(HOMEPAGE_MEDIA_UPDATED_EVENT, refreshHomepageSlides);
+    return () => window.removeEventListener(HOMEPAGE_MEDIA_UPDATED_EVENT, refreshHomepageSlides);
+  }, [isAdminView, loadHomepageSlides]);
 
   useEffect(() => {
     setProfileForm({
@@ -265,13 +285,19 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     { key: "profile" as SectionKey, label: "Profile", icon: User },
     { key: "security" as SectionKey, label: "Security", icon: Lock },
     { key: "notifications" as SectionKey, label: "Notifications", icon: Bell },
-    ...(canViewReports ? [{ key: "reports" as SectionKey, label: "Reports", icon: ClipboardList }] : []),
+    ...(canViewReports ? [{ key: "reports" as SectionKey, label: "Concern Inbox", icon: MessageSquareWarning }] : []),
     ...(!isAdminView ? [{ key: "problem" as SectionKey, label: "Report a Problem", icon: MessageSquareWarning }] : []),
   ];
 
   const selectSection = (section: SectionKey) => {
     setActiveSection(section);
-    setSearchParams(section === "reports" ? { section: "reports" } : {});
+    setSearchParams(section === "reports" ? { section: "reports" } : section === "settings" ? { section: "settings", panel: settingsPanel } : {});
+  };
+
+  const selectSettingsPanel = (panel: AdminSettingsPanel) => {
+    setSettingsPanel(panel);
+    setSettingsCategoriesOpen(false);
+    setSearchParams({ section: "settings", panel });
   };
 
   const handleProfileChange = (key: keyof ProfileFormState, value: string) => {
@@ -442,21 +468,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   };
 
   const editHomepageSlide = (slide: HomepageSlide) => {
-    const mediaUrl = slide.mediaUrl || slide.imageUrl || "";
-    const mediaType = getSlideMediaType(slide.mediaType, mediaUrl);
-    setHomepageSlideMessage("");
-    setEditingHomepageSlideId(slide.id);
-    setHomepageSlideForm({
-      title: slide.title || "",
-      caption: slide.caption || "",
-      mediaType,
-      mediaUrl,
-      youtubeUrl: mediaType === "youtube" ? mediaUrl : "",
-      linkUrl: slide.linkUrl || "",
-      displayOrder: Number(slide.displayOrder || 0),
-      status: slide.status || "active",
-      isHighlighted: Boolean(slide.isHighlighted),
-    });
+    openHomepageMediaDialog(slide);
   };
 
   const saveHomepageSlide = async () => {
@@ -588,8 +600,11 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       : homepageSlideForm.mediaUrl
   );
 
+  const isSettingsView = isAdminView && activeSection === "settings";
+  const showProfileMediaComposer = false;
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+    <div className={isSettingsView ? "space-y-6" : "grid grid-cols-1 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]"}>
+      {!isSettingsView && (
       <aside className="space-y-5">
         <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
           <div className="p-6 text-white" style={{ background: "var(--gradient-navy)" }}>
@@ -675,6 +690,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           </div>
         </div>
       </aside>
+      )}
 
       <section className="space-y-6">
         {activeSection === "profile" && (
@@ -733,7 +749,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                     >
                       <option value="">Select a course</option>
-                      {COURSE_OPTIONS.map((option) => (
+                      {programOptions.map((option) => (
                         <option key={option.code} value={option.code}>
                           {option.label}
                         </option>
@@ -763,6 +779,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
           {isAdminView && (
             <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
+              {showProfileMediaComposer && (
+              <>
               <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <h3 className="font-display text-2xl font-bold text-navy-dark">
@@ -876,8 +894,10 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
-              <div className="mt-6 rounded-2xl border border-border bg-muted/20 p-4">
+              <div className="rounded-2xl border border-border bg-muted/20 p-4">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-navy-dark">Posted Media</p>
@@ -1022,7 +1042,16 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
             </div>
 
             <div className="mt-6 rounded-2xl border border-border bg-muted/20 p-4">
-              <Button type="button" variant="outline" className="w-full justify-start" onClick={() => void signOut()}>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to log out?")) {
+                    void signOut();
+                  }
+                }}
+              >
                 <LogOut className="mr-2 h-4 w-4" />
                 Logout from this device
               </Button>
@@ -1097,8 +1126,63 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
         {activeSection === "problem" && !isAdminView && <ReportProblemPanel />}
 
-        {activeSection === "reports" && canViewReports && <ReportExportsPanel />}
+        {activeSection === "settings" && isAdminView && (
+          <>
+            <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-display text-2xl font-bold text-navy-dark">Settings</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">Manage system branding, email queue limits, and administrator session controls.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="default" className="pointer-events-none">
+                    {settingsPanel === "branding" ? (
+                      <><Palette className="mr-2 h-4 w-4" /> System Branding</>
+                    ) : settingsPanel === "sessions" ? (
+                      <><MonitorSmartphone className="mr-2 h-4 w-4" /> Session Monitoring</>
+                    ) : (
+                      <><Mail className="mr-2 h-4 w-4" /> Email Settings</>
+                    )}
+                  </Button>
+                  <Popover open={settingsCategoriesOpen} onOpenChange={setSettingsCategoriesOpen}>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="outline" size="icon" aria-label="Open settings categories">
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-64 p-2">
+                      <div className="space-y-1">
+                        {settingsPanel !== "branding" && (
+                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("branding")}>
+                            <Palette className="mr-2 h-4 w-4" /> System Branding
+                          </Button>
+                        )}
+                        {settingsPanel !== "sessions" && (
+                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("sessions")}>
+                            <MonitorSmartphone className="mr-2 h-4 w-4" /> Session Monitoring
+                          </Button>
+                        )}
+                        {settingsPanel !== "email" && (
+                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("email")}>
+                            <Mail className="mr-2 h-4 w-4" /> Email Settings
+                          </Button>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+            </div>
+
+            {settingsPanel === "branding" ? <SystemBrandingPanel /> : settingsPanel === "email" ? <EmailQueueSettingsPanel /> : <SessionMonitoringPanel />}
+          </>
+        )}
+        {activeSection === "reports" && canViewReports && <ReportExportsPanel showExports={false} />}
       </section>
     </div>
   );
 }
+
+
+
+

@@ -12,6 +12,7 @@ DROP TABLE IF EXISTS reactions;
 DROP TABLE IF EXISTS freedom_wall_comments;
 DROP TABLE IF EXISTS freedom_wall_posts;
 DROP TABLE IF EXISTS imported_alumni_records;
+DROP TABLE IF EXISTS alumni_officers;
 DROP TABLE IF EXISTS officers;
 DROP TABLE IF EXISTS officer_school_year;
 DROP TABLE IF EXISTS achievements;
@@ -19,6 +20,7 @@ DROP TABLE IF EXISTS job_applications;
 DROP TABLE IF EXISTS jobs;
 DROP TABLE IF EXISTS email_logs;
 DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS system_settings;
 DROP TABLE IF EXISTS donation_settings;
 DROP TABLE IF EXISTS tracer_audit_logs;
 DROP TABLE IF EXISTS tracer_reports;
@@ -42,9 +44,16 @@ DROP TABLE IF EXISTS event_rsvps;
 DROP TABLE IF EXISTS event_registrations;
 DROP TABLE IF EXISTS announcement_comment_replies;
 DROP TABLE IF EXISTS announcement_comments;
+DROP TABLE IF EXISTS alumni_project_files;
+DROP TABLE IF EXISTS alumni_projects;
+DROP TABLE IF EXISTS alumni_fee_records;
+DROP TABLE IF EXISTS alumni_fee_payments;
+DROP TABLE IF EXISTS alumni_fee_types;
 DROP TABLE IF EXISTS donations;
 DROP TABLE IF EXISTS announcements;
 DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS activity_logs;
+DROP TABLE IF EXISTS user_sessions;
 DROP TABLE IF EXISTS user_roles;
 DROP TABLE IF EXISTS profiles;
 DROP TABLE IF EXISTS users;
@@ -70,6 +79,11 @@ CREATE TABLE IF NOT EXISTS profiles (
     student_id VARCHAR(50) UNIQUE,
     course VARCHAR(255),
     batch VARCHAR(10),
+    bor_number VARCHAR(100),
+    bor_date DATE,
+    graduation_batch VARCHAR(100),
+    academic_year VARCHAR(30),
+    graduation_semester VARCHAR(50),
     contact_number VARCHAR(50),
     photo LONGTEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -77,12 +91,54 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 CREATE TABLE IF NOT EXISTS user_roles (
-    user_id VARCHAR(36) PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
     role VARCHAR(50) NOT NULL,
     archived TINYINT(1) NOT NULL DEFAULT 0,
+    UNIQUE KEY uq_user_roles_user_role (user_id, role),
+    INDEX idx_user_roles_user (user_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    role_id VARCHAR(50) NOT NULL,
+    session_token VARCHAR(128) NOT NULL UNIQUE,
+    ip_address VARCHAR(100),
+    browser VARCHAR(120),
+    operating_system VARCHAR(120),
+    device_type VARCHAR(60),
+    login_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    logout_time DATETIME NULL,
+    last_activity DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) NOT NULL DEFAULT 'Active',
+    INDEX idx_user_sessions_user (user_id),
+    INDEX idx_user_sessions_role (role_id),
+    INDEX idx_user_sessions_status (status),
+    INDEX idx_user_sessions_login_time (login_time),
+    INDEX idx_user_sessions_last_activity (last_activity),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(36),
+    session_token VARCHAR(128),
+    action VARCHAR(80) NOT NULL,
+    description TEXT NOT NULL,
+    role_used VARCHAR(50),
+    device_used VARCHAR(120),
+    browser_used VARCHAR(120),
+    ip_address VARCHAR(100),
+    metadata_json LONGTEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_activity_logs_user (user_id),
+    INDEX idx_activity_logs_action (action),
+    INDEX idx_activity_logs_role (role_used),
+    INDEX idx_activity_logs_created_at (created_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
 CREATE TABLE IF NOT EXISTS officer_school_year (
     id INT AUTO_INCREMENT PRIMARY KEY,
     start_year SMALLINT NOT NULL,
@@ -101,7 +157,7 @@ CREATE TABLE IF NOT EXISTS officer_school_year (
 CREATE TABLE IF NOT EXISTS officers (
     id INT AUTO_INCREMENT PRIMARY KEY,
     school_year_id INT NOT NULL,
-    alumni_id VARCHAR(36) NOT NULL,
+    alumni_id VARCHAR(36) DEFAULT NULL,
     position VARCHAR(100) NOT NULL,
     custom_position VARCHAR(255) DEFAULT NULL,
     display_order INT DEFAULT 0,
@@ -120,6 +176,40 @@ CREATE TABLE IF NOT EXISTS officers (
     INDEX idx_officers_position (position)
 );
 
+CREATE TABLE IF NOT EXISTS alumni_officers (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    legacy_officer_id INT DEFAULT NULL,
+    alumni_id VARCHAR(36) DEFAULT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    position VARCHAR(100) NOT NULL,
+    custom_position VARCHAR(255) DEFAULT NULL,
+    batch_year VARCHAR(20) DEFAULT NULL,
+    department_id VARCHAR(100) DEFAULT NULL,
+    program_id VARCHAR(150) DEFAULT NULL,
+    contact_number VARCHAR(50) DEFAULT NULL,
+    email VARCHAR(255) DEFAULT NULL,
+    photo LONGTEXT DEFAULT NULL,
+    term_start DATE DEFAULT NULL,
+    term_end DATE DEFAULT NULL,
+    status ENUM('Active', 'Inactive', 'Completed') NOT NULL DEFAULT 'Active',
+    remarks TEXT DEFAULT NULL,
+    is_archived TINYINT(1) NOT NULL DEFAULT 0,
+    archived_at DATETIME DEFAULT NULL,
+    archived_by VARCHAR(36) DEFAULT NULL,
+    created_by VARCHAR(36) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_alumni_officers_legacy (legacy_officer_id),
+    INDEX idx_alumni_officers_alumni (alumni_id),
+    INDEX idx_alumni_officers_status (status, is_archived),
+    INDEX idx_alumni_officers_term (term_start, term_end),
+    INDEX idx_alumni_officers_position (position),
+    INDEX idx_alumni_officers_batch (batch_year),
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS imported_alumni_records (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     import_batch_id VARCHAR(36) NOT NULL,
@@ -128,6 +218,11 @@ CREATE TABLE IF NOT EXISTS imported_alumni_records (
     graduation_year VARCHAR(10) NOT NULL,
     email_address VARCHAR(255) NOT NULL,
     contact_number VARCHAR(50) DEFAULT NULL,
+    bor_number VARCHAR(100) DEFAULT NULL,
+    bor_date DATE DEFAULT NULL,
+    graduation_batch VARCHAR(100) DEFAULT NULL,
+    academic_year VARCHAR(30) DEFAULT NULL,
+    graduation_semester VARCHAR(50) DEFAULT NULL,
     generated_alumni_id VARCHAR(50) DEFAULT NULL,
     status VARCHAR(50) DEFAULT 'imported',
     email_status VARCHAR(30) NOT NULL DEFAULT 'pending',
@@ -550,6 +645,91 @@ CREATE TABLE IF NOT EXISTS donations (
     FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS alumni_projects (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    category VARCHAR(100) NOT NULL,
+    batch_year VARCHAR(20) NULL,
+    lead_officer_id VARCHAR(36) NULL,
+    lead_alumni_id VARCHAR(36) NULL,
+    organization_name VARCHAR(255) NULL,
+    alumni_group VARCHAR(255) NULL,
+    start_date DATE NULL,
+    end_date DATE NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Planned',
+    beneficiaries TEXT NULL,
+    estimated_value DECIMAL(14,2) NULL,
+    funding_source VARCHAR(255) NULL,
+    related_contribution_id VARCHAR(100) NULL,
+    contribution_record_id VARCHAR(100) NULL,
+    accomplishments TEXT NULL,
+    remarks TEXT NULL,
+    created_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_alumni_projects_status (status),
+    INDEX idx_alumni_projects_category (category),
+    INDEX idx_alumni_projects_batch (batch_year),
+    INDEX idx_alumni_projects_dates (start_date),
+    FOREIGN KEY (lead_officer_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (lead_alumni_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS alumni_project_files (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_id BIGINT NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_path LONGTEXT NOT NULL,
+    file_type VARCHAR(120) NULL,
+    file_url LONGTEXT NULL,
+    file_category VARCHAR(100) NOT NULL DEFAULT 'Project File',
+    uploaded_by VARCHAR(36) NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_alumni_project_files_project (project_id),
+    FOREIGN KEY (project_id) REFERENCES alumni_projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS alumni_fee_types (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    fee_name VARCHAR(150) NOT NULL,
+    amount DECIMAL(12, 2) NOT NULL,
+    description TEXT NULL,
+    applicable_batch_year VARCHAR(20) NULL,
+    applicable_program_id VARCHAR(255) NULL,
+    due_date DATE NULL,
+    assigned_officer_id VARCHAR(36) NULL,
+    is_required TINYINT(1) NOT NULL DEFAULT 1,
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+    created_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_alumni_fee_types_status (status, is_required),
+    INDEX idx_alumni_fee_types_scope (applicable_batch_year, applicable_program_id),
+    INDEX idx_alumni_fee_types_officer (assigned_officer_id),
+    FOREIGN KEY (assigned_officer_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS alumni_fee_payments (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    alumni_id VARCHAR(36) NOT NULL,
+    fee_type_id BIGINT NOT NULL,
+    amount_paid DECIMAL(12, 2) NOT NULL,
+    paid_date DATE NOT NULL,
+    received_by VARCHAR(36) NULL,
+    payment_note TEXT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Paid',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_alumni_fee_payment (alumni_id, fee_type_id),
+    INDEX idx_alumni_fee_payments_alumni (alumni_id),
+    INDEX idx_alumni_fee_payments_fee (fee_type_id),
+    INDEX idx_alumni_fee_payments_status (status),
+    FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (fee_type_id) REFERENCES alumni_fee_types(id) ON DELETE CASCADE,
+    FOREIGN KEY (received_by) REFERENCES users(id) ON DELETE SET NULL
+);
 CREATE TABLE IF NOT EXISTS achievements (
     id INT AUTO_INCREMENT PRIMARY KEY,
     alumni_id VARCHAR(36) NOT NULL,
@@ -757,6 +937,41 @@ CREATE TABLE IF NOT EXISTS donation_settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS system_settings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    system_name VARCHAR(255),
+    system_short_name VARCHAR(100),
+    institution_name VARCHAR(255),
+    institution_address TEXT,
+    institution_email VARCHAR(255),
+    institution_contact VARCHAR(100),
+    website_url TEXT,
+    footer_copyright_text TEXT,
+    logo_path LONGTEXT,
+    login_logo_path LONGTEXT,
+    favicon_path LONGTEXT,
+    login_background_path LONGTEXT,
+    login_backgrounds_json LONGTEXT,
+    login_slideshow_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    primary_color VARCHAR(20),
+    secondary_color VARCHAR(20),
+    sidebar_color VARCHAR(20),
+    header_color VARCHAR(20),
+    button_color VARCHAR(20),
+    card_color VARCHAR(20),
+    welcome_message VARCHAR(255),
+    login_subtitle TEXT,
+    about_content TEXT,
+    mission TEXT,
+    vision TEXT,
+    history TEXT,
+    facebook_link TEXT,
+    twitter_link TEXT,
+    instagram_link TEXT,
+    theme_mode ENUM('light', 'dark', 'auto', 'custom') DEFAULT 'light',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id VARCHAR(36) PRIMARY KEY,
     subject VARCHAR(255) NOT NULL,
@@ -791,6 +1006,47 @@ CREATE TABLE IF NOT EXISTS email_logs (
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS email_queue_settings (
+    id TINYINT PRIMARY KEY DEFAULT 1,
+    daily_email_limit INT NOT NULL DEFAULT 300,
+    batch_size_per_send_cycle INT NOT NULL DEFAULT 50,
+    send_interval_minutes INT NOT NULL DEFAULT 60,
+    queue_processing_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    reminder_priority_level VARCHAR(20) NOT NULL DEFAULT 'normal',
+    last_processed_at DATETIME NULL,
+    last_daily_check_at DATETIME NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT IGNORE INTO email_queue_settings
+    (id, daily_email_limit, batch_size_per_send_cycle, send_interval_minutes, queue_processing_enabled, reminder_priority_level)
+VALUES (1, 300, 50, 60, 1, 'normal');
+
+CREATE TABLE IF NOT EXISTS email_queue (
+    id VARCHAR(36) PRIMARY KEY,
+    alumni_id VARCHAR(36) NOT NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    recipient_name VARCHAR(255) NULL,
+    email_purpose VARCHAR(100) NOT NULL,
+    reminder_stage VARCHAR(30) NOT NULL,
+    priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+    subject VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'pending',
+    scheduled_for DATETIME NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    last_attempt_at DATETIME NULL,
+    sent_at DATETIME NULL,
+    provider_message_id VARCHAR(255) NULL,
+    error_message TEXT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_by VARCHAR(36) NULL,
+    INDEX idx_email_queue_status_schedule (status, scheduled_for),
+    INDEX idx_email_queue_alumni_purpose (alumni_id, email_purpose),
+    INDEX idx_email_queue_created (created_at),
+    FOREIGN KEY (alumni_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS user_notifications (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL,
@@ -808,7 +1064,9 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 
 CREATE TABLE IF NOT EXISTS concerns (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    alumni_id VARCHAR(36) NOT NULL,
+    alumni_id VARCHAR(36) NULL,
+    reporter_name VARCHAR(255) NULL,
+    reporter_email VARCHAR(255) NULL,
     subject VARCHAR(255) NOT NULL,
     category VARCHAR(100) NOT NULL,
     message TEXT NOT NULL,
@@ -843,3 +1101,5 @@ CREATE TABLE IF NOT EXISTS user_settings (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE KEY uq_user_settings_user (user_id)
 );
+
+

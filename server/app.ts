@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import type { CorsOptions } from "cors";
 import path from "path";
+import fs from "fs/promises";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { v4 as uuidv4 } from "uuid";
@@ -24,7 +25,7 @@ import {
     listTracerRecords,
     previewTracerPdfByRecordId
 } from "./controllers/tracer.controller";
-import { COURSE_LABELS, COURSE_OPTIONS, normalizeCourseCode, SYSTEM_COURSES } from "./courseCatalog";
+import { COURSE_LABELS, COURSE_OPTIONS, normalizeCourseCode, normalizeCourseOptions, SYSTEM_COURSES, type CourseOption } from "./courseCatalog";
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
@@ -99,6 +100,7 @@ interface AlumniImportInputRow {
     program?: string;
     course?: string;
     contactNumber?: string;
+    borNumber?: string;
 }
 
 interface AlumniImportPreparedRow {
@@ -108,6 +110,7 @@ interface AlumniImportPreparedRow {
     email: string;
     course: string;
     contactNumber: string;
+    borNumber: string | null;
 }
 
 interface AlumniImportFailure {
@@ -166,6 +169,57 @@ interface DonationListRow extends QueryRow {
     course: string | null;
 }
 
+interface AlumniProjectRow extends QueryRow {
+    id: number | string; title: string; description: string | null; category: string; batch_year: string | null;
+    lead_officer_id: string | null; lead_officer_name: string | null; lead_alumni_id: string | null; lead_alumni_name: string | null;
+    organization_name: string | null; alumni_group: string | null; start_date: string | null; end_date: string | null; status: string;
+    estimated_value: number | string | null; funding_source: string | null; beneficiaries: string | null; accomplishments: string | null;
+    remarks: string | null; related_contribution_id: string | null; contribution_record_id: string | null; created_by: string | null;
+    created_at: string; updated_at: string; file_count: number | string | null;
+}
+interface AlumniProjectFileRow extends QueryRow {
+    id: number | string; project_id: number | string; file_name: string; file_path: string | null; file_url: string | null;
+    file_type: string | null; file_category: string | null; uploaded_by: string | null; uploaded_at: string | null; created_at: string;
+}
+interface AlumniFeeTypeRow extends QueryRow {
+    id: number | string;
+    fee_name: string;
+    amount: number | string;
+    description: string | null;
+    applicable_batch_year: string | null;
+    applicable_program_id: string | null;
+    due_date: string | null;
+    assigned_officer_id: string | null;
+    is_required: number | boolean | null;
+    status: string;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    officer_name: string | null;
+    officer_email: string | null;
+    created_by_name: string | null;
+}
+interface AlumniFeePaymentRow extends QueryRow {
+    id: number | string;
+    alumni_id: string;
+    fee_type_id: number | string;
+    amount_paid: number | string;
+    paid_date: string;
+    received_by: string | null;
+    payment_note: string | null;
+    status: string;
+    created_at: string;
+    updated_at: string;
+    received_by_name: string | null;
+}
+interface AlumniFeeRecordRow extends QueryRow {
+    alumni_id: string;
+    alumni_name: string | null;
+    alumni_email: string | null;
+    alumni_student_id: string | null;
+    batch: string | null;
+    course: string | null;
+}
 interface EventListRow extends QueryRow {
     image_url: string | null;
     status: string | null;
@@ -196,11 +250,48 @@ interface UserSettingsRow extends QueryRow {
     allow_in_app_notifications: number | boolean | null;
 }
 
+interface SystemSettingsRow extends QueryRow {
+    id: number;
+    system_name: string | null;
+    system_short_name: string | null;
+    institution_name: string | null;
+    institution_address: string | null;
+    institution_email: string | null;
+    institution_contact: string | null;
+    website_url: string | null;
+    footer_copyright_text?: string | null;
+    logo_path: string | null;
+    login_logo_path: string | null;
+    favicon_path: string | null;
+    login_background_path: string | null;
+    login_backgrounds_json?: string | null;
+    login_slideshow_enabled?: number | boolean | null;
+    primary_color: string | null;
+    secondary_color: string | null;
+    sidebar_color: string | null;
+    header_color: string | null;
+    button_color: string | null;
+    card_color: string | null;
+    welcome_message: string | null;
+    login_subtitle: string | null;
+    about_content: string | null;
+    mission: string | null;
+    vision: string | null;
+    history: string | null;
+    facebook_link: string | null;
+    twitter_link: string | null;
+    instagram_link: string | null;
+    theme_mode: string | null;
+    updated_at: string | null;
+}
+
 interface ConcernRow extends QueryRow {
     id: number;
-    alumni_id: string;
+    alumni_id: string | null;
     alumni_name?: string | null;
     alumni_email?: string | null;
+    reporter_name?: string | null;
+    reporter_email?: string | null;
     subject: string;
     category: string;
     message: string;
@@ -318,7 +409,7 @@ interface OfficerRosterRow extends QueryRow {
     position: string;
     custom_position: string | null;
     display_order: number | string | null;
-    alumni_id: string;
+    alumni_id: string | null;
     snapshot_name: string;
     snapshot_email: string | null;
     snapshot_course: string | null;
@@ -329,6 +420,29 @@ interface OfficerRosterRow extends QueryRow {
     updated_at: string;
 }
 
+interface AlumniOfficerRow extends QueryRow {
+    id: number | string;
+    alumni_id: string | null;
+    full_name: string;
+    position: string;
+    custom_position: string | null;
+    batch_year: string | null;
+    department_id: string | null;
+    program_id: string | null;
+    contact_number: string | null;
+    email: string | null;
+    photo: string | null;
+    term_start: string | null;
+    term_end: string | null;
+    status: string;
+    remarks: string | null;
+    is_archived: number | boolean | null;
+    archived_at: string | null;
+    archived_by: string | null;
+    created_by: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+}
 type FreedomWallReactionType = "heart";
 
 interface FreedomWallPostRow extends QueryRow {
@@ -365,6 +479,9 @@ interface NormalizedOfficerAssignment {
     position: string;
     name: string;
     contactNumber: string;
+    email: string;
+    course: string;
+    batch: string;
     photoBase64: string | null;
     customPosition: string | null;
     displayOrder: number;
@@ -395,13 +512,38 @@ const getSingleRow = async <T extends QueryRow = QueryRow>(sql: string, params: 
     return rows[0] || null;
 };
 
-const getRoleForUser = async (userId: string) => {
-    const roleRow = await getSingleRow(
-        "SELECT role FROM user_roles WHERE user_id = ?",
-        [userId]
-    );
+const normalizeRoleValue = (value: unknown) => String(value || "").trim().toLowerCase();
 
-    return roleRow?.role || "alumni";
+const getRolesForUser = async (userId: string) => {
+    const rows = parseRows(await db.query(
+        `SELECT role
+         FROM user_roles
+         WHERE user_id = ? AND COALESCE(archived, 0) = 0
+         ORDER BY CASE WHEN role = 'alumni' THEN 99 WHEN role = 'chairman' THEN 20 WHEN role IN ('president', 'admin') THEN 1 ELSE 10 END, role ASC`,
+        [userId]
+    ));
+
+    const roles = rows
+        .map((row) => normalizeRoleValue(row.role))
+        .filter(Boolean);
+
+    return roles.length > 0 ? Array.from(new Set(roles)) : ["alumni"];
+};
+
+const getRoleForUser = async (userId: string, selectedRole?: string | null) => {
+    const roles = await getRolesForUser(userId);
+    const requestedRole = normalizeRoleValue(selectedRole);
+
+    if (requestedRole && roles.includes(requestedRole)) {
+        return requestedRole;
+    }
+
+    return roles[0] || "alumni";
+};
+
+const getRequestRole = async (req: AuthenticatedRequest) => {
+    if (!req.user?.id) return "alumni";
+    return getRoleForUser(req.user.id, req.user.role);
 };
 
 const getProfileForUser = async (userId: string) => {
@@ -620,6 +762,129 @@ const getOfficerRosterForSchoolYear = async (schoolYearId: number | string) => {
     ));
 };
 
+const ALUMNI_OFFICER_POSITIONS = new Set([
+    "President",
+    "Vice President",
+    "Secretary",
+    "Treasurer",
+    "Auditor",
+    "Public Information Officer",
+    "Business Manager",
+    "Representative",
+    "Adviser",
+    "Custom Position"
+]);
+
+const OFFICER_STATUS_VALUES = new Set(["Active", "Inactive", "Completed"]);
+
+const normalizeManagedOfficerPosition = (value: unknown) => {
+    const normalized = normalizeText(value).toLowerCase();
+    const byValue: Record<string, string> = {
+        president: "President",
+        "vice president": "Vice President",
+        secretary: "Secretary",
+        treasurer: "Treasurer",
+        auditor: "Auditor",
+        "public information officer": "Public Information Officer",
+        pio: "Public Information Officer",
+        pro: "Public Information Officer",
+        "business manager": "Business Manager",
+        representative: "Representative",
+        adviser: "Adviser",
+        advisor: "Adviser",
+        "custom position": "Custom Position"
+    };
+
+    return byValue[normalized] || "";
+};
+
+const normalizeManagedOfficerStatus = (value: unknown) => {
+    const normalized = normalizeText(value).toLowerCase();
+    const byValue: Record<string, string> = {
+        active: "Active",
+        inactive: "Inactive",
+        completed: "Completed"
+    };
+
+    return byValue[normalized] || "";
+};
+
+const normalizeOfficerDate = (value: unknown) => {
+    const normalized = normalizeText(value);
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+};
+
+const getManagedOfficerDisplayPosition = (position: string | null | undefined, customPosition?: string | null) => {
+    if (customPosition) return customPosition;
+    const managedPosition = normalizeManagedOfficerPosition(position);
+    return managedPosition || formatOfficerPosition(position);
+};
+
+const getManagedOfficerChartRole = (position: string | null | undefined) => {
+    const managedPosition = normalizeManagedOfficerPosition(position);
+    const roleMap: Record<string, string> = {
+        President: "president",
+        "Vice President": "vice_president",
+        Secretary: "secretary",
+        Treasurer: "treasurer",
+        Auditor: "auditor",
+        "Public Information Officer": "pio",
+        "Business Manager": "board_member",
+        Representative: "board_member",
+        Adviser: "board_member",
+        "Custom Position": "board_member"
+    };
+
+    return roleMap[managedPosition] || normalizeOfficerPositionKey(position);
+};
+
+const mapAlumniOfficer = (row: AlumniOfficerRow) => ({
+    id: Number(row.id),
+    alumniId: row.alumni_id,
+    fullName: row.full_name,
+    position: row.position,
+    positionLabel: getManagedOfficerDisplayPosition(row.position, row.custom_position),
+    customPosition: row.custom_position,
+    batchYear: row.batch_year,
+    departmentId: row.department_id,
+    programId: row.program_id,
+    contactNumber: row.contact_number,
+    email: row.email,
+    photo: normalizeStoredMedia(row.photo),
+    termStart: row.term_start,
+    termEnd: row.term_end,
+    status: row.status,
+    remarks: row.remarks,
+    isArchived: Boolean(row.is_archived),
+    archivedAt: row.archived_at,
+    archivedBy: row.archived_by,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+});
+
+const getAlumniOfficerById = async (id: number) => {
+    return await getSingleRow<AlumniOfficerRow>("SELECT * FROM alumni_officers WHERE id = ?", [id]);
+};
+
+const getActiveManagedOfficerRoster = async () => {
+    return parseRows<AlumniOfficerRow>(await db.query<AlumniOfficerRow>(
+        `SELECT *
+         FROM alumni_officers
+         WHERE is_archived = 0 AND status = 'Active'
+         ORDER BY
+            CASE position
+                WHEN 'President' THEN 10
+                WHEN 'Vice President' THEN 20
+                WHEN 'Secretary' THEN 30
+                WHEN 'Treasurer' THEN 50
+                WHEN 'Auditor' THEN 70
+                WHEN 'Public Information Officer' THEN 80
+                ELSE 90
+            END,
+            full_name ASC`
+    ));
+};
 const parseSchoolYearInput = (value: unknown) => {
     const normalized = String(value || "").trim();
     const match = normalized.match(/^(\d{4})\s*-\s*(\d{4})$/);
@@ -1169,6 +1434,250 @@ const recordAlumniLoginActivity = async (userId: string) => {
     }
 };
 
+const SESSION_ACTIVE_STATUS = "Active";
+const SESSION_ENDED_STATUS = "Ended";
+
+const ROLE_LABELS: Record<string, string> = {
+    admin: "Administrator",
+    president: "Administrator",
+    vice_president: "Staff",
+    secretary: "Staff",
+    assistant_secretary: "Staff",
+    treasurer: "Staff",
+    assistant_treasurer: "Staff",
+    auditor: "Staff",
+    pio: "Staff",
+    appointed: "Staff",
+    chairman: "Chairman",
+    alumni: "Alumni"
+};
+
+const getRoleDisplayLabel = (role: unknown) => {
+    const normalized = normalizeRoleValue(role);
+    if (normalized === "president" || normalized === "admin") return "Administrator";
+    if (normalized === "chairman") return "Chairman";
+    if (normalized === "alumni") return "Alumni";
+    if (ROLE_LABELS[normalized]) return ROLE_LABELS[normalized];
+    return normalized
+        .split("_")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ") || "User";
+};
+
+const ensureUserSessionTables = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL,
+            role_id VARCHAR(50) NOT NULL,
+            session_token VARCHAR(128) NOT NULL UNIQUE,
+            ip_address VARCHAR(100) NULL,
+            browser VARCHAR(120) NULL,
+            operating_system VARCHAR(120) NULL,
+            device_type VARCHAR(60) NULL,
+            login_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            logout_time DATETIME NULL,
+            last_activity DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status VARCHAR(20) NOT NULL DEFAULT 'Active',
+            INDEX idx_user_sessions_user (user_id),
+            INDEX idx_user_sessions_role (role_id),
+            INDEX idx_user_sessions_status (status),
+            INDEX idx_user_sessions_login_time (login_time),
+            INDEX idx_user_sessions_last_activity (last_activity),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS activity_logs (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(36) NULL,
+            session_token VARCHAR(128) NULL,
+            action VARCHAR(80) NOT NULL,
+            description TEXT NOT NULL,
+            role_used VARCHAR(50) NULL,
+            device_used VARCHAR(120) NULL,
+            browser_used VARCHAR(120) NULL,
+            ip_address VARCHAR(100) NULL,
+            metadata_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_activity_logs_user (user_id),
+            INDEX idx_activity_logs_action (action),
+            INDEX idx_activity_logs_role (role_used),
+            INDEX idx_activity_logs_created_at (created_at),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    `);
+};
+
+const ensureUserRolesSupportMultipleRoles = async () => {
+    if (await columnExists("user_roles", "id")) return;
+
+    await db.execute(`
+        ALTER TABLE user_roles
+        DROP PRIMARY KEY,
+        ADD COLUMN id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST,
+        ADD UNIQUE KEY uq_user_roles_user_role (user_id, role),
+        ADD INDEX idx_user_roles_user (user_id)
+    `);
+};
+
+const endExpiredSessions = async () => {
+    await db.execute(`
+        UPDATE user_sessions
+        SET status = 'Ended',
+            logout_time = COALESCE(logout_time, DATE_ADD(login_time, INTERVAL 7 DAY)),
+            last_activity = GREATEST(last_activity, DATE_ADD(login_time, INTERVAL 7 DAY))
+        WHERE status = 'Active'
+          AND login_time <= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    `);
+};
+
+const getRequestIpAddress = (req: express.Request) => {
+    const forwardedFor = req.headers["x-forwarded-for"];
+    const firstForwarded = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+    return String(firstForwarded || req.socket.remoteAddress || req.ip || "").split(",")[0].trim() || "Unknown";
+};
+
+const parseDeviceInfo = (userAgentValue: unknown) => {
+    const userAgent = String(userAgentValue || "");
+    const lower = userAgent.toLowerCase();
+
+    const browser = lower.includes("edg/") ? "Microsoft Edge"
+        : lower.includes("opr/") || lower.includes("opera") ? "Opera"
+        : lower.includes("firefox/") ? "Firefox"
+        : lower.includes("crios/") ? "Mobile Chrome"
+        : lower.includes("chrome/") && (lower.includes("mobile") || lower.includes("android")) ? "Mobile Chrome"
+        : lower.includes("chrome/") ? "Chrome"
+        : lower.includes("safari/") ? "Safari"
+        : "Unknown Browser";
+
+    const operatingSystem = lower.includes("windows nt") ? "Windows"
+        : lower.includes("android") ? "Android"
+        : lower.includes("iphone") || lower.includes("ipad") ? "iOS"
+        : lower.includes("mac os x") ? "macOS"
+        : lower.includes("linux") ? "Linux"
+        : "Unknown OS";
+
+    const deviceType = lower.includes("mobile") || lower.includes("iphone") || lower.includes("android") ? "Mobile"
+        : lower.includes("tablet") || lower.includes("ipad") ? "Tablet"
+        : "Desktop";
+
+    return { browser, operatingSystem, deviceType };
+};
+
+const recordActivityLog = async ({
+    userId,
+    sessionToken,
+    action,
+    description,
+    roleUsed,
+    deviceUsed,
+    browserUsed,
+    ipAddress,
+    metadata
+}: {
+    userId?: string | null;
+    sessionToken?: string | null;
+    action: string;
+    description: string;
+    roleUsed?: string | null;
+    deviceUsed?: string | null;
+    browserUsed?: string | null;
+    ipAddress?: string | null;
+    metadata?: Record<string, unknown> | null;
+}) => {
+    try {
+        await ensureUserSessionTables();
+        await db.execute(
+            `INSERT INTO activity_logs
+                (user_id, session_token, action, description, role_used, device_used, browser_used, ip_address, metadata_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                userId || null,
+                sessionToken || null,
+                action,
+                description,
+                roleUsed || null,
+                deviceUsed || null,
+                browserUsed || null,
+                ipAddress || null,
+                metadata ? JSON.stringify(metadata) : null,
+                formatSqlDateTime(new Date())
+            ]
+        );
+    } catch (error) {
+        console.error("ACTIVITY LOG ERROR:", error);
+    }
+};
+
+const createAuthenticatedSession = async ({
+    user,
+    role,
+    req
+}: {
+    user: { id: string; email: string };
+    role: string;
+    req: express.Request;
+}) => {
+    await ensureUserSessionTables();
+
+    const selectedRole = await getRoleForUser(user.id, role);
+    const sessionToken = uuidv4();
+    const ipAddress = getRequestIpAddress(req);
+    const deviceInfo = parseDeviceInfo(req.headers["user-agent"]);
+    const now = formatSqlDateTime(new Date());
+
+    await db.execute(
+        `INSERT INTO user_sessions
+            (user_id, role_id, session_token, ip_address, browser, operating_system, device_type, login_time, last_activity, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            user.id,
+            selectedRole,
+            sessionToken,
+            ipAddress,
+            deviceInfo.browser,
+            deviceInfo.operatingSystem,
+            deviceInfo.deviceType,
+            now,
+            now,
+            SESSION_ACTIVE_STATUS
+        ]
+    );
+
+    const authPayload = await buildAuthPayload({ id: user.id, email: user.email }, selectedRole);
+    const fullName = String(authPayload.profile?.name || authPayload.user.email || "User");
+    const roleLabel = getRoleDisplayLabel(selectedRole);
+    const token = jwt.sign(
+        { id: user.id, email: authPayload.user.email, role: selectedRole, sessionId: sessionToken },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+
+    await recordActivityLog({
+        userId: user.id,
+        sessionToken,
+        action: "User Login",
+        description: `${fullName} logged in as ${roleLabel} using ${deviceInfo.browser} on ${deviceInfo.operatingSystem}.`,
+        roleUsed: selectedRole,
+        deviceUsed: deviceInfo.deviceType,
+        browserUsed: deviceInfo.browser,
+        ipAddress,
+        metadata: { operatingSystem: deviceInfo.operatingSystem }
+    });
+
+    if (selectedRole === "alumni") {
+        await recordAlumniLoginActivity(String(user.id));
+    }
+
+    return {
+        token,
+        sessionToken,
+        ...authPayload
+    };
+};
 const normalizeInterestStatus = (value: unknown) => {
     const normalized = String(value || "").trim().toLowerCase().replace(/[_\s-]+/g, "_");
     return normalized === "not_interested" || normalized === "cancelled" || normalized === "false"
@@ -1989,6 +2498,424 @@ const normalizeStoredMedia = (value: string | null | undefined) => {
     return trimmed;
 };
 
+const DEFAULT_SYSTEM_SETTINGS = {
+    system_name: "Alumni Management Portal",
+    system_short_name: "Alumni Portal",
+    institution_name: "Your Institution",
+    institution_address: "",
+    institution_email: "",
+    institution_contact: "",
+    website_url: "",
+    footer_copyright_text: "Generated by Alumni Management System",
+    logo_path: "",
+    login_logo_path: "",
+    favicon_path: "",
+    login_background_path: "",
+    login_backgrounds_json: "[]",
+    login_slideshow_enabled: 0,
+    programs_json: JSON.stringify(normalizeCourseOptions(COURSE_OPTIONS)),
+    primary_color: "#550000",
+    secondary_color: "#3f3f46",
+    sidebar_color: "#383838",
+    header_color: "#550000",
+    button_color: "#550000",
+    card_color: "#f7f7f7",
+    welcome_message: "Welcome to the Alumni Management Portal",
+    login_subtitle: "Sign in using your alumni ID or official email.",
+    about_content: "A centralized portal for alumni records, engagement, tracer studies, announcements, achievements, donations, and community updates.",
+    mission: "Provide a reliable alumni platform that supports communication, graduate tracking, engagement, and institutional decision-making.",
+    vision: "A connected alumni community that helps the institution improve programs, services, and graduate outcomes.",
+    history: "",
+    facebook_link: "",
+    twitter_link: "",
+    instagram_link: "",
+    theme_mode: "light"
+};
+
+const SYSTEM_SETTING_COLUMNS = [
+    "system_name",
+    "system_short_name",
+    "institution_name",
+    "institution_address",
+    "institution_email",
+    "institution_contact",
+    "website_url",
+    "footer_copyright_text",
+    "logo_path",
+    "login_logo_path",
+    "favicon_path",
+    "login_background_path",
+    "login_backgrounds_json",
+    "login_slideshow_enabled",
+    "programs_json",
+    "primary_color",
+    "secondary_color",
+    "sidebar_color",
+    "header_color",
+    "button_color",
+    "card_color",
+    "welcome_message",
+    "login_subtitle",
+    "about_content",
+    "mission",
+    "vision",
+    "history",
+    "facebook_link",
+    "twitter_link",
+    "instagram_link",
+    "theme_mode"
+] as const;
+
+type SystemSettingColumn = typeof SYSTEM_SETTING_COLUMNS[number];
+
+const SYSTEM_TEXTAREA_FIELDS = new Set<SystemSettingColumn>([
+    "institution_address",
+    "footer_copyright_text",
+    "login_subtitle",
+    "about_content",
+    "mission",
+    "vision",
+    "history"
+]);
+
+const COLOR_FIELDS = new Set<SystemSettingColumn>([
+    "primary_color",
+    "secondary_color",
+    "sidebar_color",
+    "header_color",
+    "button_color",
+    "card_color"
+]);
+
+const normalizeHexColor = (value: unknown, fallback: string) => {
+    const normalized = String(value || "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized : fallback;
+};
+
+const normalizeThemeMode = (value: unknown) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return ["light", "dark", "auto", "custom"].includes(normalized) ? normalized : "light";
+};
+
+const safeParseJsonArray = (value: unknown) => {
+    if (Array.isArray(value)) return value.filter((item) => typeof item === "string");
+    try {
+        const parsed = JSON.parse(String(value || "[]"));
+        return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+    } catch {
+        return [];
+    }
+};
+
+const safeParseProgramOptions = (value: unknown): CourseOption[] => {
+    try {
+        const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value;
+        return normalizeCourseOptions(parsed);
+    } catch {
+        return normalizeCourseOptions(COURSE_OPTIONS);
+    }
+};
+const mapSystemSettingsRow = (row: Partial<SystemSettingsRow> | null | undefined) => {
+    const source: Partial<SystemSettingsRow> = row || {};
+    const loginBackgrounds = safeParseJsonArray(source.login_backgrounds_json);
+    const programs = safeParseProgramOptions(source.programs_json);
+
+    return {
+        id: Number(source.id || 1),
+        systemName: String(source.system_name || DEFAULT_SYSTEM_SETTINGS.system_name),
+        systemShortName: String(source.system_short_name || DEFAULT_SYSTEM_SETTINGS.system_short_name),
+        institutionName: String(source.institution_name || DEFAULT_SYSTEM_SETTINGS.institution_name),
+        institutionAddress: String(source.institution_address || DEFAULT_SYSTEM_SETTINGS.institution_address),
+        institutionEmail: String(source.institution_email || DEFAULT_SYSTEM_SETTINGS.institution_email),
+        institutionContact: String(source.institution_contact || DEFAULT_SYSTEM_SETTINGS.institution_contact),
+        websiteUrl: String(source.website_url || DEFAULT_SYSTEM_SETTINGS.website_url),
+        footerCopyrightText: String(source.footer_copyright_text || DEFAULT_SYSTEM_SETTINGS.footer_copyright_text),
+        logoPath: normalizeStoredMedia(source.logo_path || "") || "",
+        loginLogoPath: normalizeStoredMedia(source.login_logo_path || "") || "",
+        faviconPath: normalizeStoredMedia(source.favicon_path || "") || "",
+        loginBackgroundPath: normalizeStoredMedia(source.login_background_path || "") || "",
+        loginBackgrounds: loginBackgrounds.map((item) => normalizeStoredMedia(item) || item),
+        loginSlideshowEnabled: normalizeBoolean(source.login_slideshow_enabled),
+        programs,
+        primaryColor: String(source.primary_color || DEFAULT_SYSTEM_SETTINGS.primary_color),
+        secondaryColor: String(source.secondary_color || DEFAULT_SYSTEM_SETTINGS.secondary_color),
+        sidebarColor: String(source.sidebar_color || DEFAULT_SYSTEM_SETTINGS.sidebar_color),
+        headerColor: String(source.header_color || DEFAULT_SYSTEM_SETTINGS.header_color),
+        buttonColor: String(source.button_color || DEFAULT_SYSTEM_SETTINGS.button_color),
+        cardColor: String(source.card_color || DEFAULT_SYSTEM_SETTINGS.card_color),
+        welcomeMessage: String(source.welcome_message || DEFAULT_SYSTEM_SETTINGS.welcome_message),
+        loginSubtitle: String(source.login_subtitle || DEFAULT_SYSTEM_SETTINGS.login_subtitle),
+        aboutContent: String(source.about_content || DEFAULT_SYSTEM_SETTINGS.about_content),
+        mission: String(source.mission || DEFAULT_SYSTEM_SETTINGS.mission),
+        vision: String(source.vision || DEFAULT_SYSTEM_SETTINGS.vision),
+        history: String(source.history || DEFAULT_SYSTEM_SETTINGS.history),
+        facebookLink: String(source.facebook_link || DEFAULT_SYSTEM_SETTINGS.facebook_link),
+        twitterLink: String(source.twitter_link || DEFAULT_SYSTEM_SETTINGS.twitter_link),
+        instagramLink: String(source.instagram_link || DEFAULT_SYSTEM_SETTINGS.instagram_link),
+        themeMode: normalizeThemeMode(source.theme_mode),
+        updatedAt: source.updated_at ? String(source.updated_at) : null
+    };
+};
+
+const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
+    const mapped: Record<SystemSettingColumn, string | number> = { ...DEFAULT_SYSTEM_SETTINGS };
+    const aliases: Record<SystemSettingColumn, string> = {
+        system_name: "systemName",
+        system_short_name: "systemShortName",
+        institution_name: "institutionName",
+        institution_address: "institutionAddress",
+        institution_email: "institutionEmail",
+        institution_contact: "institutionContact",
+        website_url: "websiteUrl",
+        footer_copyright_text: "footerCopyrightText",
+        logo_path: "logoPath",
+        login_logo_path: "loginLogoPath",
+        favicon_path: "faviconPath",
+        login_background_path: "loginBackgroundPath",
+        login_backgrounds_json: "loginBackgrounds",
+        login_slideshow_enabled: "loginSlideshowEnabled",
+        programs_json: "programs",
+        primary_color: "primaryColor",
+        secondary_color: "secondaryColor",
+        sidebar_color: "sidebarColor",
+        header_color: "headerColor",
+        button_color: "buttonColor",
+        card_color: "cardColor",
+        welcome_message: "welcomeMessage",
+        login_subtitle: "loginSubtitle",
+        about_content: "aboutContent",
+        mission: "mission",
+        vision: "vision",
+        history: "history",
+        facebook_link: "facebookLink",
+        twitter_link: "twitterLink",
+        instagram_link: "instagramLink",
+        theme_mode: "themeMode"
+    };
+
+    for (const column of SYSTEM_SETTING_COLUMNS) {
+        const inputKey = aliases[column];
+        const rawValue = body[inputKey] ?? body[column];
+
+        if (column === "login_backgrounds_json") {
+            mapped[column] = JSON.stringify(safeParseJsonArray(rawValue));
+        } else if (column === "programs_json") {
+            mapped[column] = JSON.stringify(normalizeCourseOptions(rawValue));
+        } else if (column === "login_slideshow_enabled") {
+            mapped[column] = normalizeBoolean(rawValue) ? 1 : 0;
+        } else if (column === "theme_mode") {
+            mapped[column] = normalizeThemeMode(rawValue);
+        } else if (COLOR_FIELDS.has(column)) {
+            mapped[column] = normalizeHexColor(rawValue, String(DEFAULT_SYSTEM_SETTINGS[column]));
+        } else if (column.endsWith("_path")) {
+            mapped[column] = normalizeStoredMedia(typeof rawValue === "string" ? rawValue : "") || "";
+        } else if (SYSTEM_TEXTAREA_FIELDS.has(column)) {
+            mapped[column] = String(rawValue || "").trim();
+        } else {
+            mapped[column] = normalizeText(rawValue);
+        }
+    }
+
+    return mapped;
+};
+
+const ensureSystemSettingsTable = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS system_settings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            system_name VARCHAR(255),
+            system_short_name VARCHAR(100),
+            institution_name VARCHAR(255),
+            institution_address TEXT,
+            institution_email VARCHAR(255),
+            institution_contact VARCHAR(100),
+            website_url TEXT,
+            footer_copyright_text TEXT,
+            logo_path LONGTEXT,
+            login_logo_path LONGTEXT,
+            favicon_path LONGTEXT,
+            login_background_path LONGTEXT,
+            login_backgrounds_json LONGTEXT,
+            login_slideshow_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            programs_json LONGTEXT,
+            primary_color VARCHAR(20),
+            secondary_color VARCHAR(20),
+            sidebar_color VARCHAR(20),
+            header_color VARCHAR(20),
+            button_color VARCHAR(20),
+            card_color VARCHAR(20),
+            welcome_message VARCHAR(255),
+            login_subtitle TEXT,
+            about_content TEXT,
+            mission TEXT,
+            vision TEXT,
+            history TEXT,
+            facebook_link TEXT,
+            twitter_link TEXT,
+            instagram_link TEXT,
+            theme_mode ENUM('light', 'dark', 'auto', 'custom') DEFAULT 'light',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    `);
+
+    const columnsToAdd = [
+        { name: "footer_copyright_text", sql: "ALTER TABLE system_settings ADD COLUMN footer_copyright_text TEXT AFTER website_url" },
+        { name: "login_backgrounds_json", sql: "ALTER TABLE system_settings ADD COLUMN login_backgrounds_json LONGTEXT AFTER login_background_path" },
+        { name: "login_slideshow_enabled", sql: "ALTER TABLE system_settings ADD COLUMN login_slideshow_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER login_backgrounds_json" },
+        { name: "programs_json", sql: "ALTER TABLE system_settings ADD COLUMN programs_json LONGTEXT AFTER login_slideshow_enabled" }
+    ];
+
+    for (const column of columnsToAdd) {
+        try {
+            if (!(await columnExists("system_settings", column.name))) {
+                await db.execute(column.sql);
+            }
+        } catch (error) {
+            console.error(`SYSTEM SETTINGS COLUMN MIGRATION ERROR: ${column.name}`, error);
+        }
+    }
+
+    const existing = await getSingleRow<SystemSettingsRow>("SELECT id FROM system_settings LIMIT 1");
+    if (!existing) {
+        const columns = SYSTEM_SETTING_COLUMNS.join(", ");
+        const placeholders = SYSTEM_SETTING_COLUMNS.map(() => "?").join(", ");
+        await db.execute(
+            `INSERT INTO system_settings (${columns}) VALUES (${placeholders})`,
+            SYSTEM_SETTING_COLUMNS.map((column) => DEFAULT_SYSTEM_SETTINGS[column])
+        );
+    }
+};
+
+const ensureAlumniFeeRecordsTable = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS alumni_fee_types (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            fee_name VARCHAR(150) NOT NULL,
+            amount DECIMAL(12, 2) NOT NULL,
+            description TEXT NULL,
+            applicable_batch_year VARCHAR(20) NULL,
+            applicable_program_id VARCHAR(255) NULL,
+            due_date DATE NULL,
+            assigned_officer_id VARCHAR(36) NULL,
+            is_required TINYINT(1) NOT NULL DEFAULT 1,
+            status VARCHAR(30) NOT NULL DEFAULT 'Active',
+            created_by VARCHAR(36) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_alumni_fee_types_status (status, is_required),
+            INDEX idx_alumni_fee_types_scope (applicable_batch_year, applicable_program_id),
+            INDEX idx_alumni_fee_types_officer (assigned_officer_id),
+            FOREIGN KEY (assigned_officer_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+    `);
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS alumni_fee_payments (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            alumni_id VARCHAR(36) NOT NULL,
+            fee_type_id BIGINT NOT NULL,
+            amount_paid DECIMAL(12, 2) NOT NULL,
+            paid_date DATE NOT NULL,
+            received_by VARCHAR(36) NULL,
+            payment_note TEXT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'Paid',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_alumni_fee_payment (alumni_id, fee_type_id),
+            INDEX idx_alumni_fee_payments_alumni (alumni_id),
+            INDEX idx_alumni_fee_payments_fee (fee_type_id),
+            INDEX idx_alumni_fee_payments_status (status),
+            FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (fee_type_id) REFERENCES alumni_fee_types(id) ON DELETE CASCADE,
+            FOREIGN KEY (received_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+    `);
+};const ensureAlumniProjectTables = async () => {
+    await db.execute(`CREATE TABLE IF NOT EXISTS alumni_projects (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(255) NOT NULL, description TEXT NULL, category VARCHAR(100) NOT NULL, batch_year VARCHAR(20) NULL,
+        lead_officer_id VARCHAR(36) NULL, lead_alumni_id VARCHAR(36) NULL, organization_name VARCHAR(255) NULL, alumni_group VARCHAR(255) NULL,
+        start_date DATE NULL, end_date DATE NULL, status VARCHAR(30) NOT NULL DEFAULT 'Planned', estimated_value DECIMAL(14,2) NULL,
+        funding_source VARCHAR(255) NULL, beneficiaries TEXT NULL, related_contribution_id VARCHAR(100) NULL, accomplishments TEXT NULL, remarks TEXT NULL,
+        contribution_record_id VARCHAR(100) NULL, created_by VARCHAR(36) NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_alumni_projects_status (status), INDEX idx_alumni_projects_category (category), INDEX idx_alumni_projects_batch (batch_year), INDEX idx_alumni_projects_dates (start_date),
+        FOREIGN KEY (lead_officer_id) REFERENCES users(id) ON DELETE SET NULL, FOREIGN KEY (lead_alumni_id) REFERENCES users(id) ON DELETE SET NULL, FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    )`);
+    await db.execute(`CREATE TABLE IF NOT EXISTS alumni_project_files (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY, project_id BIGINT NOT NULL, file_name VARCHAR(255) NOT NULL, file_path LONGTEXT NULL, file_type VARCHAR(120) NULL,
+        file_url LONGTEXT NULL, file_category VARCHAR(100) NOT NULL DEFAULT 'Photo', uploaded_by VARCHAR(36) NULL, uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_alumni_project_files_project (project_id), FOREIGN KEY (project_id) REFERENCES alumni_projects(id) ON DELETE CASCADE, FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+    )`);
+
+    const projectColumns = [
+        { name: "lead_alumni_id", sql: "ALTER TABLE alumni_projects ADD COLUMN lead_alumni_id VARCHAR(36) NULL AFTER lead_officer_id" },
+        { name: "organization_name", sql: "ALTER TABLE alumni_projects ADD COLUMN organization_name VARCHAR(255) NULL AFTER lead_alumni_id" },
+        { name: "alumni_group", sql: "ALTER TABLE alumni_projects ADD COLUMN alumni_group VARCHAR(255) NULL AFTER organization_name" },
+        { name: "related_contribution_id", sql: "ALTER TABLE alumni_projects ADD COLUMN related_contribution_id VARCHAR(100) NULL AFTER beneficiaries" },
+        { name: "contribution_record_id", sql: "ALTER TABLE alumni_projects ADD COLUMN contribution_record_id VARCHAR(100) NULL AFTER related_contribution_id" }
+    ];
+    for (const column of projectColumns) {
+        if (!(await columnExists("alumni_projects", column.name))) await db.execute(column.sql);
+    }
+    const fileColumns = [
+        { name: "file_path", sql: "ALTER TABLE alumni_project_files ADD COLUMN file_path LONGTEXT NULL AFTER file_name" },
+        { name: "uploaded_at", sql: "ALTER TABLE alumni_project_files ADD COLUMN uploaded_at TIMESTAMP NULL DEFAULT NULL AFTER uploaded_by" },
+        { name: "file_url", sql: "ALTER TABLE alumni_project_files ADD COLUMN file_url LONGTEXT NULL AFTER file_type" },
+        { name: "file_category", sql: "ALTER TABLE alumni_project_files ADD COLUMN file_category VARCHAR(100) NOT NULL DEFAULT 'Project File' AFTER file_url" }
+    ];
+    for (const column of fileColumns) {
+        if (!(await columnExists("alumni_project_files", column.name))) await db.execute(column.sql);
+    }
+    await db.execute("UPDATE alumni_projects SET organization_name = COALESCE(NULLIF(organization_name, ''), alumni_group), related_contribution_id = COALESCE(NULLIF(related_contribution_id, ''), contribution_record_id) WHERE organization_name IS NULL OR related_contribution_id IS NULL");
+    await db.execute("UPDATE alumni_project_files SET file_path = COALESCE(NULLIF(file_path, ''), file_url), uploaded_at = COALESCE(uploaded_at, created_at) WHERE file_path IS NULL OR uploaded_at IS NULL");
+};
+const getSystemSettings = async () => {
+    await ensureSystemSettingsTable();
+    const row = await getSingleRow<SystemSettingsRow>("SELECT * FROM system_settings ORDER BY id ASC LIMIT 1");
+    return mapSystemSettingsRow(row);
+};
+
+const brandingUploadDir = () => path.join(process.cwd(), "../public/uploads/branding");
+
+const saveBrandingUpload = async (fileName: string, dataUrl: string) => {
+    const match = String(dataUrl || "").match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) {
+        throw new Error("Upload must be an image file.");
+    }
+
+    const mimeType = match[1].toLowerCase();
+    const extensionMap: Record<string, string> = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg",
+        "image/x-icon": "ico",
+        "image/vnd.microsoft.icon": "ico"
+    };
+    const extension = extensionMap[mimeType];
+    if (!extension) {
+        throw new Error("Only PNG, JPG, GIF, WebP, SVG, and ICO images are allowed.");
+    }
+
+    const buffer = Buffer.from(match[2], "base64");
+    if (buffer.length > 5 * 1024 * 1024) {
+        throw new Error("Image uploads must be 5MB or smaller.");
+    }
+
+    const safeBaseName = normalizeText(fileName)
+        .toLowerCase()
+        .replace(/\.[^.]+$/, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 48) || "branding";
+    const storedName = `${Date.now()}-${safeBaseName}-${uuidv4().slice(0, 8)}.${extension}`;
+    const uploadDir = brandingUploadDir();
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(path.join(uploadDir, storedName), buffer);
+    return `/uploads/branding/${storedName}`;
+};
+
 const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCase();
 
 const normalizeText = (value: unknown) => String(value || "").trim().replace(/\s+/g, " ");
@@ -2008,10 +2935,11 @@ const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g
 
 const normalizeBatch = (value: unknown) => String(value || "").trim();
 
-const normalizeSupportedCourse = (value: unknown) => normalizeCourseCode(normalizeText(value));
+const normalizeSupportedCourse = (value: unknown, programs: CourseOption[] = COURSE_OPTIONS) => normalizeCourseCode(normalizeText(value), programs);
 
 const CONCERN_CATEGORIES = new Set([
     "Account",
+    "Login Issue",
     "Event",
     "Donation",
     "Document Request",
@@ -2040,7 +2968,7 @@ const validateSupportedCourse = (value: unknown) => {
         return {
             ok: false,
             course: null,
-            message: `Course must be one of: ${SYSTEM_COURSES.join(", ")}.`,
+            message: `Course must be one of: ${programOptions.map((program) => program.code).join(", ")}.`,
         };
     }
 
@@ -2105,8 +3033,9 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
     const fullName = normalizeText(row.fullName || row.name);
     const graduationYear = normalizeBatch(row.graduationYear || row.year);
     const emailAddress = normalizeEmail(row.emailAddress || row.email);
-    const courseValidation = validateSupportedCourse(row.program || row.course);
+    const courseValidation = validateSupportedCourse(row.program || row.course, programs);
     const contactNumber = normalizePhone(row.contactNumber);
+    const borNumber = normalizeText(row.borNumber) || null;
 
     if (!fullName) {
         return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Name is required", category: "invalid" as const } };
@@ -2133,7 +3062,8 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number) => {
             batch: graduationYear,
             email: emailAddress,
             course: courseValidation.course,
-            contactNumber
+            contactNumber,
+            borNumber
         }
     };
 };
@@ -2154,6 +3084,7 @@ const IMPORT_HEADER_MAP: Record<string, keyof AlumniImportInputRow> = {
     gradyear: "graduationYear",
     batch: "graduationYear",
     batchyear: "graduationYear",
+    schoolyear: "graduationYear",
     yeargraduated: "graduationYear",
     program: "program",
     course: "course",
@@ -2162,7 +3093,11 @@ const IMPORT_HEADER_MAP: Record<string, keyof AlumniImportInputRow> = {
     contactnumber: "contactNumber",
     mobilenumber: "contactNumber",
     phone: "contactNumber",
-    phonenumber: "contactNumber"
+    phonenumber: "contactNumber",
+    bornumber: "borNumber",
+    borno: "borNumber",
+    boardresolutionnumber: "borNumber",
+    boardresolution: "borNumber",
 };
 
 const getCellText = (cell: ExcelJS.Cell) => {
@@ -2212,7 +3147,7 @@ const worksheetToImportRows = (worksheet: ExcelJS.Worksheet): AlumniImportInputR
     });
 
     if (headerRowNumber === 0) {
-        throw new Error("Import file must include headers: name, email, year, and program.");
+        throw new Error("Import file must include headers: name, email, and program.");
     }
 
     const rows: AlumniImportInputRow[] = [];
@@ -2379,6 +3314,372 @@ const buildRecipientMailingMessage = (
     }
 
     return message.split(MAILING_MISSING_INFO_PLACEHOLDER).join(formatMailingMissingInfo(recipient));
+};
+const EMAIL_QUEUE_PURPOSE: TargetedEmailPurpose = "graduate_tracer_reminder";
+const EMAIL_QUEUE_STAGES = ["first", "second", "third", "final"] as const;
+type EmailQueueStage = typeof EMAIL_QUEUE_STAGES[number];
+type EmailQueuePriority = "low" | "normal" | "high";
+
+type EmailQueueSettings = {
+    dailyEmailLimit: number;
+    batchSizePerSendCycle: number;
+    sendIntervalMinutes: number;
+    queueProcessingEnabled: boolean;
+    reminderPriorityLevel: EmailQueuePriority;
+    lastProcessedAt: string | null;
+    lastDailyCheckAt: string | null;
+};
+
+const DEFAULT_EMAIL_QUEUE_SETTINGS: EmailQueueSettings = {
+    dailyEmailLimit: 300,
+    batchSizePerSendCycle: 50,
+    sendIntervalMinutes: 60,
+    queueProcessingEnabled: true,
+    reminderPriorityLevel: "normal",
+    lastProcessedAt: null,
+    lastDailyCheckAt: null
+};
+
+const normalizeQueueInt = (value: unknown, fallback: number, min: number, max: number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(Math.floor(parsed), max));
+};
+
+const normalizeQueuePriority = (value: unknown): EmailQueuePriority => {
+    const normalized = normalizeText(value).toLowerCase();
+    return normalized === "high" || normalized === "low" ? normalized : "normal";
+};
+
+const mapEmailQueueSettings = (row?: QueryRow | null): EmailQueueSettings => ({
+    dailyEmailLimit: normalizeQueueInt(row?.daily_email_limit, DEFAULT_EMAIL_QUEUE_SETTINGS.dailyEmailLimit, 1, 10000),
+    batchSizePerSendCycle: normalizeQueueInt(row?.batch_size_per_send_cycle, DEFAULT_EMAIL_QUEUE_SETTINGS.batchSizePerSendCycle, 1, 1000),
+    sendIntervalMinutes: normalizeQueueInt(row?.send_interval_minutes, DEFAULT_EMAIL_QUEUE_SETTINGS.sendIntervalMinutes, 1, 1440),
+    queueProcessingEnabled: normalizeBoolean(row?.queue_processing_enabled, DEFAULT_EMAIL_QUEUE_SETTINGS.queueProcessingEnabled),
+    reminderPriorityLevel: normalizeQueuePriority(row?.reminder_priority_level || DEFAULT_EMAIL_QUEUE_SETTINGS.reminderPriorityLevel),
+    lastProcessedAt: row?.last_processed_at ? String(row.last_processed_at) : null,
+    lastDailyCheckAt: row?.last_daily_check_at ? String(row.last_daily_check_at) : null
+});
+
+const ensureEmailQueueTables = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS email_queue_settings (
+            id TINYINT PRIMARY KEY DEFAULT 1,
+            daily_email_limit INT NOT NULL DEFAULT 300,
+            batch_size_per_send_cycle INT NOT NULL DEFAULT 50,
+            send_interval_minutes INT NOT NULL DEFAULT 60,
+            queue_processing_enabled TINYINT(1) NOT NULL DEFAULT 1,
+            reminder_priority_level VARCHAR(20) NOT NULL DEFAULT 'normal',
+            last_processed_at DATETIME NULL,
+            last_daily_check_at DATETIME NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS email_queue (
+            id VARCHAR(36) PRIMARY KEY,
+            alumni_id VARCHAR(36) NOT NULL,
+            recipient_email VARCHAR(255) NOT NULL,
+            recipient_name VARCHAR(255) NULL,
+            email_purpose VARCHAR(100) NOT NULL,
+            reminder_stage VARCHAR(30) NOT NULL,
+            priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+            subject VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            scheduled_for DATETIME NOT NULL,
+            attempts INT NOT NULL DEFAULT 0,
+            last_attempt_at DATETIME NULL,
+            sent_at DATETIME NULL,
+            provider_message_id VARCHAR(255) NULL,
+            error_message TEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            created_by VARCHAR(36) NULL,
+            INDEX idx_email_queue_status_schedule (status, scheduled_for),
+            INDEX idx_email_queue_alumni_purpose (alumni_id, email_purpose),
+            INDEX idx_email_queue_created (created_at),
+            FOREIGN KEY (alumni_id) REFERENCES profiles(id) ON DELETE CASCADE
+        )
+    `);
+
+    const existing = await getSingleRow("SELECT id FROM email_queue_settings WHERE id = 1 LIMIT 1");
+    if (!existing) {
+        await db.execute(
+            `INSERT INTO email_queue_settings
+                (id, daily_email_limit, batch_size_per_send_cycle, send_interval_minutes, queue_processing_enabled, reminder_priority_level)
+             VALUES (1, 300, 50, 60, 1, 'normal')`
+        );
+    }
+};
+
+const getEmailQueueSettings = async () => {
+    await ensureEmailQueueTables();
+    return mapEmailQueueSettings(await getSingleRow("SELECT * FROM email_queue_settings WHERE id = 1 LIMIT 1"));
+};
+
+const saveEmailQueueSettings = async (input: Record<string, unknown>) => {
+    await ensureEmailQueueTables();
+    const settings = {
+        dailyEmailLimit: normalizeQueueInt(input.dailyEmailLimit ?? input.daily_email_limit, DEFAULT_EMAIL_QUEUE_SETTINGS.dailyEmailLimit, 1, 10000),
+        batchSizePerSendCycle: normalizeQueueInt(input.batchSizePerSendCycle ?? input.batch_size_per_send_cycle, DEFAULT_EMAIL_QUEUE_SETTINGS.batchSizePerSendCycle, 1, 1000),
+        sendIntervalMinutes: normalizeQueueInt(input.sendIntervalMinutes ?? input.send_interval_minutes, DEFAULT_EMAIL_QUEUE_SETTINGS.sendIntervalMinutes, 1, 1440),
+        queueProcessingEnabled: normalizeBoolean(input.queueProcessingEnabled ?? input.queue_processing_enabled, DEFAULT_EMAIL_QUEUE_SETTINGS.queueProcessingEnabled),
+        reminderPriorityLevel: normalizeQueuePriority(input.reminderPriorityLevel ?? input.reminder_priority_level)
+    };
+
+    await db.execute(
+        `UPDATE email_queue_settings
+         SET daily_email_limit = ?, batch_size_per_send_cycle = ?, send_interval_minutes = ?, queue_processing_enabled = ?, reminder_priority_level = ?
+         WHERE id = 1`,
+        [settings.dailyEmailLimit, settings.batchSizePerSendCycle, settings.sendIntervalMinutes, settings.queueProcessingEnabled ? 1 : 0, settings.reminderPriorityLevel]
+    );
+
+    return getEmailQueueSettings();
+};
+
+const addMonths = (date: Date, months: number) => {
+    const next = new Date(date.getTime());
+    next.setMonth(next.getMonth() + months);
+    return next;
+};
+
+const addDays = (date: Date, days: number) => new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+
+const getGraduationDateFromBatch = (batch: unknown) => {
+    const year = Number(normalizeBatch(batch));
+    if (!Number.isInteger(year) || year < 1900 || year > 2200) return null;
+    return new Date(`${year}-06-30T00:00:00${MANILA_UTC_OFFSET}`);
+};
+
+const getNextTracerReminderSchedule = (batch: unknown, sentCount: number, lastSentAt?: unknown): { stage: EmailQueueStage; dueAt: Date } | null => {
+    if (sentCount >= EMAIL_QUEUE_STAGES.length) return null;
+    const stage = EMAIL_QUEUE_STAGES[sentCount];
+
+    if (sentCount === 0) {
+        const graduationDate = getGraduationDateFromBatch(batch);
+        return graduationDate ? { stage, dueAt: addMonths(graduationDate, 6) } : null;
+    }
+
+    const lastSent = parseDateTimeValue(lastSentAt);
+    if (!lastSent) return null;
+    return { stage, dueAt: addDays(lastSent, sentCount === 1 ? 14 : 30) };
+};
+
+const getTracerReminderCopy = (stage: EmailQueueStage, institutionName?: string | null) => {
+    const label = stage === "first" ? "First" : stage === "second" ? "Second" : stage === "third" ? "Third" : "Final";
+    const sender = normalizeText(institutionName) || "Alumni Office";
+    return {
+        subject: `${label} Reminder: Please Complete Your Graduate Tracer Survey`,
+        message:
+            `Dear Alumni,\n\n` +
+            `This is your ${label.toLowerCase()} reminder to complete the Graduate Tracer Survey in the alumni portal. ` +
+            `Your response helps the school monitor graduate outcomes, improve academic programs, and support future alumni services.\n\n` +
+            `If you already completed the tracer form, no further action is needed.\n\n` +
+            `Best regards,\n${sender} Alumni Association`
+    };
+};
+
+const getEmailQueueStats = async () => {
+    await ensureEmailQueueTables();
+    const statusRows = parseRows(await db.query(
+        `SELECT status, COUNT(*) AS count FROM email_queue GROUP BY status`
+    ));
+    const sentToday = await getSingleRow(
+        `SELECT COUNT(*) AS count
+         FROM email_logs
+         WHERE status = 'sent'
+           AND sent_at >= CURRENT_DATE()
+           AND sent_at < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)`
+    );
+    const nextPending = await getSingleRow(
+        `SELECT MIN(scheduled_for) AS nextScheduledAt FROM email_queue WHERE status = 'pending'`
+    );
+    const settings = await getEmailQueueSettings();
+    const byStatus = Object.fromEntries(statusRows.map((row) => [String(row.status || "pending"), Number(row.count || 0)]));
+
+    return {
+        pending: Number(byStatus.pending || 0),
+        sending: Number(byStatus.sending || 0),
+        sent: Number(byStatus.sent || 0),
+        failed: Number(byStatus.failed || 0),
+        sentToday: Number(sentToday?.count || 0),
+        remainingToday: Math.max(0, settings.dailyEmailLimit - Number(sentToday?.count || 0)),
+        nextScheduledAt: nextPending?.nextScheduledAt || null
+    };
+};
+
+const enqueueDueTracerReminders = async (options: { force?: boolean; createdBy?: string | null } = {}) => {
+    await ensureEmailQueueTables();
+    const settings = await getEmailQueueSettings();
+    if (!settings.queueProcessingEnabled && !options.force) return { queued: 0, skipped: 0, disabled: true };
+
+    const today = formatManilaDate(new Date());
+    if (!options.force && settings.lastDailyCheckAt && String(settings.lastDailyCheckAt).slice(0, 10) === today) {
+        return { queued: 0, skipped: 0, alreadyChecked: true };
+    }
+
+    const hasTracerForm = await tableExists("tracer_form");
+    const hasGraduateTracerForms = await tableExists("graduate_tracer_forms");
+    const tracerJoin = hasTracerForm ? "LEFT JOIN tracer_form tf ON tf.user_id = p.id" : "";
+    const graduateJoin = hasGraduateTracerForms ? "LEFT JOIN graduate_tracer_forms gtf ON gtf.alumni_id = p.id" : "";
+    const tracerIncomplete = hasTracerForm ? "(tf.id IS NULL OR LOWER(COALESCE(tf.submission_status, '')) NOT IN ('completed', 'submitted'))" : "1 = 1";
+    const graduateIncomplete = hasGraduateTracerForms ? "(gtf.id IS NULL OR LOWER(COALESCE(gtf.form_status, '')) NOT IN ('completed', 'submitted'))" : "1 = 1";
+    const rows = parseRows(await db.query(
+        `SELECT
+            p.id,
+            p.name,
+            p.email,
+            p.batch,
+            (SELECT COUNT(*) FROM email_logs el WHERE el.alumni_id = p.id AND el.email_purpose = ? AND el.status = 'sent') AS sent_count,
+            (SELECT MAX(el.sent_at) FROM email_logs el WHERE el.alumni_id = p.id AND el.email_purpose = ? AND el.status = 'sent') AS last_sent_at
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id
+         ${tracerJoin}
+         ${graduateJoin}
+         WHERE ur.role = 'alumni'
+           AND COALESCE(ur.archived, 0) = 0
+           AND p.email IS NOT NULL
+           AND TRIM(p.email) <> ''
+           AND p.email LIKE '%@%.%'
+           AND p.email NOT LIKE '% %'
+           AND ${tracerIncomplete}
+           AND ${graduateIncomplete}
+         ORDER BY p.batch ASC, p.name ASC
+         LIMIT 2000`,
+        [EMAIL_QUEUE_PURPOSE, EMAIL_QUEUE_PURPOSE]
+    ));
+    const institutionName = String((await getSystemSettings()).institutionName || "");
+    const now = new Date();
+    const nowSql = formatSqlDateTime(now);
+    let queued = 0;
+    let skipped = 0;
+
+    for (const row of rows) {
+        const recipientEmail = normalizeEmail(row.email);
+        if (!EMAIL_REGEX.test(recipientEmail)) { skipped += 1; continue; }
+        const schedule = getNextTracerReminderSchedule(row.batch, Number(row.sent_count || 0), row.last_sent_at);
+        if (!schedule || schedule.dueAt.getTime() > now.getTime()) { skipped += 1; continue; }
+
+        const activeDuplicate = await getSingleRow(
+            `SELECT id FROM email_queue
+             WHERE alumni_id = ? AND email_purpose = ? AND reminder_stage = ? AND status IN ('pending', 'sending')
+             LIMIT 1`,
+            [String(row.id), EMAIL_QUEUE_PURPOSE, schedule.stage]
+        );
+        if (activeDuplicate) { skipped += 1; continue; }
+
+        const recentSent = await getSingleRow(
+            `SELECT id FROM email_logs
+             WHERE alumni_id = ? AND email_purpose = ? AND status = 'sent' AND sent_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+             LIMIT 1`,
+            [String(row.id), EMAIL_QUEUE_PURPOSE]
+        );
+        if (recentSent) { skipped += 1; continue; }
+
+        const copy = getTracerReminderCopy(schedule.stage, institutionName);
+        await db.execute(
+            `INSERT INTO email_queue
+                (id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, message, status, scheduled_for, created_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+            [uuidv4(), String(row.id), recipientEmail, normalizeText(row.name) || "Alumni", EMAIL_QUEUE_PURPOSE, schedule.stage, settings.reminderPriorityLevel, copy.subject, copy.message, formatSqlDateTime(schedule.dueAt), nowSql, options.createdBy || null]
+        );
+        queued += 1;
+    }
+
+    await db.execute("UPDATE email_queue_settings SET last_daily_check_at = ? WHERE id = 1", [nowSql]);
+    return { queued, skipped, disabled: false };
+};
+
+const processEmailQueue = async (options: { force?: boolean } = {}) => {
+    await ensureEmailQueueTables();
+    const settings = await getEmailQueueSettings();
+    if (!settings.queueProcessingEnabled && !options.force) return { processed: 0, sent: 0, failed: 0, skipped: true, reason: "disabled" };
+
+    const now = new Date();
+    if (!options.force && settings.lastProcessedAt) {
+        const lastProcessed = parseDateTimeValue(settings.lastProcessedAt);
+        if (lastProcessed && now.getTime() - lastProcessed.getTime() < settings.sendIntervalMinutes * 60 * 1000) {
+            return { processed: 0, sent: 0, failed: 0, skipped: true, reason: "interval" };
+        }
+    }
+
+    const sentTodayRow = await getSingleRow(
+        `SELECT COUNT(*) AS count
+         FROM email_logs
+         WHERE status = 'sent'
+           AND sent_at >= CURRENT_DATE()
+           AND sent_at < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)`
+    );
+    const remainingToday = Math.max(0, settings.dailyEmailLimit - Number(sentTodayRow?.count || 0));
+    const sendLimit = Math.min(settings.batchSizePerSendCycle, remainingToday);
+    if (sendLimit <= 0) return { processed: 0, sent: 0, failed: 0, skipped: true, reason: "daily_limit" };
+
+    const queueRows = parseRows(await db.query(
+        `SELECT * FROM email_queue
+         WHERE status = 'pending' AND scheduled_for <= ?
+         ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, scheduled_for ASC, created_at ASC
+         LIMIT ${sendLimit}`,
+        [formatSqlDateTime(now)]
+    ));
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const row of queueRows) {
+        const queueId = String(row.id);
+        const attemptAt = formatSqlDateTime(new Date());
+        await db.execute("UPDATE email_queue SET status = 'sending', attempts = attempts + 1, last_attempt_at = ? WHERE id = ?", [attemptAt, queueId]);
+
+        try {
+            const result = await sendTargetedAlumniEmail({
+                to: normalizeEmail(row.recipient_email),
+                name: String(row.recipient_name || "Alumni"),
+                purpose: EMAIL_QUEUE_PURPOSE,
+                subject: String(row.subject || "Graduate Tracer Reminder"),
+                message: String(row.message || "Please complete your Graduate Tracer Survey.")
+            });
+            const sentAt = formatSqlDateTime(new Date());
+            await db.execute(
+                `UPDATE email_queue SET status = 'sent', sent_at = ?, provider_message_id = ?, error_message = NULL WHERE id = ?`,
+                [sentAt, result.messageId, queueId]
+            );
+            await db.execute(
+                `INSERT INTO email_logs
+                    (id, alumni_id, recipient_email, email_purpose, subject, message, status, error_message, sent_at, created_at, created_by, provider_message_id)
+                 VALUES (?, ?, ?, ?, ?, ?, 'sent', NULL, ?, ?, ?, ?)`,
+                [uuidv4(), String(row.alumni_id), normalizeEmail(row.recipient_email), EMAIL_QUEUE_PURPOSE, String(row.subject), String(row.message), sentAt, sentAt, row.created_by || null, result.messageId]
+            );
+            sent += 1;
+        } catch (error: unknown) {
+            const safeError = getSafeMailingError(error);
+            await db.execute(
+                `UPDATE email_queue SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END, error_message = ? WHERE id = ?`,
+                [safeError, queueId]
+            );
+            failed += 1;
+        }
+    }
+
+    await db.execute("UPDATE email_queue_settings SET last_processed_at = ? WHERE id = 1", [formatSqlDateTime(new Date())]);
+    return { processed: queueRows.length, sent, failed, skipped: false, remainingToday: Math.max(0, remainingToday - sent) };
+};
+
+let emailQueueTimer: NodeJS.Timeout | null = null;
+
+const startEmailQueueJob = () => {
+    if (emailQueueTimer) return;
+    const run = async () => {
+        try {
+            await enqueueDueTracerReminders();
+            await processEmailQueue();
+        } catch (error) {
+            console.error("EMAIL QUEUE JOB ERROR:", error);
+        }
+    };
+    run().catch((error) => console.error("EMAIL QUEUE START ERROR:", error));
+    emailQueueTimer = setInterval(run, 5 * 60 * 1000);
 };
 
 const getEligibleMailingRecipients = async ({
@@ -2565,7 +3866,8 @@ const createAlumniAccount = async (conn: PoolConnection, {
     studentId,
     contactNumber,
     photoBase64,
-    temporaryPassword
+    temporaryPassword,
+    borNumber
 }: {
     name: string;
     email: string;
@@ -2575,6 +3877,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
     contactNumber?: string | null;
     photoBase64?: string | null;
     temporaryPassword: string;
+    borNumber?: string | null;
 }) => {
     const alumniId = normalizeText(studentId) || await generateUniqueAlumniId(conn, batch);
     const userId = uuidv4();
@@ -2587,8 +3890,8 @@ const createAlumniAccount = async (conn: PoolConnection, {
 
     await conn.query(
         `INSERT INTO profiles
-        (id, name, email, student_id, course, batch, contact_number, photo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, name, email, student_id, course, batch, contact_number, photo, bor_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             userId,
             name,
@@ -2597,7 +3900,8 @@ const createAlumniAccount = async (conn: PoolConnection, {
             course || null,
             batch || null,
             contactNumber || null,
-            normalizeStoredMedia(photoBase64) || null
+            normalizeStoredMedia(photoBase64) || null,
+            normalizeText(borNumber) || null
         ]
     );
 
@@ -2631,6 +3935,26 @@ const ensureDatabaseColumns = async () => {
     const tracerTable = await getTracerTableName();
     const announcementTable = await getAnnouncementTableName();
     const statements: Array<{ table: string; sql: string }> = [
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN bor_number VARCHAR(100) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN bor_date DATE NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN graduation_batch VARCHAR(100) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN academic_year VARCHAR(30) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN graduation_semester VARCHAR(50) NULL"
+        },
         {
             table: tracerTable,
             sql: `ALTER TABLE ${tracerTable} ADD COLUMN industry VARCHAR(255) NULL`
@@ -2769,6 +4093,26 @@ const ensureDatabaseColumns = async () => {
         },
         {
             table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_number VARCHAR(100) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_date DATE NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_batch VARCHAR(100) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN academic_year VARCHAR(30) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_semester VARCHAR(50) NULL"
+        },
+        {
+            table: "imported_alumni_records",
             sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending'"
         },
         {
@@ -2872,7 +4216,9 @@ const ensureDatabaseColumns = async () => {
         await db.execute(`
             CREATE TABLE IF NOT EXISTS concerns (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                alumni_id VARCHAR(36) NOT NULL,
+                alumni_id VARCHAR(36) NULL,
+                reporter_name VARCHAR(255) NULL,
+                reporter_email VARCHAR(255) NULL,
                 subject VARCHAR(255) NOT NULL,
                 category VARCHAR(100) NOT NULL,
                 message TEXT NOT NULL,
@@ -2943,7 +4289,7 @@ const ensureDatabaseColumns = async () => {
             CREATE TABLE IF NOT EXISTS officers (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 school_year_id INT NOT NULL,
-                alumni_id VARCHAR(36) NOT NULL,
+                alumni_id VARCHAR(36) DEFAULT NULL,
                 position VARCHAR(100) NOT NULL,
                 custom_position VARCHAR(255) DEFAULT NULL,
                 display_order INT DEFAULT 0,
@@ -2962,10 +4308,108 @@ const ensureDatabaseColumns = async () => {
                 INDEX idx_officers_position (position)
             )
         `);
+        await db.execute("ALTER TABLE officers MODIFY COLUMN alumni_id VARCHAR(36) NULL");
     } catch (error) {
         console.error("SCHEMA UPDATE ERROR: CREATE TABLE officers", error);
     }
 
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS alumni_officers (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                legacy_officer_id INT DEFAULT NULL,
+                alumni_id VARCHAR(36) DEFAULT NULL,
+                full_name VARCHAR(255) NOT NULL,
+                position VARCHAR(100) NOT NULL,
+                custom_position VARCHAR(255) DEFAULT NULL,
+                batch_year VARCHAR(20) DEFAULT NULL,
+                department_id VARCHAR(100) DEFAULT NULL,
+                program_id VARCHAR(150) DEFAULT NULL,
+                contact_number VARCHAR(50) DEFAULT NULL,
+                email VARCHAR(255) DEFAULT NULL,
+                photo LONGTEXT DEFAULT NULL,
+                term_start DATE DEFAULT NULL,
+                term_end DATE DEFAULT NULL,
+                status ENUM('Active', 'Inactive', 'Completed') NOT NULL DEFAULT 'Active',
+                remarks TEXT DEFAULT NULL,
+                is_archived TINYINT(1) NOT NULL DEFAULT 0,
+                archived_at DATETIME DEFAULT NULL,
+                archived_by VARCHAR(36) DEFAULT NULL,
+                created_by VARCHAR(36) DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_alumni_officers_legacy (legacy_officer_id),
+                INDEX idx_alumni_officers_alumni (alumni_id),
+                INDEX idx_alumni_officers_status (status, is_archived),
+                INDEX idx_alumni_officers_term (term_start, term_end),
+                INDEX idx_alumni_officers_position (position),
+                INDEX idx_alumni_officers_batch (batch_year),
+                FOREIGN KEY (alumni_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+        `);
+
+        const existingManagedOfficerRecords = await getSingleRow<QueryRow>(
+            "SELECT COUNT(*) AS total FROM alumni_officers"
+        );
+
+        if (Number(existingManagedOfficerRecords?.total || 0) === 0) {
+            await db.execute(`
+                INSERT INTO alumni_officers (
+                    legacy_officer_id, alumni_id, full_name, position, custom_position, batch_year,
+                    department_id, program_id, contact_number, email, photo, term_start, term_end,
+                    status, remarks, created_by
+                )
+                SELECT
+                    o.id,
+                    o.alumni_id,
+                    o.snapshot_name,
+                    o.position,
+                    o.custom_position,
+                    o.snapshot_batch,
+                    o.snapshot_course,
+                    o.snapshot_course,
+                    o.snapshot_contact_number,
+                    o.snapshot_email,
+                    o.snapshot_photo,
+                    MAKEDATE(sy.start_year, 1),
+                    MAKEDATE(sy.end_year, 365),
+                    CASE WHEN sy.is_current = 1 THEN 'Active' ELSE 'Completed' END,
+                    'Migrated from the existing officer school-year roster.',
+                    sy.created_by
+                FROM officers o
+                INNER JOIN officer_school_year sy ON sy.id = o.school_year_id
+            `);
+        }
+
+        await db.execute(`
+            UPDATE alumni_officers
+            SET
+                custom_position = CASE
+                    WHEN position IN ('president', 'vice_president', 'secretary', 'treasurer', 'auditor', 'pio', 'pro') THEN NULL
+                    WHEN NULLIF(TRIM(custom_position), '') IS NOT NULL THEN custom_position
+                    WHEN position = 'assistant_secretary' THEN 'Assistant Secretary'
+                    WHEN position = 'assistant_treasurer' THEN 'Assistant Treasurer'
+                    WHEN position = 'board_member' THEN 'Board Member'
+                    ELSE 'Officer'
+                END,
+                position = CASE position
+                    WHEN 'president' THEN 'President'
+                    WHEN 'vice_president' THEN 'Vice President'
+                    WHEN 'secretary' THEN 'Secretary'
+                    WHEN 'treasurer' THEN 'Treasurer'
+                    WHEN 'auditor' THEN 'Auditor'
+                    WHEN 'pio' THEN 'Public Information Officer'
+                    WHEN 'pro' THEN 'Public Information Officer'
+                    ELSE 'Custom Position'
+                END
+            WHERE legacy_officer_id IS NOT NULL
+              AND position IN ('president', 'vice_president', 'secretary', 'assistant_secretary', 'treasurer', 'assistant_treasurer', 'auditor', 'pio', 'pro', 'board_member')
+        `);
+    } catch (error) {
+        console.error("SCHEMA UPDATE ERROR: CREATE TABLE alumni_officers", error);
+    }
     try {
         await db.execute(`
             CREATE TABLE IF NOT EXISTS imported_alumni_records (
@@ -3104,16 +4548,18 @@ const ensureDatabaseColumns = async () => {
     }
 };
 
-const buildAuthPayload = async (user: { id: string; email: string }) => {
+const buildAuthPayload = async (user: { id: string; email: string }, selectedRole?: string | null) => {
     const currentUser = await getUserForAuth(user.id);
-    const role = await getRoleForUser(user.id);
+    const role = await getRoleForUser(user.id, selectedRole);
     const profile = await getProfileForUser(user.id);
+    const roles = await getRolesForUser(user.id);
     const isTracerCompleted = role === "alumni"
         ? await getTracerCompletionStatus(user.id)
         : true;
 
     return {
         role,
+        roles,
         profile,
         user: {
             id: user.id,
@@ -3552,8 +4998,8 @@ const ensureDefaultAdmin = async () => {
     }
 
     const existingRole = await getSingleRow(
-        "SELECT user_id FROM user_roles WHERE user_id = ?",
-        [adminId]
+        "SELECT user_id FROM user_roles WHERE user_id = ? AND role = ?",
+        [adminId, "president"]
     );
 
     if (!existingRole) {
@@ -3561,14 +5007,9 @@ const ensureDefaultAdmin = async () => {
             "INSERT INTO user_roles (user_id, role) VALUES (?, ?)",
             [adminId, "president"]
         );
-    } else {
-        await db.execute(
-            "UPDATE user_roles SET role = ? WHERE user_id = ?",
-            ["president", adminId]
-        );
     }
 
-    console.log(`✅ Default admin ensured for ${ADMIN_EMAIL}`);
+    console.log(`âœ… Default admin ensured for ${ADMIN_EMAIL}`);
 };
 
 const ensureChairmanAccounts = async () => {
@@ -3624,19 +5065,14 @@ const ensureChairmanAccounts = async () => {
         }
 
         const existingRole = await getSingleRow(
-            "SELECT user_id FROM user_roles WHERE user_id = ?",
-            [chairmanId]
+            "SELECT user_id FROM user_roles WHERE user_id = ? AND role = ?",
+            [chairmanId, "chairman"]
         );
 
         if (!existingRole) {
             await db.execute(
                 "INSERT INTO user_roles (user_id, role) VALUES (?, ?)",
                 [chairmanId, "chairman"]
-            );
-        } else {
-            await db.execute(
-                "UPDATE user_roles SET role = ? WHERE user_id = ?",
-                ["chairman", chairmanId]
             );
         }
     }
@@ -3655,7 +5091,7 @@ const requireAdmin = async (req: AuthenticatedRequest, res: express.Response, ne
             return res.sendStatus(401);
         }
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
 
         if (!["president", "admin", "chairman", "vice_president", "secretary",
             "assistant_secretary", "treasurer", "assistant_treasurer", "auditor", "pio", "appointed"].includes(role)) {
@@ -3668,13 +5104,27 @@ const requireAdmin = async (req: AuthenticatedRequest, res: express.Response, ne
     }
 };
 
+const requireProjectWriteAccess = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    const role = await getRequestRole(req);
+    if (role === "chairman") {
+        return res.status(403).json({ error: "Chairman accounts have read-only access to alumni project summaries and reports." });
+    }
+    next();
+};
+const requireProjectDirectoryAccess = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    const role = await getRequestRole(req);
+    if (role === "chairman") {
+        return res.status(403).json({ error: "Chairman accounts can view project summaries and reports only." });
+    }
+    next();
+};
 const requireChairman = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
     try {
         if (!req.user?.id) {
             return res.sendStatus(401);
         }
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
 
         if (role !== "chairman") {
             return res.status(403).json({ error: "Chairman access required" });
@@ -3691,6 +5141,62 @@ const requireChairman = async (req: AuthenticatedRequest, res: express.Response,
         res.status(500).json({ error: getErrorMessage(error) });
     }
 };
+
+/* =========================
+   SYSTEM BRANDING SETTINGS
+========================= */
+app.get("/api/system-settings", async (_req, res) => {
+    try {
+        const settings = await getSystemSettings();
+        res.json(settings);
+    } catch (err: unknown) {
+        console.error("GET SYSTEM SETTINGS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/system-settings/upload", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const fileName = normalizeText(req.body?.fileName) || "branding";
+        const dataUrl = String(req.body?.dataUrl || "");
+        const path = await saveBrandingUpload(fileName, dataUrl);
+        res.status(201).json({ path });
+    } catch (err: unknown) {
+        console.error("SYSTEM BRANDING UPLOAD ERROR:", err);
+        res.status(400).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/system-settings", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureSystemSettingsTable();
+
+        const settings = normalizeSystemSettingsInput(req.body || {});
+        const existing = await getSingleRow<SystemSettingsRow>("SELECT id FROM system_settings ORDER BY id ASC LIMIT 1");
+        const values = SYSTEM_SETTING_COLUMNS.map((column) => settings[column]);
+
+        if (existing?.id) {
+            const assignments = SYSTEM_SETTING_COLUMNS.map((column) => `${column} = ?`).join(", ");
+            await db.execute(
+                `UPDATE system_settings SET ${assignments} WHERE id = ?`,
+                [...values, existing.id]
+            );
+        } else {
+            const columns = SYSTEM_SETTING_COLUMNS.join(", ");
+            const placeholders = SYSTEM_SETTING_COLUMNS.map(() => "?").join(", ");
+            await db.execute(
+                `INSERT INTO system_settings (${columns}) VALUES (${placeholders})`,
+                values
+            );
+        }
+
+        const updated = await getSystemSettings();
+        res.json({ success: true, message: "System branding settings saved.", settings: updated });
+    } catch (err: unknown) {
+        console.error("SAVE SYSTEM SETTINGS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
 
 const ensureAnnouncementEventSurveyEngagementTables = async () => {
     const announcementTable = await getAnnouncementTableName();
@@ -3795,6 +5301,26 @@ const ensureAnnouncementEventSurveyEngagementTables = async () => {
     }
 };
 
+const ensureConcernGuestReportSupport = async () => {
+    try {
+        if (!(await tableExists("concerns"))) return;
+
+        const columns = [
+            { name: "reporter_name", sql: "ALTER TABLE concerns ADD COLUMN reporter_name VARCHAR(255) NULL" },
+            { name: "reporter_email", sql: "ALTER TABLE concerns ADD COLUMN reporter_email VARCHAR(255) NULL" }
+        ];
+
+        for (const column of columns) {
+            if (!(await columnExists("concerns", column.name))) {
+                await db.execute(column.sql);
+            }
+        }
+
+        await db.execute("ALTER TABLE concerns MODIFY COLUMN alumni_id VARCHAR(36) NULL");
+    } catch (error) {
+        console.error("SCHEMA UPDATE ERROR: concerns guest reporting", error);
+    }
+};
 /* =========================
    STARTUP INIT
 ========================= */
@@ -3842,15 +5368,24 @@ const initializeDatabaseBackedStartup = async () => {
         return;
     }
 
+    await ensureUserRolesSupportMultipleRoles();
     await ensureDefaultAdmin();
     await ensureChairmanAccounts();
     await ensureDatabaseColumns();
+    await ensureConcernGuestReportSupport();
+    await ensureEmailQueueTables();
     await ensureAnnouncementEventSurveyEngagementTables();
     await ensureEventRsvpTables();
     await ensureDashboardSlideTable();
+    await ensureSystemSettingsTable();
+    await ensureAlumniFeeRecordsTable();
+    await ensureAlumniProjectTables();
     await ensureAlumniLoginActivityTable();
+    await ensureUserSessionTables();
+    await endExpiredSessions();
     await ensureAnnouncementInterestTable();
     startDurationAutoArchiveJob();
+    startEmailQueueJob();
 };
 
 initializeDatabaseBackedStartup().catch((error) => {
@@ -3971,27 +5506,116 @@ app.post("/api/auth/login", async (req, res) => {
             return res.status(400).json({ error: "Wrong password" });
         }
 
-        const token = jwt.sign(
-            { id: user.id, email: user.email },
-            JWT_SECRET,
-            { expiresIn: "7d" }
-        );
+        const roles = await getRolesForUser(String(user.id));
+        const authIdentity = {
+            id: String(user.id),
+            email: String(user.email || identifier)
+        };
 
-        const authPayload = await buildAuthPayload({
-            id: user.id,
-            email: user.email
-        });
+        if (roles.length > 1) {
+            const profile = await getProfileForUser(authIdentity.id);
+            const loginToken = jwt.sign(
+                { id: authIdentity.id, email: authIdentity.email, roles, purpose: "role_selection" },
+                JWT_SECRET,
+                { expiresIn: "10m" }
+            );
 
-        if (authPayload.role === "alumni") {
-            await recordAlumniLoginActivity(String(user.id));
+            return res.json({
+                requiresRoleSelection: true,
+                loginToken,
+                roles,
+                profile,
+                user: authIdentity
+            });
         }
 
-        res.json({
-            token,
-            ...authPayload
+        const payload = await createAuthenticatedSession({
+            user: authIdentity,
+            role: roles[0] || "alumni",
+            req
         });
+
+        res.json(payload);
     } catch (err: unknown) {
         console.error("LOGIN ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/auth/select-role", async (req, res) => {
+    try {
+        const { loginToken, role } = req.body || {};
+        const selectedRole = normalizeRoleValue(role);
+
+        if (!loginToken || !selectedRole) {
+            return res.status(400).json({ error: "Role selection is required." });
+        }
+
+        const decoded = jwt.verify(String(loginToken), JWT_SECRET) as Record<string, unknown>;
+        const roles = Array.isArray(decoded.roles)
+            ? decoded.roles.map((item) => normalizeRoleValue(item)).filter(Boolean)
+            : [];
+
+        if (decoded.purpose !== "role_selection" || !decoded.id || !roles.includes(selectedRole)) {
+            return res.status(403).json({ error: "Selected role is not assigned to this account." });
+        }
+
+        const liveRoles = await getRolesForUser(String(decoded.id));
+        if (!liveRoles.includes(selectedRole)) {
+            return res.status(403).json({ error: "Selected role is no longer assigned to this account." });
+        }
+
+        const payload = await createAuthenticatedSession({
+            user: { id: String(decoded.id), email: String(decoded.email || "") },
+            role: selectedRole,
+            req
+        });
+
+        res.json(payload);
+    } catch (err: unknown) {
+        console.error("SELECT ROLE ERROR:", err);
+        res.status(401).json({ error: err instanceof Error ? err.message : "Role selection expired." });
+    }
+});
+
+app.post("/api/auth/logout", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.sessionId) {
+            return res.json({ success: true });
+        }
+
+        await ensureUserSessionTables();
+        const sessionRow = await getSingleRow(
+            `SELECT us.*, p.name
+             FROM user_sessions us
+             LEFT JOIN profiles p ON p.id = us.user_id
+             WHERE us.session_token = ?
+             LIMIT 1`,
+            [req.user.sessionId]
+        );
+
+        await db.execute(
+            "UPDATE user_sessions SET status = 'Ended', logout_time = COALESCE(logout_time, NOW()), last_activity = NOW() WHERE session_token = ?",
+            [req.user.sessionId]
+        );
+
+        if (sessionRow) {
+            const fullName = String(sessionRow.name || req.user.email || "User");
+            await recordActivityLog({
+                userId: req.user.id,
+                sessionToken: req.user.sessionId,
+                action: "User Logout",
+                description: `${fullName} logged out from ${getRoleDisplayLabel(sessionRow.role_id)} session.`,
+                roleUsed: String(sessionRow.role_id || req.user.role || ""),
+                deviceUsed: sessionRow.device_type ? String(sessionRow.device_type) : null,
+                browserUsed: sessionRow.browser ? String(sessionRow.browser) : null,
+                ipAddress: sessionRow.ip_address ? String(sessionRow.ip_address) : null
+            });
+        }
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("LOGOUT ERROR:", err);
         res.status(500).json({ error: getErrorMessage(err) });
     }
 });
@@ -4008,7 +5632,7 @@ app.get("/api/auth/session", authenticateToken, async (req: AuthenticatedRequest
         const authPayload = await buildAuthPayload({
             id: req.user.id,
             email: req.user.email
-        });
+        }, req.user.role);
 
         res.json(authPayload);
     } catch (err: unknown) {
@@ -4023,7 +5647,7 @@ app.get("/api/auth/tracer-status", authenticateToken, async (req: AuthenticatedR
             return res.sendStatus(401);
         }
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const isTracerCompleted = role === "alumni"
             ? await getTracerCompletionStatus(req.user.id)
             : true;
@@ -4082,7 +5706,8 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
         }
 
         if (normalizedCourse) {
-            const courseValidation = validateSupportedCourse(normalizedCourse);
+            const programOptions = (await getSystemSettings()).programs;
+            const courseValidation = validateSupportedCourse(normalizedCourse, programOptions);
 
             if (!courseValidation.ok || !courseValidation.course) {
                 return res.status(400).json({ error: courseValidation.message });
@@ -4126,7 +5751,7 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
         const authPayload = await buildAuthPayload({
             id: req.user.id,
             email: normalizedEmail
-        });
+        }, req.user.role);
 
         res.json({
             success: true,
@@ -4232,11 +5857,60 @@ app.patch("/api/account/notifications", authenticateToken, async (req: Authentic
     }
 });
 
+app.post("/api/concerns/public", async (req, res) => {
+    try {
+        const reporterName = normalizeText(req.body?.reporterName || req.body?.reporter_name) || "Login page reporter";
+        const reporterEmail = normalizeEmail(req.body?.reporterEmail || req.body?.reporter_email) || null;
+        const identifier = normalizeText(req.body?.identifier);
+        const subject = normalizeText(req.body?.subject) || "Login issue";
+        const category = normalizeConcernCategory(req.body?.category) || "Login Issue";
+        const rawMessage = normalizeConcernDetails(req.body?.message);
+
+        if (reporterEmail && !EMAIL_REGEX.test(reporterEmail)) {
+            return res.status(400).json({ error: "Enter a valid email address." });
+        }
+
+        if (!subject || !category || !rawMessage) {
+            return res.status(400).json({ error: "Subject, category, and concern details are required." });
+        }
+
+        const message = identifier ? `${rawMessage}\n\nLogin identifier: ${identifier}` : rawMessage;
+        const result = await db.execute(
+            `INSERT INTO concerns (alumni_id, reporter_name, reporter_email, subject, category, message, status)
+             VALUES (NULL, ?, ?, ?, ?, ?, 'Pending')`,
+            [reporterName, reporterEmail, subject, category, message]
+        ) as ResultSetHeader;
+
+        const concern = await getSingleRow<ConcernRow>(
+            `SELECT id, alumni_id, reporter_name, reporter_email, subject, category, message, status, admin_reply, replied_at, created_at, updated_at
+             FROM concerns
+             WHERE id = ?`,
+            [result.insertId]
+        );
+
+        const adminUserIds = await getAdminUserIds();
+        await createUserNotifications({
+            userIds: adminUserIds,
+            title: "New login problem report",
+            message: `${category}: ${subject}`,
+            category: "concern",
+            linkUrl: "/admin/account?section=reports",
+            actorId: null
+        });
+
+        res.status(201).json({
+            message: "Problem report submitted successfully.",
+            concern
+        });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
 app.get("/api/concerns/me", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         if (role !== "alumni") {
             return res.status(403).json({ error: "Alumni access required" });
         }
@@ -4259,7 +5933,7 @@ app.post("/api/concerns", authenticateToken, async (req: AuthenticatedRequest, r
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         if (role !== "alumni") {
             return res.status(403).json({ error: "Alumni access required" });
         }
@@ -4303,6 +5977,34 @@ app.post("/api/concerns", authenticateToken, async (req: AuthenticatedRequest, r
         res.status(500).json({ error: getErrorMessage(error) });
     }
 });
+app.delete("/api/concerns/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const role = await getRequestRole(req);
+        if (role !== "alumni") {
+            return res.status(403).json({ error: "Alumni access required" });
+        }
+
+        const concernId = Number(req.params.id);
+        if (!Number.isInteger(concernId) || concernId <= 0) {
+            return res.status(400).json({ error: "Invalid concern ID." });
+        }
+
+        const result = await db.execute(
+            "DELETE FROM concerns WHERE id = ? AND alumni_id = ?",
+            [concernId, req.user.id]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Problem report not found or already removed." });
+        }
+
+        res.json({ message: "Problem report removed successfully." });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getErrorMessage(error) });
+    }
+});
 
 app.get("/api/admin/concerns", authenticateToken, requireAdmin, async (_req: AuthenticatedRequest, res) => {
     try {
@@ -4310,8 +6012,10 @@ app.get("/api/admin/concerns", authenticateToken, requireAdmin, async (_req: Aut
             `SELECT
                 c.id,
                 c.alumni_id,
-                COALESCE(p.name, u.email) AS alumni_name,
-                COALESCE(p.email, u.email) AS alumni_email,
+                COALESCE(p.name, u.email, c.reporter_name, 'Login page reporter') AS alumni_name,
+                COALESCE(p.email, u.email, c.reporter_email) AS alumni_email,
+                c.reporter_name,
+                c.reporter_email,
                 c.subject,
                 c.category,
                 c.message,
@@ -4362,8 +6066,10 @@ app.patch("/api/admin/concerns/:id/reply", authenticateToken, requireAdmin, asyn
             `SELECT
                 c.id,
                 c.alumni_id,
-                COALESCE(p.name, u.email) AS alumni_name,
-                COALESCE(p.email, u.email) AS alumni_email,
+                COALESCE(p.name, u.email, c.reporter_name, 'Login page reporter') AS alumni_name,
+                COALESCE(p.email, u.email, c.reporter_email) AS alumni_email,
+                c.reporter_name,
+                c.reporter_email,
                 c.subject,
                 c.category,
                 c.message,
@@ -4414,8 +6120,10 @@ app.patch("/api/admin/concerns/:id/status", authenticateToken, requireAdmin, asy
             `SELECT
                 c.id,
                 c.alumni_id,
-                COALESCE(p.name, u.email) AS alumni_name,
-                COALESCE(p.email, u.email) AS alumni_email,
+                COALESCE(p.name, u.email, c.reporter_name, 'Login page reporter') AS alumni_name,
+                COALESCE(p.email, u.email, c.reporter_email) AS alumni_email,
+                c.reporter_name,
+                c.reporter_email,
                 c.subject,
                 c.category,
                 c.message,
@@ -4444,7 +6152,7 @@ app.get("/api/account/my-posts", authenticateToken, async (req: AuthenticatedReq
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         if (role !== "alumni") {
             return res.status(403).json({ error: "Alumni access required" });
         }
@@ -4779,6 +6487,7 @@ app.get("/api/profiles", authenticateToken, async (_req, res) => {
                 p.student_id,
                 p.course,
                 p.batch,
+                p.bor_number,
                 p.contact_number,
                 p.photo,
                 p.created_at,
@@ -4811,7 +6520,9 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             alumniId: requestedAlumniId,
             contactNumber,
             photoBase64,
-            sendEmail: shouldSend
+            sendEmail: shouldSend,
+            borNumber,
+            bor_number
         } = _req.body || {};
 
         const normalizedName = normalizeText(name);
@@ -4819,7 +6530,9 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
         const normalizedBatch = normalizeBatch(batch || year);
         const normalizedStudentId = normalizeText(studentId || student_id || requestedAlumniId);
         const normalizedContactNumber = normalizePhone(contactNumber) || null;
-        const courseValidation = validateSupportedCourse(course || program);
+        const normalizedBorNumber = normalizeText(borNumber || bor_number) || null;
+        const programOptions = (await getSystemSettings()).programs;
+        const courseValidation = validateSupportedCourse(course || program, programOptions);
 
         if (!normalizedName) {
             return res.status(400).json({ error: "Name is required." });
@@ -4873,7 +6586,8 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             studentId: normalizedStudentId || null,
             contactNumber: normalizedContactNumber,
             photoBase64: photoBase64 || null,
-            temporaryPassword
+            temporaryPassword,
+            borNumber: normalizedBorNumber
         });
 
         let emailSent = false;
@@ -4937,7 +6651,14 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
     const conn = await db.getConnection();
 
     try {
-        const rows = Buffer.isBuffer(req.body)
+        const importSchoolYear = normalizeBatch(String(req.headers["x-school-year"] || ""));
+
+        if (!/^\d{4}$/.test(importSchoolYear)) {
+            return res.status(400).json({ error: "Set a valid 4-digit school year before importing alumni records." });
+        }
+
+        const programOptions = (await getSystemSettings()).programs;
+        const parsedRows = Buffer.isBuffer(req.body)
             ? await parseAlumniImportFile(
                 req.body,
                 String(req.headers["x-file-name"] || ""),
@@ -4946,6 +6667,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
             : Array.isArray(req.body?.rows)
                 ? req.body.rows as AlumniImportInputRow[]
                 : [];
+        const rows = parsedRows.map((row) => ({ ...row, graduationYear: importSchoolYear, year: importSchoolYear }));
         const importBatchId = uuidv4();
 
         if (rows.length === 0) {
@@ -4957,7 +6679,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
         const seenEmails = new Set<string>();
 
         rows.forEach((row, index) => {
-            const result = validateImportRow(row, index + 1);
+            const result = validateImportRow(row, index + 1, programOptions);
 
             if (!result.ok) {
                 failedRows.push(result.failure);
@@ -5034,15 +6756,16 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
                     course: row.course,
                     batch: row.batch,
                     contactNumber: row.contactNumber,
-                    temporaryPassword
+                    temporaryPassword,
+                    borNumber: row.borNumber
                 });
                 userId = createdAccount.userId;
                 alumniId = createdAccount.alumniId;
 
                 await conn.query(
                     `INSERT INTO imported_alumni_records
-                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, generated_alumni_id, status, email_status, imported_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
+                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, bor_number, generated_alumni_id, status, email_status, imported_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
                     [
                         importBatchId,
                         userId,
@@ -5050,6 +6773,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
                         row.batch,
                         row.email,
                         row.contactNumber,
+                        row.borNumber,
                         alumniId,
                         req.user?.id || null
                     ]
@@ -5150,6 +6874,260 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
     }
 });
 
+/* =========================
+   ADMIN SESSION MONITORING
+========================= */
+app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureUserSessionTables();
+        await endExpiredSessions();
+
+        const search = String(req.query.search || "").trim();
+        const role = normalizeRoleValue(req.query.role);
+        const status = String(req.query.status || "").trim();
+        const dateFrom = String(req.query.dateFrom || "").trim();
+        const dateTo = String(req.query.dateTo || "").trim();
+        const where: string[] = [];
+        const params: DbParam[] = [];
+
+        if (search) {
+            where.push("(p.name LIKE ? OR u.email LIKE ? OR us.ip_address LIKE ?)");
+            params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+
+        if (role === "administrator") {
+            where.push("us.role_id IN ('admin', 'president')");
+        } else if (role === "staff") {
+            where.push("us.role_id NOT IN ('admin', 'president', 'chairman', 'alumni')");
+        } else if (role) {
+            where.push("us.role_id = ?");
+            params.push(role);
+        }
+
+        if (status && status !== "all") {
+            where.push("us.status = ?");
+            params.push(status === SESSION_ACTIVE_STATUS ? SESSION_ACTIVE_STATUS : SESSION_ENDED_STATUS);
+        }
+
+        if (dateFrom) {
+            where.push("us.login_time >= ?");
+            params.push(`${dateFrom} 00:00:00`);
+        }
+
+        if (dateTo) {
+            where.push("us.login_time <= ?");
+            params.push(`${dateTo} 23:59:59`);
+        }
+
+        const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+        const sessions = parseRows(await db.query(
+            `SELECT
+                us.id,
+                us.user_id,
+                us.role_id,
+                us.session_token,
+                us.ip_address,
+                us.browser,
+                us.operating_system,
+                us.device_type,
+                us.login_time,
+                us.logout_time,
+                us.last_activity,
+                us.status,
+                p.name AS full_name,
+                u.email
+             FROM user_sessions us
+             LEFT JOIN profiles p ON p.id = us.user_id
+             LEFT JOIN users u ON u.id = us.user_id
+             ${whereSql}
+             ORDER BY us.login_time DESC
+             LIMIT 300`,
+            params
+        ));
+
+        const activityWhere: string[] = ["al.action IN ('User Login', 'User Logout', 'Force Logout')"];
+        const activityParams: DbParam[] = [];
+
+        if (search) {
+            activityWhere.push("(p.name LIKE ? OR u.email LIKE ? OR al.ip_address LIKE ?)");
+            activityParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+
+        if (role === "administrator") {
+            activityWhere.push("al.role_used IN ('admin', 'president')");
+        } else if (role === "staff") {
+            activityWhere.push("al.role_used NOT IN ('admin', 'president', 'chairman', 'alumni')");
+        } else if (role) {
+            activityWhere.push("al.role_used = ?");
+            activityParams.push(role);
+        }
+
+        if (dateFrom) {
+            activityWhere.push("al.created_at >= ?");
+            activityParams.push(`${dateFrom} 00:00:00`);
+        }
+
+        if (dateTo) {
+            activityWhere.push("al.created_at <= ?");
+            activityParams.push(`${dateTo} 23:59:59`);
+        }
+
+        const activities = parseRows(await db.query(
+            `SELECT
+                al.id,
+                al.user_id,
+                al.action,
+                al.description,
+                al.role_used,
+                al.device_used,
+                al.browser_used,
+                al.ip_address,
+                al.created_at,
+                p.name AS full_name,
+                u.email
+             FROM activity_logs al
+             LEFT JOIN profiles p ON p.id = al.user_id
+             LEFT JOIN users u ON u.id = al.user_id
+             WHERE ${activityWhere.join(" AND ")}
+             ORDER BY al.created_at DESC
+             LIMIT 300`,
+            activityParams
+        ));
+
+        const stats = await getSingleRow(
+            `SELECT
+                COUNT(DISTINCT CASE WHEN status = 'Active' THEN user_id END) AS activeUsers,
+                SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) AS activeSessions,
+                SUM(CASE WHEN status = 'Active' AND role_id IN ('admin', 'president') THEN 1 ELSE 0 END) AS loggedInAdministrators,
+                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'president', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
+                SUM(CASE WHEN status = 'Active' AND role_id = 'chairman' THEN 1 ELSE 0 END) AS loggedInChairmen
+             FROM user_sessions`
+        );
+
+        res.json({
+            sessions: sessions.map((session) => ({
+                id: Number(session.id),
+                userId: String(session.user_id || ""),
+                fullName: String(session.full_name || session.email || "Unknown user"),
+                email: session.email ? String(session.email) : null,
+                role: String(session.role_id || ""),
+                roleLabel: getRoleDisplayLabel(session.role_id),
+                sessionToken: String(session.session_token || ""),
+                ipAddress: session.ip_address ? String(session.ip_address) : null,
+                browser: session.browser ? String(session.browser) : null,
+                operatingSystem: session.operating_system ? String(session.operating_system) : null,
+                deviceType: session.device_type ? String(session.device_type) : null,
+                loginTime: session.login_time || null,
+                logoutTime: session.logout_time || null,
+                lastActivity: session.last_activity || null,
+                status: String(session.status || SESSION_ENDED_STATUS),
+                isCurrent: req.user?.sessionId ? String(session.session_token) === req.user.sessionId : false
+            })),
+            activities: activities.map((activity) => ({
+                id: Number(activity.id),
+                userId: activity.user_id ? String(activity.user_id) : null,
+                fullName: String(activity.full_name || activity.email || "Unknown user"),
+                email: activity.email ? String(activity.email) : null,
+                action: String(activity.action || ""),
+                description: String(activity.description || ""),
+                role: activity.role_used ? String(activity.role_used) : null,
+                roleLabel: getRoleDisplayLabel(activity.role_used),
+                deviceUsed: activity.device_used ? String(activity.device_used) : null,
+                browserUsed: activity.browser_used ? String(activity.browser_used) : null,
+                ipAddress: activity.ip_address ? String(activity.ip_address) : null,
+                createdAt: activity.created_at || null
+            })),
+            stats: {
+                activeUsers: Number(stats?.activeUsers || 0),
+                activeSessions: Number(stats?.activeSessions || 0),
+                loggedInAdministrators: Number(stats?.loggedInAdministrators || 0),
+                loggedInStaff: Number(stats?.loggedInStaff || 0),
+                loggedInChairmen: Number(stats?.loggedInChairmen || 0)
+            }
+        });
+    } catch (err: unknown) {
+        console.error("ADMIN SESSIONS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/sessions/:id/terminate", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureUserSessionTables();
+        const session = await getSingleRow(
+            `SELECT us.*, p.name, u.email
+             FROM user_sessions us
+             LEFT JOIN profiles p ON p.id = us.user_id
+             LEFT JOIN users u ON u.id = us.user_id
+             WHERE us.id = ?
+             LIMIT 1`,
+            [String(req.params.id)]
+        );
+
+        if (!session) {
+            return res.status(404).json({ error: "Session not found." });
+        }
+
+        await db.execute(
+            "UPDATE user_sessions SET status = 'Ended', logout_time = COALESCE(logout_time, NOW()), last_activity = NOW() WHERE id = ?",
+            [String(req.params.id)]
+        );
+
+        const actorProfile = req.user?.id ? await getProfileForUser(req.user.id) : null;
+        await recordActivityLog({
+            userId: session.user_id ? String(session.user_id) : null,
+            sessionToken: session.session_token ? String(session.session_token) : null,
+            action: "Force Logout",
+            description: `${String(actorProfile?.name || req.user?.email || "Administrator")} force logged out ${String(session.name || session.email || "a user")} from ${getRoleDisplayLabel(session.role_id)} session.`,
+            roleUsed: session.role_id ? String(session.role_id) : null,
+            deviceUsed: session.device_type ? String(session.device_type) : null,
+            browserUsed: session.browser ? String(session.browser) : null,
+            ipAddress: session.ip_address ? String(session.ip_address) : null,
+            metadata: { terminatedBy: req.user?.id || null }
+        });
+
+        res.json({ success: true });
+    } catch (err: unknown) {
+        console.error("TERMINATE SESSION ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/sessions/terminate-all", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureUserSessionTables();
+        const activeSessions = parseRows(await db.query(
+            `SELECT us.*, p.name, u.email
+             FROM user_sessions us
+             LEFT JOIN profiles p ON p.id = us.user_id
+             LEFT JOIN users u ON u.id = us.user_id
+             WHERE us.status = 'Active'`
+        ));
+
+        await db.execute(
+            "UPDATE user_sessions SET status = 'Ended', logout_time = COALESCE(logout_time, NOW()), last_activity = NOW() WHERE status = 'Active'"
+        );
+
+        const actorProfile = req.user?.id ? await getProfileForUser(req.user.id) : null;
+        await Promise.all(activeSessions.map((session) => recordActivityLog({
+            userId: session.user_id ? String(session.user_id) : null,
+            sessionToken: session.session_token ? String(session.session_token) : null,
+            action: "Force Logout",
+            description: `${String(actorProfile?.name || req.user?.email || "Administrator")} force logged out ${String(session.name || session.email || "a user")} from ${getRoleDisplayLabel(session.role_id)} session.`,
+            roleUsed: session.role_id ? String(session.role_id) : null,
+            deviceUsed: session.device_type ? String(session.device_type) : null,
+            browserUsed: session.browser ? String(session.browser) : null,
+            ipAddress: session.ip_address ? String(session.ip_address) : null,
+            metadata: { terminatedBy: req.user?.id || null, bulk: true }
+        })));
+
+        res.json({ success: true, terminated: activeSessions.length });
+    } catch (err: unknown) {
+        console.error("TERMINATE ALL SESSIONS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
 /* =========================
    ADMIN DASHBOARD
 ========================= */
@@ -5253,6 +7231,25 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
         ));
 
         const analytics = await getAdminDashboardAnalytics();
+        await ensureUserSessionTables();
+        await endExpiredSessions();
+        const sessionStats = await getSingleRow(
+            `SELECT
+                COUNT(DISTINCT CASE WHEN status = 'Active' THEN user_id END) AS activeUsers,
+                SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) AS activeSessions,
+                SUM(CASE WHEN status = 'Active' AND role_id IN ('admin', 'president') THEN 1 ELSE 0 END) AS loggedInAdministrators,
+                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'president', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
+                SUM(CASE WHEN status = 'Active' AND role_id = 'chairman' THEN 1 ELSE 0 END) AS loggedInChairmen
+             FROM user_sessions`
+        );
+        const recentLoginActivities = parseRows(await db.query(
+            `SELECT al.id, al.description, al.role_used, al.device_used, al.browser_used, al.ip_address, al.created_at, p.name AS full_name
+             FROM activity_logs al
+             LEFT JOIN profiles p ON p.id = al.user_id
+             WHERE al.action = 'User Login'
+             ORDER BY al.created_at DESC
+             LIMIT 6`
+        ));
 
         res.json({
             totalAlumni: Number(totalAlumniRow?.totalAlumni || 0),
@@ -5260,6 +7257,24 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
             tracerData: tracerRows,
             recentTracer: tracerRows,
             totalDonations: Number(totalDonationsRow?.totalDonations || 0),
+            sessionStats: {
+                activeUsers: Number(sessionStats?.activeUsers || 0),
+                activeSessions: Number(sessionStats?.activeSessions || 0),
+                loggedInAdministrators: Number(sessionStats?.loggedInAdministrators || 0),
+                loggedInStaff: Number(sessionStats?.loggedInStaff || 0),
+                loggedInChairmen: Number(sessionStats?.loggedInChairmen || 0)
+            },
+            recentLoginActivities: recentLoginActivities.map((activity) => ({
+                id: String(activity.id),
+                description: String(activity.description || ""),
+                fullName: activity.full_name ? String(activity.full_name) : null,
+                role: activity.role_used ? String(activity.role_used) : null,
+                roleLabel: getRoleDisplayLabel(activity.role_used),
+                deviceUsed: activity.device_used ? String(activity.device_used) : null,
+                browserUsed: activity.browser_used ? String(activity.browser_used) : null,
+                ipAddress: activity.ip_address ? String(activity.ip_address) : null,
+                createdAt: activity.created_at || null
+            })),
             pendingDonations: pendingDonations.map((donation) => ({
                 ...donation,
                 status: formatStatusLabel(normalizeDonationStatus(donation.status), "pending_review"),
@@ -5900,9 +7915,11 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         ));
 
         const activeSchoolYear = await getActiveOfficerSchoolYear();
-        const officers = activeSchoolYear
+        const legacyOfficers = activeSchoolYear
             ? await getOfficerRosterForSchoolYear(Number(activeSchoolYear.id))
             : [];
+        const managedOfficers = await getActiveManagedOfficerRoster();
+        const officers = legacyOfficers.length > 0 ? legacyOfficers : managedOfficers;
 
         const activitySummary = await getSingleRow(
             `SELECT
@@ -5978,6 +7995,28 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             });
         }
 
+
+        await ensureAlumniProjectTables();
+        const alumniProjects = parseRows<AlumniProjectRow>(await db.query<AlumniProjectRow>(
+            `SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name,
+                (SELECT COUNT(*) FROM alumni_project_files pf WHERE pf.project_id = p.id) AS file_count
+             FROM alumni_projects p
+             LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id
+             LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id
+             WHERE p.status IN ('Planned', 'Ongoing', 'Completed')
+               AND (p.batch_year IS NULL OR p.batch_year = '' OR LOWER(p.batch_year) = ?)
+             ORDER BY
+                CASE p.status
+                    WHEN 'Ongoing' THEN 1
+                    WHEN 'Planned' THEN 2
+                    WHEN 'Completed' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(p.start_date, p.created_at) DESC,
+                p.created_at DESC
+             LIMIT 8`,
+            [audienceBatch]
+        ));
         if (Number(activitySummary?.wallPosts || 0) + Number(activitySummary?.reactions || 0) < 2) {
             recommendationItems.push({
                 id: "community-group",
@@ -5992,6 +8031,7 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         res.json({
             events,
             surveys,
+            alumniProjects: alumniProjects.map(mapAlumniProject),
             recommendations: recommendationItems
                 .sort((a, b) => b.priority - a.priority)
                 .slice(0, 6),
@@ -6009,12 +8049,12 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             slideshow: slides.map(mapDashboardSlide),
             registrations: registrations.map((r) => String(r.event_id)),
             comments,
-            officers: officers.map((row) => ({
-                name: row.name,
-                role: normalizeOfficerPositionKey(row.position),
-                positionLabel: formatOfficerPosition(String(row.position || ""), row.custom_position ? String(row.custom_position) : null),
+            officers: officers.map((row: AlumniOfficerRow | QueryRow) => ({
+                name: row.full_name || row.name,
+                role: getManagedOfficerChartRole(String(row.position || "")),
+                positionLabel: getManagedOfficerDisplayPosition(String(row.position || ""), row.custom_position ? String(row.custom_position) : null),
                 photo: normalizeStoredMedia(row.photo ? String(row.photo) : null),
-                schoolYear: row.school_year
+                schoolYear: row.term_start && row.term_end ? `${row.term_start} to ${row.term_end}` : row.school_year
             }))
         });
     } catch (err: unknown) {
@@ -6220,7 +8260,395 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
     }
 });
 
-/* =========================
+const PROJECT_CATEGORIES = ["School Support Project", "Infrastructure Project", "Scholarship Program", "Community Outreach", "Environmental Project", "Fundraising Project", "Educational Activity", "Alumni Association Project", "Batch Initiative", "Other"] as const;
+const PROJECT_STATUSES = ["Planned", "Ongoing", "Completed", "Cancelled", "Archived"] as const;
+const projectOption = (value: unknown, options: readonly string[], fallback: string) => {
+    const normalized = normalizeText(value).toLowerCase();
+    const aliases: Record<string, string> = { "alumni fundraising": "Fundraising Project", "educational project": "Educational Activity" };
+    return options.find((item) => item.toLowerCase() === normalized) || aliases[normalized] || fallback;
+};
+const mapAlumniProject = (row: AlumniProjectRow) => ({
+    id: Number(row.id), title: row.title, description: row.description || "", category: projectOption(row.category, PROJECT_CATEGORIES, "Other"),
+    batchYear: row.batch_year || "", leadOfficerId: row.lead_officer_id || "", leadOfficer: row.lead_officer_name || "",
+    leadAlumniId: row.lead_alumni_id || "", leadAlumni: row.lead_alumni_name || "",
+    organizationName: row.organization_name || row.alumni_group || "", alumniGroup: row.organization_name || row.alumni_group || "",
+    startDate: row.start_date || "", endDate: row.end_date || "", status: projectOption(row.status, PROJECT_STATUSES, "Planned"),
+    estimatedValue: Number(row.estimated_value || 0), fundingSource: row.funding_source || "", beneficiaries: row.beneficiaries || "",
+    accomplishments: row.accomplishments || "", remarks: row.remarks || "",
+    relatedContributionId: row.related_contribution_id || row.contribution_record_id || "", contributionRecordId: row.related_contribution_id || row.contribution_record_id || "",
+    createdAt: row.created_at, updatedAt: row.updated_at, fileCount: Number(row.file_count || 0)
+});
+const listAlumniProjects = async (query: Record<string, unknown> = {}) => {
+    await ensureAlumniProjectTables();
+    const where = ["1 = 1"], params: DbParam[] = [];
+    const search = normalizeText(query.search), batch = normalizeText(query.batchYear), category = normalizeText(query.category), status = normalizeText(query.status);
+    if (search) {
+        const value = `%${search}%`;
+        where.push("(LOWER(p.title) LIKE LOWER(?) OR LOWER(COALESCE(p.organization_name, p.alumni_group, '')) LIKE LOWER(?) OR LOWER(COALESCE(officer_profile.name, '')) LIKE LOWER(?) OR LOWER(COALESCE(alumni_profile.name, '')) LIKE LOWER(?))");
+        params.push(value, value, value, value);
+    }
+    if (batch) { where.push("p.batch_year = ?"); params.push(batch); }
+    if (category) { where.push("p.category = ?"); params.push(projectOption(category, PROJECT_CATEGORIES, "Other")); }
+    if (status) { where.push("p.status = ?"); params.push(projectOption(status, PROJECT_STATUSES, "Planned")); }
+    return parseRows<AlumniProjectRow>(await db.query<AlumniProjectRow>(
+        `SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name,
+            (SELECT COUNT(*) FROM alumni_project_files pf WHERE pf.project_id = p.id) AS file_count
+         FROM alumni_projects p
+         LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id
+         LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY p.start_date DESC, p.created_at DESC`, params
+    ));
+};
+const normalizeProjectInput = (body: Record<string, unknown>) => {
+    const title = normalizeText(body.title), category = projectOption(body.category, PROJECT_CATEGORIES, "Other");
+    const startDate = normalizeDateOnly(body.startDate), endDate = normalizeDateOnly(body.endDate);
+    if (!title) throw new Error("Project title is required.");
+    if (startDate && endDate && startDate > endDate) throw new Error("End date cannot be earlier than the start date.");
+    return {
+        title, description: normalizeText(body.description) || null, category, batchYear: normalizeText(body.batchYear) || null,
+        leadOfficerId: normalizeText(body.leadOfficerId) || null, leadAlumniId: normalizeText(body.leadAlumniId) || null,
+        organizationName: normalizeText(body.organizationName ?? body.alumniGroup) || null, startDate: startDate || null, endDate: endDate || null,
+        status: projectOption(body.status, PROJECT_STATUSES, "Planned"), estimatedValue: Number(body.estimatedValue) || null,
+        fundingSource: normalizeText(body.fundingSource) || null, beneficiaries: normalizeText(body.beneficiaries) || null,
+        accomplishments: normalizeText(body.accomplishments) || null, remarks: normalizeText(body.remarks) || null,
+        relatedContributionId: normalizeText(body.relatedContributionId ?? body.contributionRecordId) || null
+    };
+};
+const getAlumniProjectSummary = async (query: Record<string, unknown> = {}) => {
+    const rows = await listAlumniProjects(query);
+    const by = (key: "batch_year" | "category" | "start_date") => {
+        const map = new Map<string, number>();
+        rows.forEach((row) => {
+            const label = key === "start_date" ? String(row.start_date || "").slice(0, 4) || "Not set" : String(row[key] || "Not set");
+            map.set(label, (map.get(label) || 0) + 1);
+        });
+        return Array.from(map, ([label, value]) => ({ label, value })).sort((a, b) => a.label.localeCompare(b.label));
+    };
+    const statusCount = (value: string) => rows.filter((row) => projectOption(row.status, PROJECT_STATUSES, "Planned") === value).length;
+    return {
+        totalProjects: rows.length, plannedProjects: statusCount("Planned"), ongoingProjects: statusCount("Ongoing"), completedProjects: statusCount("Completed"),
+        archivedProjects: statusCount("Archived"), cancelledProjects: statusCount("Cancelled"), totalEstimatedValue: rows.reduce((sum, row) => sum + Number(row.estimated_value || 0), 0),
+        byBatch: by("batch_year"), byCategory: by("category"), annualTrends: by("start_date"),
+        statusDistribution: PROJECT_STATUSES.map((label) => ({ label, value: statusCount(label) }))
+    };
+};
+const projectExportRows = (rows: AlumniProjectRow[]) => rows.map((row) => {
+    const project = mapAlumniProject(row);
+    return { "Project Title": project.title, Category: project.category, "Batch Year": project.batchYear, "Lead Officer": project.leadOfficer, "Lead Alumni": project.leadAlumni, Organization: project.organizationName, Status: project.status, "Start Date": project.startDate, "End Date": project.endDate, Beneficiaries: project.beneficiaries, "Estimated Value": project.estimatedValue, "Source of Funds": project.fundingSource, "Related Contribution": project.relatedContributionId, Accomplishments: project.accomplishments, Remarks: project.remarks };
+});
+const sendAlumniProjectsExcel = async (res: express.Response, rows: AlumniProjectRow[]) => {
+    const workbook = new ExcelJS.Workbook(), sheet = workbook.addWorksheet("Alumni Projects"), records = projectExportRows(rows);
+    sheet.columns = Object.keys(records[0] || { "Project Title": "" }).map((header) => ({ header, key: header, width: Math.min(42, Math.max(16, header.length + 4)) }));
+    records.forEach((record) => sheet.addRow(record));
+    sheet.getRow(1).font = { bold: true };
+    res.attachment("alumni-projects-report.xlsx");
+    await workbook.xlsx.write(res);
+    res.end();
+};
+const escapePdfText = (value: unknown) => String(value ?? "").replace(/[\\()]/g, "\\$&").replace(/[^\x20-\x7E]/g, "?");
+const sendAlumniProjectsPdf = (res: express.Response, rows: AlumniProjectRow[]) => {
+    const lines = ["Alumni Projects Report", "Generated: " + new Date().toLocaleDateString(), ""];
+    projectExportRows(rows).slice(0, 45).forEach((record, index) => lines.push(String(index + 1) + ". " + record["Project Title"] + " | " + record.Status + " | " + record.Category + " | PHP " + Number(record["Estimated Value"] || 0).toLocaleString()));
+    const commands = lines.map((line, index) => (index ? "0 -15 Td " : "") + "(" + escapePdfText(line).slice(0, 110) + ") Tj").join(" ");
+    const content = "BT /F1 12 Tf 50 770 Td " + commands + " ET";
+    const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Length " + Buffer.byteLength(content) + " >>\nstream\n" + content + "\nendstream"];
+    let pdf = "%PDF-1.4\n";
+    const offsets: number[] = [0];
+    objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += String(index + 1) + " 0 obj\n" + object + "\nendobj\n"; });
+    const xref = Buffer.byteLength(pdf);
+    pdf += "xref\n0 " + String(objects.length + 1) + "\n0000000000 65535 f \n";
+    pdf += offsets.slice(1).map((offset) => String(offset).padStart(10, "0") + " 00000 n \n").join("");
+    pdf += "trailer\n<< /Size " + String(objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + String(xref) + "\n%%EOF";
+    res.setHeader("Content-Type", "application/pdf"); res.attachment("alumni-projects-report.pdf"); res.send(Buffer.from(pdf, "utf8"));
+};app.get("/api/admin/alumni-projects/reports/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/pdf", authenticateToken, requireAdmin, async (req, res) => { try { sendAlumniProjectsPdf(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/excel", authenticateToken, requireAdmin, async (req, res) => { try { await sendAlumniProjectsExcel(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/:format", authenticateToken, requireAdmin, async (req, res) => { try { res.json({ format: req.params.format, projects: (await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject) }); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { res.json((await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); await ensureAlumniProjectTables(); const row = await getSingleRow<AlumniProjectRow>(`SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name, 0 AS file_count FROM alumni_projects p LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id WHERE p.id = ?`, [id]); if (!row) return res.status(404).json({ error: "Project not found." }); const files = parseRows<AlumniProjectFileRow>(await db.query<AlumniProjectFileRow>("SELECT * FROM alumni_project_files WHERE project_id = ? ORDER BY uploaded_at DESC, created_at DESC", [id])); res.json({ ...mapAlumniProject(row), files: files.map((file) => ({ id: Number(file.id), name: file.file_name, type: file.file_type || "", path: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", url: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", category: file.file_category || "File", uploadedAt: file.uploaded_at || file.created_at, createdAt: file.created_at })) }); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+app.post("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req: AuthenticatedRequest, res) => { try { const project = normalizeProjectInput(req.body || {}); const result = await db.execute("INSERT INTO alumni_projects (title, description, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, start_date, end_date, status, estimated_value, funding_source, beneficiaries, related_contribution_id, accomplishments, remarks, contribution_record_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
+app.put("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id), project = normalizeProjectInput(req.body || {}); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET title=?, description=?, category=?, batch_year=?, lead_officer_id=?, lead_alumni_id=?, organization_name=?, alumni_group=?, start_date=?, end_date=?, status=?, estimated_value=?, funding_source=?, beneficiaries=?, related_contribution_id=?, accomplishments=?, remarks=?, contribution_record_id=? WHERE id=?", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Project not found." }); res.json({ success: true }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
+app.delete("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET status = 'Archived' WHERE id = ? AND status <> 'Archived'", [id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Active project not found." }); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.Response) => { try { const id = Number(req.params.id), name = normalizeText(req.body?.fileName ?? req.body?.name) || "Project attachment", path = normalizeStoredMedia(String(req.body?.filePath || req.body?.path || req.body?.url || req.body?.dataUrl || "")), category = normalizeText(req.body?.category) || "Project File"; if (!Number.isInteger(id) || id <= 0 || !path) return res.status(400).json({ error: "A valid project and attachment are required." }); const project = await getSingleRow("SELECT id FROM alumni_projects WHERE id = ?", [id]); if (!project) return res.status(404).json({ error: "Project not found." }); const result = await db.execute("INSERT INTO alumni_project_files (project_id, file_name, file_path, file_type, file_url, file_category, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())", [id, name, path, normalizeText(req.body?.fileType ?? req.body?.type) || null, path, category, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } };
+app.post("/api/admin/alumni-projects/:id/upload-file", authenticateToken, requireAdmin, requireProjectWriteAccess, uploadAlumniProjectFile);
+app.post("/api/admin/alumni-projects/:id/files", authenticateToken, requireAdmin, requireProjectWriteAccess, uploadAlumniProjectFile);
+app.delete("/api/admin/alumni-projects/:projectId/files/:fileId", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { await db.execute("DELETE FROM alumni_project_files WHERE id = ? AND project_id = ?", [Number(req.params.fileId), Number(req.params.projectId)]); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } })
+const ALUMNI_FEE_TYPE_STATUSES = ["Active", "Archived"] as const;
+const ALUMNI_PAYMENT_STATUSES = ["Paid", "Unpaid"] as const;
+const ALUMNI_COMPLETION_STATUSES = ["Complete", "Incomplete"] as const;
+const PAYMENT_INSTRUCTION = "Please pay personally or in person to the assigned alumni officer or authorized staff. The system records payment completion only and does not process online payments.";
+
+const normalizeFeeOption = (value: unknown, options: readonly string[], fallback: string) => {
+    const text = normalizeText(value);
+    return options.find((option) => option.toLowerCase() === text.toLowerCase()) || fallback;
+};
+const normalizeFeeTypeStatus = (value: unknown) => normalizeFeeOption(value, ALUMNI_FEE_TYPE_STATUSES, "Active");
+const normalizePaymentStatus = (value: unknown) => normalizeFeeOption(value, ALUMNI_PAYMENT_STATUSES, "Paid");
+const normalizeCompletionStatus = (value: unknown) => normalizeFeeOption(value, ALUMNI_COMPLETION_STATUSES, "");
+const sameScopeValue = (a: unknown, b: unknown) => normalizeText(a).toLowerCase() === normalizeText(b).toLowerCase();
+
+const mapAlumniFeeType = (row: AlumniFeeTypeRow) => ({
+    id: Number(row.id),
+    feeName: row.fee_name,
+    amount: Number(row.amount || 0),
+    description: row.description || "",
+    applicableBatchYear: row.applicable_batch_year || "",
+    applicableProgramId: row.applicable_program_id || "",
+    dueDate: row.due_date || null,
+    assignedOfficerId: row.assigned_officer_id || "",
+    assignedOfficerName: row.officer_name || "Authorized staff",
+    assignedOfficerEmail: row.officer_email || null,
+    isRequired: normalizeBoolean(row.is_required, true),
+    status: normalizeFeeTypeStatus(row.status),
+    createdBy: row.created_by || null,
+    createdByName: row.created_by_name || "System user",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    paymentInstruction: PAYMENT_INSTRUCTION
+});
+
+const getAlumniFeeTypeRows = async (query: Record<string, unknown> = {}) => {
+    await ensureAlumniFeeRecordsTable();
+    const where = [normalizeBoolean(query.includeArchived) ? "1 = 1" : "LOWER(f.status) <> 'archived'"];
+    const params: DbParam[] = [];
+    const search = normalizeText(query.search), batchYear = normalizeText(query.batchYear), program = normalizeText(query.program), officerId = normalizeText(query.assignedOfficerId);
+    if (search) {
+        const value = `%${search}%`;
+        where.push("(LOWER(f.fee_name) LIKE LOWER(?) OR LOWER(COALESCE(f.description, '')) LIKE LOWER(?) OR LOWER(COALESCE(officer.name, '')) LIKE LOWER(?))");
+        params.push(value, value, value);
+    }
+    if (batchYear) { where.push("LOWER(COALESCE(f.applicable_batch_year, '')) = LOWER(?)"); params.push(batchYear); }
+    if (program) { where.push("LOWER(COALESCE(f.applicable_program_id, '')) = LOWER(?)"); params.push(program); }
+    if (officerId) { where.push("f.assigned_officer_id = ?"); params.push(officerId); }
+    if (normalizeText(query.status)) { where.push("LOWER(f.status) = LOWER(?)"); params.push(normalizeFeeTypeStatus(query.status)); }
+    return parseRows<AlumniFeeTypeRow>(await db.query<AlumniFeeTypeRow>(
+        `SELECT f.*, officer.name AS officer_name, officer.email AS officer_email, creator.name AS created_by_name
+         FROM alumni_fee_types f
+         LEFT JOIN profiles officer ON officer.id = f.assigned_officer_id
+         LEFT JOIN profiles creator ON creator.id = f.created_by
+         WHERE ${where.join(" AND ")}
+         ORDER BY CASE WHEN f.status = 'Active' THEN 0 ELSE 1 END, COALESCE(f.due_date, '9999-12-31') ASC, f.created_at DESC`,
+        params
+    ));
+};
+
+const normalizeAlumniFeeTypeInput = (input: Record<string, unknown>) => {
+    const feeName = normalizeText(input.feeName ?? input.fee_name);
+    const amount = Number(input.amount);
+    if (!feeName) throw new Error("Fee name is required.");
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid fee amount.");
+    return {
+        feeName,
+        amount,
+        description: normalizeText(input.description) || null,
+        applicableBatchYear: normalizeText(input.applicableBatchYear ?? input.applicable_batch_year) || null,
+        applicableProgramId: normalizeText(input.applicableProgramId ?? input.applicable_program_id) || null,
+        dueDate: normalizeDateOnly(input.dueDate ?? input.due_date) || null,
+        assignedOfficerId: normalizeText(input.assignedOfficerId ?? input.assigned_officer_id) || null,
+        isRequired: input.isRequired === undefined && input.is_required === undefined ? true : normalizeBoolean(input.isRequired ?? input.is_required),
+        status: normalizeFeeTypeStatus(input.status)
+    };
+};
+
+const getActiveRequiredFeeTypes = async () => {
+    return parseRows<AlumniFeeTypeRow>(await db.query<AlumniFeeTypeRow>(
+        `SELECT f.*, officer.name AS officer_name, officer.email AS officer_email, creator.name AS created_by_name
+         FROM alumni_fee_types f
+         LEFT JOIN profiles officer ON officer.id = f.assigned_officer_id
+         LEFT JOIN profiles creator ON creator.id = f.created_by
+         WHERE LOWER(f.status) = 'active' AND COALESCE(f.is_required, 1) = 1
+         ORDER BY COALESCE(f.due_date, '9999-12-31') ASC, f.fee_name ASC`
+    ));
+};
+
+const getAlumniFeePaymentRows = async () => {
+    return parseRows<AlumniFeePaymentRow>(await db.query<AlumniFeePaymentRow>(
+        `SELECT p.*, receiver.name AS received_by_name
+         FROM alumni_fee_payments p
+         LEFT JOIN profiles receiver ON receiver.id = p.received_by`
+    ));
+};
+
+const getAlumniRowsForFeeRecords = async () => {
+    return parseRows<AlumniFeeRecordRow>(await db.query<AlumniFeeRecordRow>(
+        `SELECT p.id AS alumni_id, p.name AS alumni_name, p.email AS alumni_email, p.student_id AS alumni_student_id, p.batch, p.course
+         FROM profiles p
+         INNER JOIN user_roles ur ON ur.user_id = p.id AND ur.role = 'alumni' AND COALESCE(ur.archived, 0) = 0
+         GROUP BY p.id, p.name, p.email, p.student_id, p.batch, p.course
+         ORDER BY p.name ASC`
+    ));
+};
+
+const feeAppliesToAlumni = (fee: AlumniFeeTypeRow, alumni: AlumniFeeRecordRow) => {
+    const batchMatches = !normalizeText(fee.applicable_batch_year) || sameScopeValue(fee.applicable_batch_year, alumni.batch);
+    const programMatches = !normalizeText(fee.applicable_program_id) || sameScopeValue(fee.applicable_program_id, alumni.course);
+    return batchMatches && programMatches;
+};
+
+const buildFeeRecordForAlumni = (alumni: AlumniFeeRecordRow, feeTypes: AlumniFeeTypeRow[], paymentMap: Map<string, AlumniFeePaymentRow>) => {
+    const applicableFees = feeTypes.filter((fee) => feeAppliesToAlumni(fee, alumni));
+    const mappedFees = applicableFees.map((fee) => {
+        const payment = paymentMap.get(`${alumni.alumni_id}:${fee.id}`);
+        const paid = Boolean(payment) && normalizePaymentStatus(payment?.status) === "Paid";
+        return {
+            ...mapAlumniFeeType(fee),
+            paymentId: payment ? Number(payment.id) : null,
+            paid,
+            amountPaid: paid ? Number(payment?.amount_paid || 0) : 0,
+            paidDate: paid ? payment?.paid_date || null : null,
+            receivedBy: paid ? payment?.received_by || null : null,
+            receivedByName: paid ? payment?.received_by_name || "Authorized staff" : null,
+            paymentNote: paid ? payment?.payment_note || "" : ""
+        };
+    });
+    const unpaidFees = mappedFees.filter((fee) => !fee.paid);
+    const paidFees = mappedFees.filter((fee) => fee.paid);
+    const status = unpaidFees.length === 0 ? "Complete" : "Incomplete";
+    return {
+        alumniId: alumni.alumni_id,
+        alumni: {
+            id: alumni.alumni_id,
+            name: alumni.alumni_name || "Unknown alumni",
+            email: alumni.alumni_email || null,
+            studentId: alumni.alumni_student_id || null,
+            batch: alumni.batch || null,
+            program: alumni.course || null
+        },
+        status,
+        requiredFeeCount: mappedFees.length,
+        paidFeeCount: paidFees.length,
+        unpaidFeeCount: unpaidFees.length,
+        totalRequired: mappedFees.reduce((total, fee) => total + Number(fee.amount || 0), 0),
+        totalPaid: paidFees.reduce((total, fee) => total + Number(fee.amountPaid || 0), 0),
+        totalUnpaid: unpaidFees.reduce((total, fee) => total + Number(fee.amount || 0), 0),
+        requiredFees: mappedFees,
+        paidFees,
+        unpaidFees,
+        paymentInstruction: PAYMENT_INSTRUCTION
+    };
+};
+
+type AlumniFeeCompletionRecord = ReturnType<typeof buildFeeRecordForAlumni>;
+
+const getAlumniFeeCompletionRecords = async (query: Record<string, unknown> = {}) => {
+    await ensureAlumniFeeRecordsTable();
+    const [alumniRows, feeTypes, payments] = await Promise.all([getAlumniRowsForFeeRecords(), getActiveRequiredFeeTypes(), getAlumniFeePaymentRows()]);
+    const paymentMap = new Map(payments.map((payment) => [`${payment.alumni_id}:${payment.fee_type_id}`, payment]));
+    let records = alumniRows.map((alumni) => buildFeeRecordForAlumni(alumni, feeTypes, paymentMap));
+    const search = normalizeText(query.search).toLowerCase(), batchYear = normalizeText(query.batchYear), program = normalizeText(query.program), officerId = normalizeText(query.assignedOfficerId), status = normalizeCompletionStatus(query.status);
+    if (search) records = records.filter((record) => [record.alumni.name, record.alumni.email || "", record.alumni.studentId || "", ...record.requiredFees.map((fee) => fee.feeName)].some((value) => value.toLowerCase().includes(search)));
+    if (batchYear) records = records.filter((record) => sameScopeValue(record.alumni.batch, batchYear));
+    if (program) records = records.filter((record) => sameScopeValue(record.alumni.program, program));
+    if (officerId) records = records.filter((record) => record.requiredFees.some((fee) => fee.assignedOfficerId === officerId));
+    if (status) records = records.filter((record) => record.status === status);
+    return records;
+};
+
+const summarizeAlumniFeeRecords = (records: AlumniFeeCompletionRecord[]) => ({
+    totalAlumni: records.length,
+    completeCount: records.filter((record) => record.status === "Complete").length,
+    incompleteCount: records.filter((record) => record.status === "Incomplete").length,
+    totalRequired: records.reduce((total, record) => total + record.totalRequired, 0),
+    totalCollected: records.reduce((total, record) => total + record.totalPaid, 0),
+    totalUnpaid: records.reduce((total, record) => total + record.totalUnpaid, 0),
+    requiredFeeAssignments: records.reduce((total, record) => total + record.requiredFeeCount, 0),
+    paidFeeAssignments: records.reduce((total, record) => total + record.paidFeeCount, 0),
+    unpaidFeeAssignments: records.reduce((total, record) => total + record.unpaidFeeCount, 0),
+    byStatus: ALUMNI_COMPLETION_STATUSES.map((label) => ({ label, value: records.filter((record) => record.status === label).length }))
+});
+
+app.get("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req, res) => {
+    try { res.json((await getAlumniFeeTypeRows(req.query as Record<string, unknown>)).map(mapAlumniFeeType)); }
+    catch (err: unknown) { console.error("GET FEE TYPES ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+});
+app.post("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const fee = normalizeAlumniFeeTypeInput(req.body || {});
+        const result = await db.execute(
+            "INSERT INTO alumni_fee_types (fee_name, amount, description, applicable_batch_year, applicable_program_id, due_date, assigned_officer_id, is_required, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [fee.feeName, fee.amount, fee.description, fee.applicableBatchYear, fee.applicableProgramId, fee.dueDate, fee.assignedOfficerId, fee.isRequired ? 1 : 0, fee.status, req.user?.id || null]
+        ) as ResultSetHeader;
+        res.status(201).json({ id: result.insertId });
+    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+});
+app.put("/api/admin/donations/fee-records/types/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid fee type id." });
+        const fee = normalizeAlumniFeeTypeInput(req.body || {});
+        const result = await db.execute(
+            "UPDATE alumni_fee_types SET fee_name = ?, amount = ?, description = ?, applicable_batch_year = ?, applicable_program_id = ?, due_date = ?, assigned_officer_id = ?, is_required = ?, status = ? WHERE id = ?",
+            [fee.feeName, fee.amount, fee.description, fee.applicableBatchYear, fee.applicableProgramId, fee.dueDate, fee.assignedOfficerId, fee.isRequired ? 1 : 0, fee.status, id]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Fee type not found." });
+        res.json({ success: true });
+    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+});
+app.delete("/api/admin/donations/fee-records/types/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid fee type id." });
+        const result = await db.execute("UPDATE alumni_fee_types SET status = 'Archived' WHERE id = ? AND LOWER(status) <> 'archived'", [id]) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Active fee type not found." });
+        res.status(204).send();
+    } catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+});
+app.get("/api/admin/donations/fee-records/reports/summary", authenticateToken, requireAdmin, async (req, res) => {
+    try { res.json(summarizeAlumniFeeRecords(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>))); }
+    catch (err: unknown) { console.error("GET FEE RECORD SUMMARY ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+});
+app.get("/api/admin/donations/fee-records/export/:format", authenticateToken, requireAdmin, async (req, res) => {
+    try { res.json({ format: req.params.format, records: await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>) }); }
+    catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+});
+app.get("/api/admin/donations/fee-records", authenticateToken, requireAdmin, async (req, res) => {
+    try { res.json(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>)); }
+    catch (err: unknown) { console.error("GET FEE RECORDS ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+});
+app.post("/api/admin/donations/fee-records/payments/mark-paid", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureAlumniFeeRecordsTable();
+        const alumniId = normalizeText(req.body?.alumniId), feeTypeId = Number(req.body?.feeTypeId), paidDate = normalizeDateOnly(req.body?.paidDate) || new Date().toISOString().slice(0, 10);
+        if (!alumniId) return res.status(400).json({ error: "Select an alumni profile." });
+        if (!Number.isInteger(feeTypeId) || feeTypeId <= 0) return res.status(400).json({ error: "Select a valid fee." });
+        const fee = await getSingleRow<AlumniFeeTypeRow>("SELECT f.*, NULL AS officer_name, NULL AS officer_email, NULL AS created_by_name FROM alumni_fee_types f WHERE id = ? AND LOWER(status) = 'active'", [feeTypeId]);
+        if (!fee) return res.status(404).json({ error: "Active fee type not found." });
+        const amountPaid = Number(req.body?.amountPaid ?? fee.amount);
+        if (!Number.isFinite(amountPaid) || amountPaid <= 0) return res.status(400).json({ error: "Enter a valid paid amount." });
+        const note = normalizeText(req.body?.paymentNote ?? req.body?.payment_note) || null;
+        const result = await db.execute(
+            `INSERT INTO alumni_fee_payments (alumni_id, fee_type_id, amount_paid, paid_date, received_by, payment_note, status)
+             VALUES (?, ?, ?, ?, ?, ?, 'Paid')
+             ON DUPLICATE KEY UPDATE amount_paid = VALUES(amount_paid), paid_date = VALUES(paid_date), received_by = VALUES(received_by), payment_note = VALUES(payment_note), status = 'Paid', updated_at = CURRENT_TIMESTAMP`,
+            [alumniId, feeTypeId, amountPaid, paidDate, req.user?.id || null, note]
+        ) as ResultSetHeader;
+        res.status(201).json({ id: result.insertId, success: true });
+    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+});
+app.post("/api/admin/donations/fee-records/payments/mark-unpaid", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const alumniId = normalizeText(req.body?.alumniId), feeTypeId = Number(req.body?.feeTypeId);
+        if (!alumniId || !Number.isInteger(feeTypeId) || feeTypeId <= 0) return res.status(400).json({ error: "Select a valid alumni and fee." });
+        await db.execute("UPDATE alumni_fee_payments SET status = 'Unpaid', updated_at = CURRENT_TIMESTAMP WHERE alumni_id = ? AND fee_type_id = ?", [alumniId, feeTypeId]);
+        res.json({ success: true });
+    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+});
+app.get("/api/alumni/fee-records/me", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        await ensureAlumniFeeRecordsTable();
+        const alumni = await getSingleRow<AlumniFeeRecordRow>(
+            "SELECT p.id AS alumni_id, p.name AS alumni_name, p.email AS alumni_email, p.student_id AS alumni_student_id, p.batch, p.course FROM profiles p WHERE p.id = ?",
+            [req.user.id]
+        );
+        if (!alumni) return res.status(404).json({ error: "Alumni profile not found." });
+        const [feeTypes, payments] = await Promise.all([getActiveRequiredFeeTypes(), getAlumniFeePaymentRows()]);
+        const paymentMap = new Map(payments.map((payment) => [`${payment.alumni_id}:${payment.fee_type_id}`, payment]));
+        res.json(buildFeeRecordForAlumni(alumni, feeTypes, paymentMap));
+    } catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+});/* =========================
    DONATIONS
 ========================= */
 app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => {
@@ -6831,7 +9259,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
         const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
         const effectiveTime = usesDurationWindow ? time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null) : null;
         const normalizedStatus = normalizeStatus(status, getAnnouncementStatusFallback(normalizedType));
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const canModerate = canModerateAnnouncementContent(role);
         const approvalStatus = canModerate ? "approved" : "pending_approval";
 
@@ -6975,7 +9403,7 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
         const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
         await ensureAnnouncementInterestTable();
         const eventId = Number(req.params.id);
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const canModerate = canModerateAnnouncementContent(role);
         const profile = !canModerate ? await getSingleRow(`SELECT course, batch FROM profiles WHERE id = ?`, [req.user.id]) : null;
         const audienceCourse = normalizeText(profile?.course).toLowerCase();
@@ -7122,7 +9550,7 @@ app.post("/api/announcements/:id/interest", authenticateToken, async (req: Authe
         const announcementId = Number(req.params.id);
         if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         if (role !== "alumni") {
             return res.status(403).json({ error: "Only alumni can mark interest." });
         }
@@ -7251,7 +9679,7 @@ app.get("/api/announcements/:id/comments", authenticateToken, async (req: Authen
         const announcement = await getSingleRow(`SELECT id FROM ${announcementTable} WHERE id = ?`, [announcementId]);
         if (!announcement) return res.status(404).json({ error: "Announcement not found" });
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const canModerate = canModerateAnnouncementContent(role);
         const statusClause = canModerate ? "" : "AND ac.status = 'visible'";
 
@@ -8330,7 +10758,7 @@ app.get("/api/achievements", authenticateToken, async (req: AuthenticatedRequest
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const canModerate = role !== "alumni";
 
         const rows = parseRows(await db.query(
@@ -9077,7 +11505,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
         if (!req.user?.id) return res.sendStatus(401);
 
         await autoArchiveExpiredContent();
-        const role = await getRoleForUser(req.user.id);
+        const role = await getRequestRole(req);
         const canManageSurveys = role !== "alumni";
         const announcementTable = await getAnnouncementTableName();
 
@@ -9582,6 +12010,219 @@ app.get("/api/surveys/:id/responses", authenticateToken, requireAdmin, async (re
     }
 });
 
+// Alumni officers management
+const normalizeAlumniOfficerPayload = async (input: Record<string, unknown>) => {
+    const alumniId = normalizeText(input.alumniId) || null;
+    const position = normalizeManagedOfficerPosition(input.position);
+    const customPosition = normalizeText(input.customPosition) || null;
+    const status = normalizeManagedOfficerStatus(input.status || "Active");
+    const termStart = normalizeOfficerDate(input.termStart);
+    const termEnd = normalizeOfficerDate(input.termEnd);
+    let fullName = normalizeText(input.fullName);
+    let email = normalizeEmail(input.email) || null;
+    let departmentId = normalizeText(input.departmentId) || null;
+    let programId = normalizeText(input.programId) || null;
+    let batchYear = normalizeBatch(input.batchYear) || null;
+    let contactNumber = normalizePhone(input.contactNumber) || null;
+    let photo = input.photo ? normalizeStoredMedia(String(input.photo)) : null;
+
+    if (!position || !ALUMNI_OFFICER_POSITIONS.has(position)) throw new Error("Select a supported officer position");
+    if (position === "Custom Position" && !customPosition) throw new Error("Provide the custom officer position");
+    if (!status || !OFFICER_STATUS_VALUES.has(status)) throw new Error("Select a valid officer status");
+    if (termStart && termEnd && termStart > termEnd) throw new Error("Term end must be on or after term start");
+
+    if (alumniId) {
+        const profile = await getSingleRow<QueryRow>(
+            "SELECT id, name, email, course, batch, contact_number, photo FROM profiles WHERE id = ?",
+            [alumniId]
+        );
+        if (!profile) throw new Error("The selected alumni profile could not be found");
+        fullName = fullName || normalizeText(profile.name);
+        email = email || normalizeEmail(profile.email) || null;
+        departmentId = departmentId || normalizeText(profile.course) || null;
+        programId = programId || normalizeText(profile.course) || null;
+        batchYear = batchYear || normalizeBatch(profile.batch) || null;
+        contactNumber = contactNumber || normalizePhone(profile.contact_number) || null;
+        photo = photo || normalizeStoredMedia(profile.photo ? String(profile.photo) : null);
+    }
+
+    if (!fullName) throw new Error("Officer full name is required");
+
+    return {
+        alumniId,
+        fullName,
+        position,
+        customPosition: position === "Custom Position" ? customPosition : null,
+        batchYear,
+        departmentId,
+        programId,
+        contactNumber,
+        email,
+        photo,
+        termStart,
+        termEnd,
+        status,
+        remarks: normalizeText(input.remarks) || null
+    };
+};
+
+app.get("/api/alumni-officers", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const search = normalizeText(req.query.search);
+        const batchYear = normalizeText(req.query.batchYear || req.query.year);
+        const position = normalizeManagedOfficerPosition(req.query.position);
+        const department = normalizeText(req.query.department);
+        const status = normalizeManagedOfficerStatus(req.query.status);
+        const includeArchived = normalizeBoolean(req.query.includeArchived) || normalizeBoolean(req.query.history);
+        const where: string[] = [];
+        const params: DbParam[] = [];
+
+        if (!includeArchived) where.push("is_archived = 0");
+        if (search) {
+            where.push("LOWER(CONCAT_WS(' ', full_name, email, position, custom_position, batch_year, department_id, program_id)) LIKE ?");
+            params.push(`%${search.toLowerCase()}%`);
+        }
+        if (batchYear) {
+            where.push("batch_year = ?");
+            params.push(batchYear);
+        }
+        if (position) {
+            where.push("position = ?");
+            params.push(position);
+        }
+        if (department) {
+            where.push("department_id = ?");
+            params.push(department);
+        }
+        if (status) {
+            where.push("status = ?");
+            params.push(status);
+        }
+
+        const rows = parseRows<AlumniOfficerRow>(await db.query<AlumniOfficerRow>(
+            `SELECT * FROM alumni_officers
+             ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+             ORDER BY is_archived ASC, term_start DESC, created_at DESC, full_name ASC`,
+            params
+        ));
+
+        res.json(rows.map(mapAlumniOfficer));
+    } catch (err: unknown) {
+        console.error("GET ALUMNI OFFICERS ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.get("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid officer id" });
+
+        const officer = await getAlumniOfficerById(id);
+        if (!officer) return res.status(404).json({ error: "Officer not found" });
+        res.json(mapAlumniOfficer(officer));
+    } catch (err: unknown) {
+        console.error("GET ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/alumni-officers", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const officer = await normalizeAlumniOfficerPayload(req.body || {});
+        const result = await db.execute(
+            `INSERT INTO alumni_officers (
+                alumni_id, full_name, position, custom_position, batch_year, department_id, program_id,
+                contact_number, email, photo, term_start, term_end, status, remarks, created_by
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                officer.alumniId, officer.fullName, officer.position, officer.customPosition, officer.batchYear,
+                officer.departmentId, officer.programId, officer.contactNumber, officer.email, officer.photo,
+                officer.termStart, officer.termEnd, officer.status, officer.remarks, req.user?.id || null
+            ]
+        ) as ResultSetHeader;
+        const saved = await getAlumniOfficerById(Number(result.insertId));
+        res.status(201).json(saved ? mapAlumniOfficer(saved) : { id: Number(result.insertId) });
+    } catch (err: unknown) {
+        const message = getErrorMessage(err);
+        res.status(message.includes("required") || message.includes("Select") || message.includes("Term") || message.includes("custom") || message.includes("selected") ? 400 : 500)
+            .json({ error: message });
+    }
+});
+
+app.put("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid officer id" });
+        if (!await getAlumniOfficerById(id)) return res.status(404).json({ error: "Officer not found" });
+
+        const officer = await normalizeAlumniOfficerPayload(req.body || {});
+        await db.execute(
+            `UPDATE alumni_officers SET
+                alumni_id = ?, full_name = ?, position = ?, custom_position = ?, batch_year = ?, department_id = ?,
+                program_id = ?, contact_number = ?, email = ?, photo = ?, term_start = ?, term_end = ?, status = ?, remarks = ?
+             WHERE id = ?`,
+            [
+                officer.alumniId, officer.fullName, officer.position, officer.customPosition, officer.batchYear,
+                officer.departmentId, officer.programId, officer.contactNumber, officer.email, officer.photo,
+                officer.termStart, officer.termEnd, officer.status, officer.remarks, id
+            ]
+        );
+        const saved = await getAlumniOfficerById(id);
+        res.json(saved ? mapAlumniOfficer(saved) : { id });
+    } catch (err: unknown) {
+        const message = getErrorMessage(err);
+        res.status(message.includes("required") || message.includes("Select") || message.includes("Term") || message.includes("custom") || message.includes("selected") ? 400 : 500)
+            .json({ error: message });
+    }
+});
+
+app.post("/api/alumni-officers/:id/archive", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid officer id" });
+        const result = await db.execute(
+            "UPDATE alumni_officers SET is_archived = 1, archived_at = NOW(), archived_by = ? WHERE id = ? AND is_archived = 0",
+            [req.user?.id || null, id]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Active officer not found" });
+        const saved = await getAlumniOfficerById(id);
+        res.json(saved ? mapAlumniOfficer(saved) : { id });
+    } catch (err: unknown) {
+        console.error("ARCHIVE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.post("/api/alumni-officers/:id/restore", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid officer id" });
+        const result = await db.execute(
+            "UPDATE alumni_officers SET is_archived = 0, archived_at = NULL, archived_by = NULL WHERE id = ? AND is_archived = 1",
+            [id]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Archived officer not found" });
+        const saved = await getAlumniOfficerById(id);
+        res.json(saved ? mapAlumniOfficer(saved) : { id });
+    } catch (err: unknown) {
+        console.error("RESTORE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
+
+app.delete("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid officer id" });
+        const result = await db.execute("DELETE FROM alumni_officers WHERE id = ?", [id]) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Officer not found" });
+        res.status(204).send();
+    } catch (err: unknown) {
+        console.error("DELETE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getErrorMessage(err) });
+    }
+});
 /* =========================
    OFFICERS
 ========================= */
@@ -9746,6 +12387,9 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
                 alumniId: String(item?.alumniId || "").trim(),
                 position: normalizeOfficerPositionKey(item?.position),
                 name: normalizeText(item?.name),
+                email: normalizeEmail(item?.email),
+                course: normalizeText(item?.course),
+                batch: normalizeBatch(item?.batch),
                 contactNumber: normalizePhone(item?.contactNumber),
                 photoBase64: normalizeStoredMedia(item?.photoBase64 ? String(item.photoBase64) : null),
                 customPosition: item?.customPosition ? normalizeText(item.customPosition) : null,
@@ -9813,46 +12457,6 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
             }
         }
 
-        const directOfficerPositions = [...new Set(
-            normalizedAssignments
-                .filter((item) => !item.alumniId && item.position !== "board_member")
-                .map((item) => item.position)
-        )];
-
-        const directOfficerAccountMap = new Map<string, RowDataPacket>();
-
-        if (directOfficerPositions.length > 0) {
-            const rolePlaceholders = directOfficerPositions.map(() => "?").join(", ");
-            const [roleRows] = await conn.query<RowDataPacket[]>(
-                `SELECT
-                    ur.role,
-                    ur.user_id AS id,
-                    p.name,
-                    p.email,
-                    p.course,
-                    p.batch,
-                    p.contact_number,
-                    p.photo
-                 FROM user_roles ur
-                 LEFT JOIN profiles p ON p.id = ur.user_id
-                 WHERE ur.role IN (${rolePlaceholders}) AND COALESCE(ur.archived, 0) = 0`,
-                directOfficerPositions
-            );
-
-            roleRows.forEach((row) => {
-                if (row.role) {
-                    directOfficerAccountMap.set(String(row.role), row);
-                }
-            });
-
-            const missingOfficerAccounts = directOfficerPositions.filter((position) => !directOfficerAccountMap.has(position));
-            if (missingOfficerAccounts.length > 0) {
-                return res.status(400).json({
-                    error: `Missing officer account for: ${missingOfficerAccounts.map((item) => formatOfficerPosition(item)).join(", ")}`
-                });
-            }
-        }
-
         await conn.beginTransaction();
         transactionStarted = true;
 
@@ -9886,37 +12490,13 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
         }
 
         for (const assignment of normalizedAssignments) {
-            let profile = assignment.alumniId ? profileMap.get(assignment.alumniId) : undefined;
-
-            if (!assignment.alumniId && assignment.position !== "board_member") {
-                const officerAccount = directOfficerAccountMap.get(assignment.position);
-
-                if (!officerAccount) {
-                    continue;
-                }
-
-                await conn.query(
-                    `UPDATE profiles
-                     SET name = ?, contact_number = ?, photo = ?
-                     WHERE id = ?`,
-                    [
-                        assignment.name || String(officerAccount.name || ""),
-                        assignment.contactNumber || null,
-                        assignment.photoBase64 !== null ? assignment.photoBase64 : normalizeStoredMedia(officerAccount.photo ? String(officerAccount.photo) : null),
-                        String(officerAccount.id)
-                    ]
-                );
-
-                profile = {
-                    ...officerAccount,
-                    id: String(officerAccount.id),
-                    name: assignment.name || String(officerAccount.name || "Unknown Officer"),
-                    contact_number: assignment.contactNumber || null,
-                    photo: assignment.photoBase64 !== null ? assignment.photoBase64 : normalizeStoredMedia(officerAccount.photo ? String(officerAccount.photo) : null)
-                };
+            const profile = assignment.alumniId ? profileMap.get(assignment.alumniId) : null;
+            if (assignment.alumniId && !profile) {
+                continue;
             }
 
-            if (!profile) {
+            const snapshotName = assignment.name || (profile?.name ? String(profile.name) : "");
+            if (!snapshotName) {
                 continue;
             }
 
@@ -9926,20 +12506,21 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     schoolYearId,
-                    assignment.alumniId || String(profile.id || ""),
+                    assignment.alumniId || null,
                     assignment.position,
                     assignment.customPosition,
                     assignment.displayOrder,
-                    assignment.name || String(profile.name || "Unknown Alumni"),
-                    profile.email ? String(profile.email) : null,
-                    profile.course ? String(profile.course) : null,
-                    profile.batch ? String(profile.batch) : null,
-                    assignment.contactNumber || (profile.contact_number ? String(profile.contact_number) : null),
-                    assignment.photoBase64 !== null ? assignment.photoBase64 : normalizeStoredMedia(profile.photo ? String(profile.photo) : null)
+                    snapshotName,
+                    assignment.email || (profile?.email ? String(profile.email) : null),
+                    assignment.course || (profile?.course ? String(profile.course) : null),
+                    assignment.batch || (profile?.batch ? String(profile.batch) : null),
+                    assignment.contactNumber || (profile?.contact_number ? String(profile.contact_number) : null),
+                    assignment.photoBase64 !== null
+                        ? assignment.photoBase64
+                        : normalizeStoredMedia(profile?.photo ? String(profile.photo) : null)
                 ]
             );
         }
-
         await conn.commit();
         transactionStarted = false;
 
@@ -10307,6 +12888,63 @@ app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req:
     }
 });
 
+app.get("/api/admin/email-queue/settings", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const settings = await getEmailQueueSettings();
+        const stats = await getEmailQueueStats();
+        res.json({ settings, stats });
+    } catch (err: unknown) {
+        console.error("GET EMAIL QUEUE SETTINGS ERROR:", err);
+        res.status(500).json({ error: "Unable to load email queue settings." });
+    }
+});
+
+app.put("/api/admin/email-queue/settings", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const settings = await saveEmailQueueSettings(req.body || {});
+        const stats = await getEmailQueueStats();
+        res.json({ success: true, message: "Email queue settings saved.", settings, stats });
+    } catch (err: unknown) {
+        console.error("SAVE EMAIL QUEUE SETTINGS ERROR:", err);
+        res.status(500).json({ error: "Unable to save email queue settings." });
+    }
+});
+
+app.get("/api/admin/email-queue", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        await ensureEmailQueueTables();
+        const rows = parseRows(await db.query(
+            `SELECT id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, status, scheduled_for, attempts, last_attempt_at, sent_at, error_message, created_at
+             FROM email_queue
+             ORDER BY created_at DESC
+             LIMIT 100`
+        ));
+        res.json({ rows, stats: await getEmailQueueStats() });
+    } catch (err: unknown) {
+        console.error("GET EMAIL QUEUE ERROR:", err);
+        res.status(500).json({ error: "Unable to load email queue." });
+    }
+});
+
+app.post("/api/admin/email-queue/enqueue-tracer-reminders", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const result = await enqueueDueTracerReminders({ force: true, createdBy: req.user?.id || null });
+        res.json({ success: true, message: `${result.queued} tracer reminder${result.queued === 1 ? "" : "s"} queued.`, ...result, stats: await getEmailQueueStats() });
+    } catch (err: unknown) {
+        console.error("ENQUEUE TRACER REMINDERS ERROR:", err);
+        res.status(500).json({ error: "Unable to queue tracer reminders." });
+    }
+});
+
+app.post("/api/admin/email-queue/process", authenticateToken, requireAdmin, async (_req, res) => {
+    try {
+        const result = await processEmailQueue({ force: true });
+        res.json({ success: true, message: `${result.sent} queued email${result.sent === 1 ? "" : "s"} sent.`, ...result, stats: await getEmailQueueStats() });
+    } catch (err: unknown) {
+        console.error("PROCESS EMAIL QUEUE ERROR:", err);
+        res.status(500).json({ error: "Unable to process email queue." });
+    }
+});
 app.post("/api/notifications/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
         return res.status(400).json({
@@ -10326,3 +12964,9 @@ app.get("/api/admin/tracer/:alumniId", authenticateToken, assertTracerAdminAcces
 app.use("/api/email", authenticateToken, requireAdmin, emailRoutes);
 
 export default app;
+
+
+
+
+
+

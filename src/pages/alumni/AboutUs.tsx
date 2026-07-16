@@ -1,12 +1,13 @@
 import AlumniLayout from "@/components/alumni/AlumniLayout";
-import { Eye, Target, Zap, Users, FileText, Heart, Bell, BarChart2 } from "lucide-react";
+import { Eye, Target, Zap, Users, FileText, Heart, Bell, BarChart2, History, Mail, MapPin, Phone } from "lucide-react";
 import OrganizationChart from "@/components/alumni/OrganizationChart";
+import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 const FEATURES = [
   {
     icon: Users,
     title: "Alumni Directory",
-    desc: "Browse and connect with fellow SaCC graduates across all batches and programs.",
+    desc: "Browse and connect with fellow graduates across batches and programs.",
   },
   {
     icon: FileText,
@@ -21,7 +22,7 @@ const FEATURES = [
   {
     icon: Bell,
     title: "Announcements & Events",
-    desc: "Stay updated on alumni homecomings, career talks, webinars, and other SaCC activities.",
+    desc: "Stay updated on alumni homecomings, career talks, webinars, and institutional activities.",
   },
   {
     icon: BarChart2,
@@ -36,11 +37,47 @@ const FEATURES = [
 ];
 
 export default function AboutUs() {
+  const { settings } = useSystemSettings();
+  const contactRows = [
+    { icon: MapPin, label: "Address", value: settings.institutionAddress },
+    { icon: Phone, label: "Contact", value: settings.institutionContact },
+    { icon: Mail, label: "Email", value: settings.institutionEmail },
+  ].filter((item) => item.value);
+  const socialRows = [
+    { label: "Facebook", value: settings.facebookLink },
+    { label: "Twitter", value: settings.twitterLink },
+    { label: "Instagram", value: settings.instagramLink },
+    { label: "Website", value: settings.websiteUrl },
+  ].filter((item) => item.value);
+
   return (
-    <AlumniLayout title="About Us" subtitle="SaCC Alumni Portal">
+    <AlumniLayout title="About Us" subtitle={settings.systemShortName}>
       <div className="max-w-4xl mx-auto space-y-8">
 
         <OrganizationChart />
+
+        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="border-b border-border bg-navy/5 px-6 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{settings.systemName}</p>
+            <h2 className="mt-1 font-display text-xl font-bold text-foreground">{settings.institutionName}</h2>
+          </div>
+          <div className="space-y-4 px-6 py-5">
+            <p className="text-sm leading-relaxed text-foreground">
+              {settings.aboutContent}
+            </p>
+            {contactRows.length > 0 && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {contactRows.map((item) => (
+                  <div key={item.label} className="rounded-xl border border-border bg-muted/30 p-3">
+                    <item.icon className="h-4 w-4 text-navy" />
+                    <p className="mt-2 text-xs font-semibold uppercase text-muted-foreground">{item.label}</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Vision */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
@@ -49,13 +86,13 @@ export default function AboutUs() {
               <Eye className="w-5 h-5 text-gold" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-foreground text-base">SaCC Vision</h3>
+              <h3 className="font-display font-bold text-foreground text-base">Vision</h3>
               <p className="text-muted-foreground text-xs">Bisyon ng Kolehiyo</p>
             </div>
           </div>
           <div className="px-6 py-5 space-y-3">
             <p className="text-foreground text-sm leading-relaxed">
-              The College is a recognized community institution providing accessible, quality education that bridges learning and livelihood.
+              {settings.vision}
             </p>
           </div>
         </div>
@@ -67,26 +104,31 @@ export default function AboutUs() {
               <Target className="w-5 h-5 text-foreground" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-foreground text-base">SaCC Mission</h3>
+              <h3 className="font-display font-bold text-foreground text-base">Mission</h3>
               <p className="text-muted-foreground text-xs">Misyon ng Kolehiyo</p>
             </div>
           </div>
-          <div className="px-6 py-5 space-y-5">
-            <p className="text-foreground text-sm font-medium">The mission of the College is to:</p>
-            <ul className="space-y-3">
-              {[
-                "Provide quality and accessible education that equips students with knowledge and skills for the workforce,",
-                "Foster community development through relevant programs and partnerships, and",
-                "Contribute to national development through responsive and innovative educational practices.",
-              ].map((item, i) => (
-                <li key={i} className="flex items-start gap-3 text-sm text-foreground leading-relaxed">
-                  <span className="w-6 h-6 rounded-full bg-navy text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-                  {item}
-                </li>
-              ))}
-            </ul>
+          <div className="px-6 py-5">
+            <p className="text-sm leading-relaxed text-foreground">{settings.mission}</p>
           </div>
         </div>
+
+        {settings.history && (
+          <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+            <div className="flex items-center gap-3 border-b border-border bg-navy/5 px-6 py-4">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-navy">
+                <History className="h-5 w-5 text-gold" />
+              </div>
+              <div>
+                <h3 className="font-display text-base font-bold text-foreground">School History</h3>
+                <p className="text-xs text-muted-foreground">Institution background</p>
+              </div>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm leading-relaxed text-foreground">{settings.history}</p>
+            </div>
+          </div>
+        )}
 
         {/* System Features */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
@@ -116,7 +158,16 @@ export default function AboutUs() {
 
         {/* Footer note */}
         <div className="text-center text-muted-foreground text-xs pb-4">
-          SaCC Alumni Portal · Developed by Jake Ian Jamero and Team
+          {socialRows.length > 0 && (
+            <div className="mb-3 flex flex-wrap justify-center gap-3">
+              {socialRows.map((item) => (
+                <a key={item.label} href={item.value} target="_blank" rel="noreferrer" className="font-semibold text-navy hover:underline">
+                  {item.label}
+                </a>
+              ))}
+            </div>
+          )}
+          {settings.footerCopyrightText || settings.systemName}
         </div>
       </div>
     </AlumniLayout>
