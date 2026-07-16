@@ -38,6 +38,12 @@ interface AlumniRecord {
   course: string | null;
   batch: string | null;
   bor_number: string | null;
+  advanced_studies_level: string | null;
+  advanced_studies_status: string | null;
+  advanced_studies_program: string | null;
+  advanced_studies_school: string | null;
+  advanced_studies_start_year: string | null;
+  advanced_studies_expected_completion_year: string | null;
   email: string;
   student_id: string | null;
   contact_number: string | null;
@@ -81,6 +87,12 @@ interface NewAlumniForm {
   studentId: string;
   contactNumber: string;
   borNumber: string;
+  advancedStudiesLevel: string;
+  advancedStudiesStatus: string;
+  advancedStudiesProgram: string;
+  advancedStudiesSchool: string;
+  advancedStudiesStartYear: string;
+  advancedStudiesExpectedCompletionYear: string;
 }
 
 interface ImportRow {
@@ -91,6 +103,12 @@ interface ImportRow {
   program: string;
   contactNumber: string;
   borNumber: string;
+  advancedStudiesLevel: string;
+  advancedStudiesStatus: string;
+  advancedStudiesProgram: string;
+  advancedStudiesSchool: string;
+  advancedStudiesStartYear: string;
+  advancedStudiesExpectedCompletionYear: string;
   errors: string[];
 }
 
@@ -129,7 +147,7 @@ interface ImportResponse {
   }>;
 }
 
-const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "", borNumber: "" };
+const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "", borNumber: "", advancedStudiesLevel: "", advancedStudiesStatus: "", advancedStudiesProgram: "", advancedStudiesSchool: "", advancedStudiesStartYear: "", advancedStudiesExpectedCompletionYear: "" };
 
 const normalizeImageSrc = (value: string | null) => resolveAssetUrl(value);
 
@@ -138,6 +156,31 @@ const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCas
 const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g, "").trim();
 const normalizeYear = (value: unknown) => String(value || "").trim();
 const normalizeHeader = (value: unknown) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+const ADVANCED_STUDIES_LEVELS = ["", "Master's Degree", "Doctoral Degree"] as const;
+const ADVANCED_STUDIES_STATUSES = ["", "Currently enrolled", "Completed", "On leave", "Discontinued"] as const;
+
+const normalizeAdvancedStudiesLevel = (value: unknown) => {
+  const text = normalizeText(value);
+  const key = text.toLowerCase().replace(/[^a-z]/g, "");
+  if (!text) return "";
+  if (["master", "masters", "masterdegree", "mastersdegree"].includes(key)) return "Master's Degree";
+  if (["doctoral", "doctorate", "doctoraldegree", "doctoratedegree", "phd"].includes(key)) return "Doctoral Degree";
+  return "";
+};
+
+const normalizeAdvancedStudiesStatus = (value: unknown) => {
+  const text = normalizeText(value);
+  const key = text.toLowerCase().replace(/[^a-z]/g, "");
+  if (!text) return "";
+  if (["currentlyenrolled", "enrolled", "ongoing"].includes(key)) return "Currently enrolled";
+  if (["completed", "finished", "graduated"].includes(key)) return "Completed";
+  if (["onleave", "leave"].includes(key)) return "On leave";
+  if (["discontinued", "stopped"].includes(key)) return "Discontinued";
+  return "";
+};
+
+const formatAdvancedStudies = (item: Pick<AlumniRecord, "advanced_studies_level" | "advanced_studies_status">) =>
+  [item.advanced_studies_level, item.advanced_studies_status].filter(Boolean).join(" - ") || "-";
 const EMAIL_PATTERN = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 const ALLOWED_ALUMNI_EMAIL_DOMAINS = ["gmail.com", "email.com"];
 
@@ -240,7 +283,22 @@ const IMPORT_HEADER_MAP: Record<string, keyof Omit<ImportRow, "rowNumber" | "err
   borno: "borNumber",
   boardresolutionnumber: "borNumber",
   boardresolution: "borNumber",
-};
+  advancedstudies: "advancedStudiesLevel",
+  advancedstudieslevel: "advancedStudiesLevel",
+  furtherstudies: "advancedStudiesLevel",
+  degreelevel: "advancedStudiesLevel",
+  mastersdoctoral: "advancedStudiesLevel",
+  advancedstudiesstatus: "advancedStudiesStatus",
+  studystatus: "advancedStudiesStatus",
+  advancedstudiesprogram: "advancedStudiesProgram",
+  graduateprogram: "advancedStudiesProgram",
+  advancedstudiesschool: "advancedStudiesSchool",
+  graduateuniversity: "advancedStudiesSchool",
+  advancedstudiesstartyear: "advancedStudiesStartYear",
+  startyear: "advancedStudiesStartYear",
+  advancedstudiesexpectedcompletionyear: "advancedStudiesExpectedCompletionYear",
+  expectedcompletionyear: "advancedStudiesExpectedCompletionYear",
+  completionyear: "advancedStudiesExpectedCompletionYear",};
 
 const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: Set<string>, systemCourses: string[]) => {
   const seenEmails = new Set<string>();
@@ -265,6 +323,17 @@ const validateImportRows = (rows: Omit<ImportRow, "errors">[], existingEmails: S
       errors.push("Program is required.");
     } else if (!systemCourses.includes(row.program)) {
       errors.push("Program must match one of the supported school programs.");
+    }
+
+    const hasAdvancedStudiesDetails = Boolean(row.advancedStudiesStatus || row.advancedStudiesProgram || row.advancedStudiesSchool || row.advancedStudiesStartYear || row.advancedStudiesExpectedCompletionYear);
+    if (hasAdvancedStudiesDetails && !row.advancedStudiesLevel) {
+      errors.push("Advanced Studies Level is required when advanced studies details are provided.");
+    }
+    if (row.advancedStudiesStartYear && !/^\d{4}$/.test(row.advancedStudiesStartYear)) {
+      errors.push("Advanced Studies Start Year must be a 4-digit year.");
+    }
+    if (row.advancedStudiesExpectedCompletionYear && !/^\d{4}$/.test(row.advancedStudiesExpectedCompletionYear)) {
+      errors.push("Expected Completion Year must be a 4-digit year.");
     }
 
     if (row.emailAddress) {
@@ -314,8 +383,16 @@ const normalizeImportValue = (key: keyof Omit<ImportRow, "rowNumber" | "errors">
     return normalizePhone(value);
   }
 
-  if (key === "graduationYear") {
+  if (key === "graduationYear" || key === "advancedStudiesStartYear" || key === "advancedStudiesExpectedCompletionYear") {
     return normalizeYear(value);
+  }
+
+  if (key === "advancedStudiesLevel") {
+    return normalizeAdvancedStudiesLevel(value);
+  }
+
+  if (key === "advancedStudiesStatus") {
+    return normalizeAdvancedStudiesStatus(value);
   }
 
   if (key === "program") {
@@ -368,6 +445,12 @@ const worksheetToRows = (worksheet: ExcelJS.Worksheet, programOptions: CourseOpt
       program: "",
       contactNumber: "",
       borNumber: "",
+      advancedStudiesLevel: "",
+      advancedStudiesStatus: "",
+      advancedStudiesProgram: "",
+      advancedStudiesSchool: "",
+      advancedStudiesStartYear: "",
+      advancedStudiesExpectedCompletionYear: "",
     };
     let hasValue = false;
 
@@ -425,6 +508,7 @@ export default function AdminAlumni() {
   const [course, setCourse] = useState(ALL_COURSES_OPTION);
   const [batch, setBatch] = useState("All Batches");
   const [borFilter, setBorFilter] = useState("");
+  const [advancedStudiesFilter, setAdvancedStudiesFilter] = useState("");
 
   const [sortKey, setSortKey] = useState<keyof AlumniRecord>("name");
   const [sortAsc, setSortAsc] = useState(true);
@@ -496,18 +580,22 @@ export default function AdminAlumni() {
         (course === ALL_COURSES_OPTION || item.course === course) &&
         (batch === "All Batches" || item.batch === batch) &&
         (!borFilter || normalizeText(item.bor_number).toLowerCase().includes(borFilter.toLowerCase())) &&
+        (!advancedStudiesFilter || item.advanced_studies_level === advancedStudiesFilter) &&
         (!search ||
           item.name.toLowerCase().includes(search.toLowerCase()) ||
           (item.student_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
           item.email.toLowerCase().includes(search.toLowerCase()) ||
-          normalizeText(item.bor_number).toLowerCase().includes(search.toLowerCase()))
+          normalizeText(item.bor_number).toLowerCase().includes(search.toLowerCase()) ||
+          formatAdvancedStudies(item).toLowerCase().includes(search.toLowerCase()) ||
+          normalizeText(item.advanced_studies_program).toLowerCase().includes(search.toLowerCase()) ||
+          normalizeText(item.advanced_studies_school).toLowerCase().includes(search.toLowerCase()))
       )
       .sort((a, b) => {
         const av = String(a[sortKey] ?? "");
         const bv = String(b[sortKey] ?? "");
         return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       });
-  }, [alumni, batch, borFilter, course, search, sortAsc, sortKey]);
+  }, [advancedStudiesFilter, alumni, batch, borFilter, course, search, sortAsc, sortKey]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / ALUMNI_PAGE_SIZE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -522,7 +610,7 @@ export default function AdminAlumni() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [batch, borFilter, course, search, sortAsc, sortKey]);
+  }, [advancedStudiesFilter, batch, borFilter, course, search, sortAsc, sortKey]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -642,6 +730,12 @@ export default function AdminAlumni() {
           photoBase64: photoPreview,
           sendEmail: true,
           borNumber: form.borNumber,
+          advancedStudiesLevel: form.advancedStudiesLevel,
+          advancedStudiesStatus: form.advancedStudiesStatus,
+          advancedStudiesProgram: form.advancedStudiesProgram,
+          advancedStudiesSchool: form.advancedStudiesSchool,
+          advancedStudiesStartYear: form.advancedStudiesStartYear,
+          advancedStudiesExpectedCompletionYear: form.advancedStudiesExpectedCompletionYear,
         }),
       });
 
@@ -770,6 +864,9 @@ export default function AdminAlumni() {
       { key: "graduationYear", label: "Graduation Year" },
 
       { key: "borNumber", label: "BOR Number" },
+      { key: "advancedStudies", label: "Advanced Studies" },
+      { key: "advancedProgram", label: "Graduate Program" },
+      { key: "advancedSchool", label: "School/University" },
 
       { key: "program", label: "Program" },
       { key: "department", label: "Department" },
@@ -782,6 +879,9 @@ export default function AdminAlumni() {
       graduationYear: item.batch ?? "",
 
       borNumber: item.bor_number ?? "",
+      advancedStudies: formatAdvancedStudies(item),
+      advancedProgram: item.advanced_studies_program ?? "",
+      advancedSchool: item.advanced_studies_school ?? "",
 
       program: formatCourseCode(item.course, programOptions),
       department: getDepartmentLabel(item.course),
@@ -798,6 +898,7 @@ export default function AdminAlumni() {
       summary: [
         { label: "Displayed Records", value: filtered.length },
         { label: "BOR Numbers", value: new Set(filtered.map((item) => item.bor_number).filter(Boolean)).size },
+        { label: "Advanced Studies", value: filtered.filter((item) => item.advanced_studies_level).length },
 
         { label: "Programs", value: new Set(filtered.map((item) => item.course).filter(Boolean)).size },
       ],
@@ -814,11 +915,12 @@ export default function AdminAlumni() {
 
   return (
     <AdminLayout title="Alumni Management">
-      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
         {[
           { label: "Total Alumni", value: alumni.length },
           { label: "Programs", value: new Set(alumni.map((item) => item.course).filter(Boolean)).size },
           { label: "BOR Numbers", value: new Set(alumni.map((item) => item.bor_number).filter(Boolean)).size },
+          { label: "Advanced Studies", value: alumni.filter((item) => item.advanced_studies_level).length },
         ].map((stat, index) => (
           <div key={stat.label} className={`rounded-xl border p-3 shadow-card ${index === 0 ? "bg-navy border-navy" : "bg-card border-border"}`}>
             <p className={`text-lg font-display font-bold ${index === 0 ? "text-white" : "text-navy-dark"}`}>{loading ? "..." : stat.value}</p>
@@ -843,6 +945,11 @@ export default function AdminAlumni() {
                 {BATCHES.map((value) => <option key={value}>{value}</option>)}
               </select>
               <input value={borFilter} onChange={(event) => setBorFilter(event.target.value)} placeholder="BOR" className="h-7 w-24 rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none" />
+              <select value={advancedStudiesFilter} onChange={(event) => setAdvancedStudiesFilter(event.target.value)} className="h-7 max-w-[10.5rem] rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none">
+                <option value="">All studies</option>
+                <option value="Master's Degree">Master's Degree</option>
+                <option value="Doctoral Degree">Doctoral Degree</option>
+              </select>
 
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -855,11 +962,11 @@ export default function AdminAlumni() {
 
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-[11px]">
-              <colgroup><col className="w-[6%]" /><col className="w-[14%]" /><col className="w-[20%]" /><col className="w-[19%]" /><col className="w-[9%]" /><col className="w-[14%]" /><col className="w-[18%]" /></colgroup>
-              <thead><tr className="border-b border-border bg-muted/50"><th className="px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy">Photo</th>{([ ["student_id", "Alumni ID"], ["name", "Name"], ["course", "Program"], ["batch", "Year"], ["bor_number", "BOR"], ["email", "Email"] ] as [keyof AlumniRecord, string][]).map(([key, label]) => <th key={key} onClick={() => toggleSort(key)} className="cursor-pointer select-none truncate px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy hover:text-navy-dark">{label}<SortIcon k={key} /></th>)}</tr></thead>
+              <colgroup><col className="w-[6%]" /><col className="w-[13%]" /><col className="w-[18%]" /><col className="w-[14%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[14%]" /><col className="w-[17%]" /></colgroup>
+              <thead><tr className="border-b border-border bg-muted/50"><th className="px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy">Photo</th>{([ ["student_id", "Alumni ID"], ["name", "Name"], ["course", "Program"], ["batch", "Year"], ["bor_number", "BOR"], ["advanced_studies_level", "Advanced"], ["email", "Email"] ] as [keyof AlumniRecord, string][]).map(([key, label]) => <th key={key} onClick={() => toggleSort(key)} className="cursor-pointer select-none truncate px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy hover:text-navy-dark">{label}<SortIcon k={key} /></th>)}</tr></thead>
               <tbody>
-                {loading && <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">Loading...</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
+                {loading && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Loading...</td></tr>}
+                {!loading && filtered.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
                 {paginatedAlumni.map((item, index) => {
                   const imageSrc = normalizeImageSrc(item.photo);
                   const selected = selectedAlumni?.id === item.id;
@@ -872,6 +979,7 @@ export default function AdminAlumni() {
                       <td className="truncate px-2 py-1.5 text-muted-foreground" title={item.batch ?? "-"}>{item.batch ?? "-"}</td>
 
                       <td className="truncate px-2 py-1.5 text-[10px] font-semibold text-navy-dark" title={item.bor_number ?? "-"}>{item.bor_number ?? "-"}</td>
+                      <td className="truncate px-2 py-1.5 text-[10px] font-semibold text-navy-dark" title={formatAdvancedStudies(item)}>{formatAdvancedStudies(item)}</td>
                       <td className="truncate px-2 py-1.5 text-[10px] text-muted-foreground" title={item.email}>{item.email}</td>
                     </tr>
                   );
@@ -906,6 +1014,20 @@ export default function AdminAlumni() {
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><FieldInput label="Full Name *" value={form.name} set={(value) => setForm((current) => ({ ...current, name: value }))} /><FieldInput label="Email Address *" type="email" value={form.email} set={(value) => setForm((current) => ({ ...current, email: value }))} /><FieldInput label="Student/Alumni ID" value={form.studentId} set={(value) => setForm((current) => ({ ...current, studentId: value }))} placeholder="Auto-generate if blank" /><FieldInput label="Contact Number" value={form.contactNumber} set={(value) => setForm((current) => ({ ...current, contactNumber: value }))} /></div>
               <div className="rounded-xl border border-border bg-muted/20 p-3"><p className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-navy">Academic Information</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="mb-1.5 block text-xs font-semibold text-navy">Graduation Year *</label><input value={form.batch} onChange={(event) => setForm((current) => ({ ...current, batch: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none" /></div><div><label className="mb-1.5 block text-xs font-semibold text-navy">Program *</label><select value={form.course} onChange={(event) => setForm((current) => ({ ...current, course: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{programOptions.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select></div><FieldInput label="BOR Number" value={form.borNumber} set={(value) => setForm((current) => ({ ...current, borNumber: value }))} /></div></div>
+              <div className="rounded-xl border border-border bg-muted/20 p-3">
+                <div className="mb-3">
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-navy">Advanced Studies</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Optional. Record whether the alumnus is pursuing a Master's or Doctoral degree.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div><label className="mb-1.5 block text-xs font-semibold text-navy">Degree Level</label><select value={form.advancedStudiesLevel} onChange={(event) => setForm((current) => ({ ...current, advancedStudiesLevel: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{ADVANCED_STUDIES_LEVELS.map((option) => <option key={option} value={option}>{option || "No advanced studies"}</option>)}</select></div>
+                  <div><label className="mb-1.5 block text-xs font-semibold text-navy">Study Status</label><select value={form.advancedStudiesStatus} onChange={(event) => setForm((current) => ({ ...current, advancedStudiesStatus: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{ADVANCED_STUDIES_STATUSES.map((option) => <option key={option} value={option}>{option || "Select status"}</option>)}</select></div>
+                  <FieldInput label="Graduate Program" value={form.advancedStudiesProgram} set={(value) => setForm((current) => ({ ...current, advancedStudiesProgram: value }))} placeholder="e.g. Master of Education" />
+                  <FieldInput label="School / University" value={form.advancedStudiesSchool} set={(value) => setForm((current) => ({ ...current, advancedStudiesSchool: value }))} />
+                  <FieldInput label="Start Year" value={form.advancedStudiesStartYear} set={(value) => setForm((current) => ({ ...current, advancedStudiesStartYear: value }))} placeholder="2026" />
+                  <FieldInput label="Expected Completion Year" value={form.advancedStudiesExpectedCompletionYear} set={(value) => setForm((current) => ({ ...current, advancedStudiesExpectedCompletionYear: value }))} placeholder="2028" />
+                </div>
+              </div>
               {addError && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{addError}</div>}
               <div className="flex gap-3 pt-1"><button type="button" onClick={() => setShowAdd(false)} className="flex-1 rounded-lg border border-border py-2.5 text-sm font-medium text-navy hover:bg-muted">Cancel</button><button type="submit" disabled={addLoading || !canCreateAlumni} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:cursor-not-allowed disabled:opacity-50">{addLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating...</> : <><Mail className="h-4 w-4" />Create Account</>}</button></div>
             </form>
@@ -921,7 +1043,7 @@ export default function AdminAlumni() {
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Import Alumni Records</DialogTitle>
-            <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number.</DialogDescription>
+            <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number, Advanced Studies Level, Study Status, Graduate Program, School/University, Start Year, Expected Completion Year.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[220px_1fr] sm:items-end">
@@ -973,11 +1095,12 @@ export default function AdminAlumni() {
                       <th className="px-3 py-2 text-left">School Year</th>
                       <th className="px-3 py-2 text-left">Program</th>
                       <th className="px-3 py-2 text-left">BOR</th>
+                      <th className="px-3 py-2 text-left">Advanced Studies</th>
                       <th className="px-3 py-2 text-left">Email</th>
                       <th className="px-3 py-2 text-left">Validation</th>
                     </tr>
                   </thead>
-                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-2">{row.graduationYear || "-"}</td><td className="px-3 py-2" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-2">{row.borNumber || "-"}</td><td className="px-3 py-2">{row.emailAddress || "-"}</td><td className="px-3 py-2">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
+                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-2">{row.graduationYear || "-"}</td><td className="px-3 py-2" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-2">{row.borNumber || "-"}</td><td className="px-3 py-2">{[row.advancedStudiesLevel, row.advancedStudiesStatus].filter(Boolean).join(" - ") || "-"}</td><td className="px-3 py-2">{row.emailAddress || "-"}</td><td className="px-3 py-2">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
                 </table>
               </div>
               <button type="button" onClick={handleImportSubmit} disabled={importSubmitting || importReadyCount === 0} className="inline-flex items-center justify-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-medium text-white hover:bg-navy-light disabled:opacity-60">{importSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Final Import</button>
@@ -1035,6 +1158,10 @@ function AlumniFeeRecordPanel({ alumni, record, loading, programOptions }: { alu
 
                 <InfoLine label="Program" value={formatCourseCode(alumni.course, programOptions) || "-"} />
                 <InfoLine label="Department" value={getDepartmentLabel(alumni.course) || "-"} />
+                <InfoLine label="Advanced Studies" value={formatAdvancedStudies(alumni)} />
+                <InfoLine label="Graduate Program" value={alumni.advanced_studies_program || "-"} />
+                <InfoLine label="School / University" value={alumni.advanced_studies_school || "-"} />
+                <InfoLine label="Expected Completion" value={alumni.advanced_studies_expected_completion_year || "-"} />
 
 
               </div>

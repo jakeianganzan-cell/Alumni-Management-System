@@ -101,6 +101,12 @@ interface AlumniImportInputRow {
     course?: string;
     contactNumber?: string;
     borNumber?: string;
+    advancedStudiesLevel?: string;
+    advancedStudiesStatus?: string;
+    advancedStudiesProgram?: string;
+    advancedStudiesSchool?: string;
+    advancedStudiesStartYear?: string;
+    advancedStudiesExpectedCompletionYear?: string;
 }
 
 interface AlumniImportPreparedRow {
@@ -111,6 +117,12 @@ interface AlumniImportPreparedRow {
     course: string;
     contactNumber: string;
     borNumber: string | null;
+    advancedStudiesLevel: string | null;
+    advancedStudiesStatus: string | null;
+    advancedStudiesProgram: string | null;
+    advancedStudiesSchool: string | null;
+    advancedStudiesStartYear: string | null;
+    advancedStudiesExpectedCompletionYear: string | null;
 }
 
 interface AlumniImportFailure {
@@ -598,11 +610,23 @@ const ensureAlumniProfileColumns = async () => {
         { table: "profiles", name: "graduation_batch", sql: "ALTER TABLE profiles ADD COLUMN graduation_batch VARCHAR(100) NULL" },
         { table: "profiles", name: "academic_year", sql: "ALTER TABLE profiles ADD COLUMN academic_year VARCHAR(30) NULL" },
         { table: "profiles", name: "graduation_semester", sql: "ALTER TABLE profiles ADD COLUMN graduation_semester VARCHAR(50) NULL" },
+        { table: "profiles", name: "advanced_studies_level", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_level VARCHAR(50) NULL" },
+        { table: "profiles", name: "advanced_studies_status", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_status VARCHAR(50) NULL" },
+        { table: "profiles", name: "advanced_studies_program", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_program VARCHAR(255) NULL" },
+        { table: "profiles", name: "advanced_studies_school", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_school VARCHAR(255) NULL" },
+        { table: "profiles", name: "advanced_studies_start_year", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL" },
+        { table: "profiles", name: "advanced_studies_expected_completion_year", sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL" },
         { table: "imported_alumni_records", name: "bor_number", sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_number VARCHAR(100) NULL" },
         { table: "imported_alumni_records", name: "bor_date", sql: "ALTER TABLE imported_alumni_records ADD COLUMN bor_date DATE NULL" },
         { table: "imported_alumni_records", name: "graduation_batch", sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_batch VARCHAR(100) NULL" },
         { table: "imported_alumni_records", name: "academic_year", sql: "ALTER TABLE imported_alumni_records ADD COLUMN academic_year VARCHAR(30) NULL" },
         { table: "imported_alumni_records", name: "graduation_semester", sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_semester VARCHAR(50) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_level", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_level VARCHAR(50) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_status", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_status VARCHAR(50) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_program", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_program VARCHAR(255) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_school", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_school VARCHAR(255) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_start_year", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL" },
+        { table: "imported_alumni_records", name: "advanced_studies_expected_completion_year", sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL" },
         { table: "imported_alumni_records", name: "email_status", sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending'" },
         { table: "imported_alumni_records", name: "email_error", sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_error TEXT NULL" }
     ];
@@ -2959,6 +2983,33 @@ const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g
 
 const normalizeBatch = (value: unknown) => String(value || "").trim();
 
+const normalizeAdvancedStudiesLevel = (value: unknown) => {
+    const text = normalizeText(value);
+    const key = text.toLowerCase().replace(/[^a-z]/g, "");
+
+    if (!text) return null;
+    if (["master", "masters", "masterdegree", "mastersdegree"].includes(key)) return "Master's Degree";
+    if (["doctoral", "doctorate", "doctoraldegree", "doctoratedegree", "phd"].includes(key)) return "Doctoral Degree";
+    return null;
+};
+
+const normalizeAdvancedStudiesStatus = (value: unknown) => {
+    const text = normalizeText(value);
+    const key = text.toLowerCase().replace(/[^a-z]/g, "");
+
+    if (!text) return null;
+    if (["currentlyenrolled", "enrolled", "ongoing"].includes(key)) return "Currently enrolled";
+    if (["completed", "finished", "graduated"].includes(key)) return "Completed";
+    if (["onleave", "leave"].includes(key)) return "On leave";
+    if (["discontinued", "stopped"].includes(key)) return "Discontinued";
+    return null;
+};
+
+const normalizeOptionalYear = (value: unknown) => {
+    const year = normalizeBatch(value);
+    return /^\d{4}$/.test(year) ? year : null;
+};
+
 const normalizeSupportedCourse = (value: unknown, programs: CourseOption[] = COURSE_OPTIONS) => normalizeCourseCode(normalizeText(value), programs);
 
 const CONCERN_CATEGORIES = new Set([
@@ -3060,6 +3111,19 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number, program
     const courseValidation = validateSupportedCourse(row.program || row.course, programOptions);
     const contactNumber = normalizePhone(row.contactNumber);
     const borNumber = normalizeText(row.borNumber) || null;
+    const advancedStudiesLevel = normalizeAdvancedStudiesLevel(row.advancedStudiesLevel);
+    const advancedStudiesStatus = normalizeAdvancedStudiesStatus(row.advancedStudiesStatus);
+    const advancedStudiesProgram = normalizeText(row.advancedStudiesProgram) || null;
+    const advancedStudiesSchool = normalizeText(row.advancedStudiesSchool) || null;
+    const advancedStudiesStartYear = normalizeOptionalYear(row.advancedStudiesStartYear);
+    const advancedStudiesExpectedCompletionYear = normalizeOptionalYear(row.advancedStudiesExpectedCompletionYear);
+    const hasAdvancedStudiesDetails = Boolean(
+        advancedStudiesStatus ||
+        advancedStudiesProgram ||
+        advancedStudiesSchool ||
+        advancedStudiesStartYear ||
+        advancedStudiesExpectedCompletionYear
+    );
 
     if (!fullName) {
         return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Name is required", category: "invalid" as const } };
@@ -3078,6 +3142,9 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number, program
         return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: courseValidation.message || "Program is required", category: "invalid" as const } };
     }
 
+    if (hasAdvancedStudiesDetails && !advancedStudiesLevel) {
+        return { ok: false as const, failure: { rowNumber, fullName, emailAddress, reason: "Advanced studies level is required when advanced studies details are provided", category: "invalid" as const } };
+    }
     return {
         ok: true as const,
         prepared: {
@@ -3087,7 +3154,13 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number, program
             email: emailAddress,
             course: courseValidation.course,
             contactNumber,
-            borNumber
+            borNumber,
+            advancedStudiesLevel,
+            advancedStudiesStatus,
+            advancedStudiesProgram,
+            advancedStudiesSchool,
+            advancedStudiesStartYear,
+            advancedStudiesExpectedCompletionYear
         }
     };
 };
@@ -3122,6 +3195,22 @@ const IMPORT_HEADER_MAP: Record<string, keyof AlumniImportInputRow> = {
     borno: "borNumber",
     boardresolutionnumber: "borNumber",
     boardresolution: "borNumber",
+    advancedstudies: "advancedStudiesLevel",
+    advancedstudieslevel: "advancedStudiesLevel",
+    furtherstudies: "advancedStudiesLevel",
+    degreelevel: "advancedStudiesLevel",
+    mastersdoctoral: "advancedStudiesLevel",
+    advancedstudiesstatus: "advancedStudiesStatus",
+    studystatus: "advancedStudiesStatus",
+    advancedstudiesprogram: "advancedStudiesProgram",
+    graduateprogram: "advancedStudiesProgram",
+    advancedstudiesschool: "advancedStudiesSchool",
+    graduateuniversity: "advancedStudiesSchool",
+    advancedstudiesstartyear: "advancedStudiesStartYear",
+    startyear: "advancedStudiesStartYear",
+    advancedstudiesexpectedcompletionyear: "advancedStudiesExpectedCompletionYear",
+    expectedcompletionyear: "advancedStudiesExpectedCompletionYear",
+    completionyear: "advancedStudiesExpectedCompletionYear",
 };
 
 const getCellText = (cell: ExcelJS.Cell) => {
@@ -3891,7 +3980,13 @@ const createAlumniAccount = async (conn: PoolConnection, {
     contactNumber,
     photoBase64,
     temporaryPassword,
-    borNumber
+    borNumber,
+    advancedStudiesLevel,
+    advancedStudiesStatus,
+    advancedStudiesProgram,
+    advancedStudiesSchool,
+    advancedStudiesStartYear,
+    advancedStudiesExpectedCompletionYear
 }: {
     name: string;
     email: string;
@@ -3902,6 +3997,12 @@ const createAlumniAccount = async (conn: PoolConnection, {
     photoBase64?: string | null;
     temporaryPassword: string;
     borNumber?: string | null;
+    advancedStudiesLevel?: string | null;
+    advancedStudiesStatus?: string | null;
+    advancedStudiesProgram?: string | null;
+    advancedStudiesSchool?: string | null;
+    advancedStudiesStartYear?: string | null;
+    advancedStudiesExpectedCompletionYear?: string | null;
 }) => {
     const alumniId = normalizeText(studentId) || await generateUniqueAlumniId(conn, batch);
     const userId = uuidv4();
@@ -3914,8 +4015,8 @@ const createAlumniAccount = async (conn: PoolConnection, {
 
     await conn.query(
         `INSERT INTO profiles
-        (id, name, email, student_id, course, batch, contact_number, photo, bor_number)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, name, email, student_id, course, batch, contact_number, photo, bor_number, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             userId,
             name,
@@ -3925,7 +4026,13 @@ const createAlumniAccount = async (conn: PoolConnection, {
             batch || null,
             contactNumber || null,
             normalizeStoredMedia(photoBase64) || null,
-            normalizeText(borNumber) || null
+            normalizeText(borNumber) || null,
+            normalizeAdvancedStudiesLevel(advancedStudiesLevel),
+            normalizeAdvancedStudiesStatus(advancedStudiesStatus),
+            normalizeText(advancedStudiesProgram) || null,
+            normalizeText(advancedStudiesSchool) || null,
+            normalizeOptionalYear(advancedStudiesStartYear),
+            normalizeOptionalYear(advancedStudiesExpectedCompletionYear)
         ]
     );
 
@@ -3978,6 +4085,30 @@ const ensureDatabaseColumns = async () => {
         {
             table: "profiles",
             sql: "ALTER TABLE profiles ADD COLUMN graduation_semester VARCHAR(50) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_level VARCHAR(50) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_status VARCHAR(50) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_program VARCHAR(255) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_school VARCHAR(255) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL"
+        },
+        {
+            table: "profiles",
+            sql: "ALTER TABLE profiles ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL"
         },
         {
             table: tracerTable,
@@ -4134,6 +4265,30 @@ const ensureDatabaseColumns = async () => {
         {
             table: "imported_alumni_records",
             sql: "ALTER TABLE imported_alumni_records ADD COLUMN graduation_semester VARCHAR(50) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_level VARCHAR(50) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_status VARCHAR(50) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_program VARCHAR(255) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_school VARCHAR(255) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL"
+        },
+        {
+            table: "imported_alumni_records",
+            sql: "ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL"
         },
         {
             table: "imported_alumni_records",
@@ -4444,6 +4599,13 @@ const ensureDatabaseColumns = async () => {
                 graduation_year VARCHAR(10) NOT NULL,
                 email_address VARCHAR(255) NOT NULL,
                 contact_number VARCHAR(50) DEFAULT NULL,
+                bor_number VARCHAR(100) DEFAULT NULL,
+                advanced_studies_level VARCHAR(50) DEFAULT NULL,
+                advanced_studies_status VARCHAR(50) DEFAULT NULL,
+                advanced_studies_program VARCHAR(255) DEFAULT NULL,
+                advanced_studies_school VARCHAR(255) DEFAULT NULL,
+                advanced_studies_start_year VARCHAR(10) DEFAULT NULL,
+                advanced_studies_expected_completion_year VARCHAR(10) DEFAULT NULL,
                 generated_alumni_id VARCHAR(50) DEFAULT NULL,
                 status VARCHAR(50) DEFAULT 'imported',
                 email_status VARCHAR(30) NOT NULL DEFAULT 'pending',
@@ -6514,6 +6676,12 @@ app.get("/api/profiles", authenticateToken, async (_req, res) => {
                 p.course,
                 p.batch,
                 p.bor_number,
+                p.advanced_studies_level,
+                p.advanced_studies_status,
+                p.advanced_studies_program,
+                p.advanced_studies_school,
+                p.advanced_studies_start_year,
+                p.advanced_studies_expected_completion_year,
                 p.contact_number,
                 p.photo,
                 p.created_at,
@@ -6549,7 +6717,19 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             photoBase64,
             sendEmail: shouldSend,
             borNumber,
-            bor_number
+            bor_number,
+            advancedStudiesLevel,
+            advanced_studies_level,
+            advancedStudiesStatus,
+            advanced_studies_status,
+            advancedStudiesProgram,
+            advanced_studies_program,
+            advancedStudiesSchool,
+            advanced_studies_school,
+            advancedStudiesStartYear,
+            advanced_studies_start_year,
+            advancedStudiesExpectedCompletionYear,
+            advanced_studies_expected_completion_year
         } = _req.body || {};
 
         const normalizedName = normalizeText(name);
@@ -6558,6 +6738,13 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
         const normalizedStudentId = normalizeText(studentId || student_id || requestedAlumniId);
         const normalizedContactNumber = normalizePhone(contactNumber) || null;
         const normalizedBorNumber = normalizeText(borNumber || bor_number) || null;
+        const normalizedAdvancedStudiesLevel = normalizeAdvancedStudiesLevel(advancedStudiesLevel || advanced_studies_level);
+        const normalizedAdvancedStudiesStatus = normalizeAdvancedStudiesStatus(advancedStudiesStatus || advanced_studies_status);
+        const normalizedAdvancedStudiesProgram = normalizeText(advancedStudiesProgram || advanced_studies_program) || null;
+        const normalizedAdvancedStudiesSchool = normalizeText(advancedStudiesSchool || advanced_studies_school) || null;
+        const normalizedAdvancedStudiesStartYear = normalizeOptionalYear(advancedStudiesStartYear || advanced_studies_start_year);
+        const normalizedAdvancedStudiesExpectedCompletionYear = normalizeOptionalYear(advancedStudiesExpectedCompletionYear || advanced_studies_expected_completion_year);
+        const hasAdvancedStudiesDetails = Boolean(normalizedAdvancedStudiesStatus || normalizedAdvancedStudiesProgram || normalizedAdvancedStudiesSchool || normalizedAdvancedStudiesStartYear || normalizedAdvancedStudiesExpectedCompletionYear);
         const programOptions = (await getSystemSettings()).programs;
         const courseValidation = validateSupportedCourse(course || program, programOptions);
 
@@ -6576,6 +6763,10 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
 
         if (!courseValidation.ok || !courseValidation.course) {
             return res.status(400).json({ error: courseValidation.message });
+        }
+
+        if (hasAdvancedStudiesDetails && !normalizedAdvancedStudiesLevel) {
+            return res.status(400).json({ error: "Select Master's Degree or Doctoral Degree when entering advanced studies details." });
         }
 
         const [existing] = await conn.query<RowDataPacket[]>(
@@ -6614,7 +6805,13 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
             contactNumber: normalizedContactNumber,
             photoBase64: photoBase64 || null,
             temporaryPassword,
-            borNumber: normalizedBorNumber
+            borNumber: normalizedBorNumber,
+            advancedStudiesLevel: normalizedAdvancedStudiesLevel,
+            advancedStudiesStatus: normalizedAdvancedStudiesStatus,
+            advancedStudiesProgram: normalizedAdvancedStudiesProgram,
+            advancedStudiesSchool: normalizedAdvancedStudiesSchool,
+            advancedStudiesStartYear: normalizedAdvancedStudiesStartYear,
+            advancedStudiesExpectedCompletionYear: normalizedAdvancedStudiesExpectedCompletionYear
         });
 
         let emailSent = false;
@@ -6785,15 +6982,21 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
                     batch: row.batch,
                     contactNumber: row.contactNumber,
                     temporaryPassword,
-                    borNumber: row.borNumber
+                    borNumber: row.borNumber,
+                    advancedStudiesLevel: row.advancedStudiesLevel,
+                    advancedStudiesStatus: row.advancedStudiesStatus,
+                    advancedStudiesProgram: row.advancedStudiesProgram,
+                    advancedStudiesSchool: row.advancedStudiesSchool,
+                    advancedStudiesStartYear: row.advancedStudiesStartYear,
+                    advancedStudiesExpectedCompletionYear: row.advancedStudiesExpectedCompletionYear
                 });
                 userId = createdAccount.userId;
                 alumniId = createdAccount.alumniId;
 
                 await conn.query(
                     `INSERT INTO imported_alumni_records
-                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, bor_number, generated_alumni_id, status, email_status, imported_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
+                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, bor_number, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year, generated_alumni_id, status, email_status, imported_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
                     [
                         importBatchId,
                         userId,
@@ -6802,6 +7005,12 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
                         row.email,
                         row.contactNumber,
                         row.borNumber,
+                        row.advancedStudiesLevel,
+                        row.advancedStudiesStatus,
+                        row.advancedStudiesProgram,
+                        row.advancedStudiesSchool,
+                        row.advancedStudiesStartYear,
+                        row.advancedStudiesExpectedCompletionYear,
                         alumniId,
                         req.user?.id || null
                     ]

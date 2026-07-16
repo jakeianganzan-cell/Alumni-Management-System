@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import NotificationBell from "@/components/NotificationBell";
+import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import { resolveAssetUrl } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
@@ -56,14 +57,19 @@ export default function AlumniLayout({
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
   const systemLogo = resolveAssetUrl(settings.logoPath) || ustpLogo;
   const visibleNavItems = isMobile ? NAV_ITEMS.filter((item) => item.path !== "/alumni/about") : NAV_ITEMS;
   const mobileHeaderTitle = title;
 
   const handleLogout = () => {
-    if (!window.confirm("Are you sure you want to log out?")) return;
+    setAccountMenuOpen(false);
+    setLogoutConfirmOpen(true);
+  };
 
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
     signOut();
     navigate("/");
   };
@@ -250,6 +256,8 @@ export default function AlumniLayout({
           </div>
         </header>
 
+        <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
+
         <main className={`portal-main ${isMobile ? "pb-20" : ""}`}>{children}</main>
 
         {isMobile && (
@@ -277,3 +285,4 @@ export default function AlumniLayout({
     </div>
   );
 }
+

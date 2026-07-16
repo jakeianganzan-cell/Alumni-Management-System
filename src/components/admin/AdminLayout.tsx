@@ -5,6 +5,7 @@ import { canAccessModule, type OfficerRole } from "@/lib/rbac";
 import type { AdminModule } from "@/lib/rbac";
 import { useIsMobile } from "@/hooks/use-mobile";
 import NotificationBell from "@/components/NotificationBell";
+import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import HomepageMediaPostDialog from "@/components/admin/HomepageMediaPostDialog";
 import { openHomepageMediaDialog } from "@/lib/homepageMediaEvents";
 import { resolveAssetUrl } from "@/lib/api";
@@ -104,12 +105,17 @@ export default function AdminLayout({
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const profilePhoto = resolveAssetUrl(profile?.photo);
   const systemLogo = resolveAssetUrl(settings.logoPath) || ustpLogo;
 
   const handleLogout = () => {
-    if (!window.confirm("Are you sure you want to log out?")) return;
+    setAccountMenuOpen(false);
+    setLogoutConfirmOpen(true);
+  };
 
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
     signOut();
     navigate("/");
   };
@@ -296,6 +302,8 @@ export default function AdminLayout({
 
         <HomepageMediaPostDialog />
 
+        <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
+
         <main className={`portal-main ${isMobile ? "pb-20" : ""}`}>{children}</main>
 
         {isMobile && (
@@ -323,4 +331,5 @@ export default function AdminLayout({
     </div>
   );
 }
+
 

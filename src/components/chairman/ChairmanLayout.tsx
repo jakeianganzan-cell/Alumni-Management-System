@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEPARTMENT_LABELS, Department } from "@/lib/rbac";
 import { resolveAssetUrl } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import {
   LayoutDashboard, Users, LogOut, Menu, X, LineChart,
   ChevronDown, User, Megaphone, Award, MessageSquare
@@ -32,10 +33,15 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   const handleLogout = () => {
-    if (!window.confirm("Are you sure you want to log out?")) return;
+    setAccountMenuOpen(false);
+    setLogoutConfirmOpen(true);
+  };
 
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
     signOut();
     navigate("/");
   };
@@ -98,7 +104,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
   );
 
   return (
-    <div className="portal-shell flex h-screen overflow-hidden">
+    <div className="portal-shell chairman-portal flex h-screen overflow-hidden">
       {/* Desktop Sidebar */}
       <div className="hidden lg:flex w-56 flex-shrink-0 flex-col relative z-[60] shadow-xl">
         <Sidebar />
@@ -183,6 +189,8 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
         </header>
 
         {/* Page Content */}
+        <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
+
         <main className="portal-main">
           {children}
         </main>
@@ -190,3 +198,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
     </div>
   );
 }
+
+
+
+

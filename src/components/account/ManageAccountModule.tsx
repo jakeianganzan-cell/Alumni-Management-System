@@ -24,6 +24,7 @@ import MyPostsPanel from "@/components/account/MyPostsPanel";
 import SystemBrandingPanel from "@/components/account/SystemBrandingPanel";
 import SessionMonitoringPanel from "@/components/account/SessionMonitoringPanel";
 import EmailQueueSettingsPanel from "@/components/account/EmailQueueSettingsPanel";
+import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 
 type ModuleMode = "alumni" | "admin";
 type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports" | "settings";
@@ -161,6 +162,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
   const [settingsPanel, setSettingsPanel] = useState<AdminSettingsPanel>("branding");
   const [settingsCategoriesOpen, setSettingsCategoriesOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>("profile");
   const [photoPreview, setPhotoPreview] = useState<string | null>(resolveAssetUrl(profile?.photo));
   const [photoValue, setPhotoValue] = useState<string | null>(profile?.photo ?? null);
@@ -600,9 +602,15 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       : homepageSlideForm.mediaUrl
   );
 
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
+    void signOut();
+  };
+
   const isSettingsView = isAdminView && activeSection === "settings";
   const showProfileMediaComposer = false;
   return (
+    <>
     <div className={isSettingsView ? "space-y-6" : "grid grid-cols-1 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]"}>
       {!isSettingsView && (
       <aside className="space-y-5">
@@ -1046,11 +1054,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
                 type="button"
                 variant="outline"
                 className="w-full justify-start"
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to log out?")) {
-                    void signOut();
-                  }
-                }}
+                onClick={() => setLogoutConfirmOpen(true)}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Logout from this device
@@ -1180,8 +1184,13 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
         {activeSection === "reports" && canViewReports && <ReportExportsPanel showExports={false} />}
       </section>
     </div>
+    <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
+    </>
   );
 }
+
+
+
 
 
 
