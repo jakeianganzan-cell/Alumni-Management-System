@@ -261,9 +261,9 @@ export default function AdminGraduateTracer() {
   const actionMessage = downloading
     ? downloading.startsWith("preview-")
       ? "Opening the tracer preview. Please wait..."
-      : "Preparing your file download. Please wait..."
+      : "Loading"
     : loading
-        ? "Loading tracer submissions..."
+        ? "Loading"
         : null;
 
   return (
@@ -330,7 +330,7 @@ export default function AdminGraduateTracer() {
                 disabled={loading}
                 className="inline-flex min-h-9 items-center justify-center rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? "Applying..." : "Apply"}
+                {loading ? "Loading" : "Apply"}
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -341,7 +341,7 @@ export default function AdminGraduateTracer() {
                 title="Excel Workbook Export"
               >
                 {downloading === "report-excel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
-                <span>{downloading === "report-excel" ? "Preparing..." : "Excel"}</span>
+                <span>{downloading === "report-excel" ? "Loading" : "Excel"}</span>
               </button>
               <button
                 onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
@@ -350,7 +350,7 @@ export default function AdminGraduateTracer() {
                 title="Printable PDF Report"
               >
                 {downloading === "report-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                <span>{downloading === "report-pdf" ? "Preparing..." : "PDF Report"}</span>
+                <span>{downloading === "report-pdf" ? "Loading" : "PDF Report"}</span>
               </button>
               <button
                 onClick={() => void runBulkPdfDownload()}
@@ -361,7 +361,7 @@ export default function AdminGraduateTracer() {
                 {downloading === "bulk-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 <span>
                   {downloading === "bulk-pdf"
-                    ? "Preparing..."
+                    ? "Loading"
                     : selectedIds.size > 0
                       ? `Selected PDFs (${selectedIds.size})`
                       : "Filtered PDFs"}
@@ -402,7 +402,7 @@ export default function AdminGraduateTracer() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading tracer submissions...</td>
+                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
@@ -460,7 +460,7 @@ export default function AdminGraduateTracer() {
                             disabled={downloading !== null}
                             className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {downloading === `pdf-${row.id}` ? "Preparing PDF..." : "Download PDF"}
+                            {downloading === `pdf-${row.id}` ? "Loading" : "Download PDF"}
                           </button>
                         </div>
                       </td>

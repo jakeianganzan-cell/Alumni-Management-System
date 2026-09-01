@@ -523,7 +523,7 @@ export default function TracerForm() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mobile-compact-tracer mx-auto max-w-5xl space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -597,7 +597,7 @@ export default function TracerForm() {
               className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto md:min-h-0"
             >
               {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {savingDraft ? "Saving Draft..." : "Save Draft"}
+              {savingDraft ? "Loading" : "Save Draft"}
             </button>
             <button
               type="button"
@@ -615,7 +615,7 @@ export default function TracerForm() {
               className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto md:min-h-0"
             >
               {downloading === "download-pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {downloading === "download-pdf" ? "Preparing PDF..." : "Download PDF"}
+              {downloading === "download-pdf" ? "Loading" : "Download PDF"}
             </button>
           </div>
         </div>

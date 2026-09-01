@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Activity, TrendingUp, Users } from "lucide-react";
+import { useIsPhone } from "@/hooks/use-mobile";
 import {
   Area,
   AreaChart,
@@ -63,6 +64,7 @@ const DARK_GRAY = "#3f3f46";
 const SOFT_GRAY = "#e4e4e7";
 
 export default function ChairmanEngagement() {
+  const isPhone = useIsPhone();
   const [data, setData] = useState<EngagementResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -119,11 +121,11 @@ export default function ChairmanEngagement() {
               description="Main alumni activity signals in the assigned department"
               icon={<Activity className="h-4 w-4" />}
             >
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={data.engagementOverview} layout="vertical" margin={{ left: 12, right: 16 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.engagementOverview} layout="vertical" margin={{ left: isPhone ? 0 : 12, right: isPhone ? 4 : 16 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={SOFT_GRAY} horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
-                  <YAxis dataKey="label" type="category" width={120} tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                  <XAxis type="number" tick={{ fontSize: isPhone ? 10 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                  <YAxis dataKey="label" type="category" width={isPhone ? 86 : 120} tick={{ fontSize: isPhone ? 9 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
                   <Tooltip content={<SimpleTooltip />} />
                   <Bar dataKey="value" radius={[0, 6, 6, 0]} fill={MAROON} />
                 </BarChart>
@@ -135,8 +137,8 @@ export default function ChairmanEngagement() {
               description="Monthly engagement score with event and tracer activity"
               icon={<TrendingUp className="h-4 w-4" />}
             >
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={data.monthlyEngagement} margin={{ left: 0, right: 16 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.monthlyEngagement} margin={{ left: isPhone ? -20 : 0, right: isPhone ? 4 : 16 }}>
                   <defs>
                     <linearGradient id="monthlyEngagementFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={MAROON} stopOpacity={0.28} />
@@ -144,8 +146,8 @@ export default function ChairmanEngagement() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={SOFT_GRAY} />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: isPhone ? 10 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                  <YAxis width={isPhone ? 34 : 60} tick={{ fontSize: isPhone ? 10 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
                   <Tooltip content={<SimpleTooltip />} />
                   <Area type="monotone" dataKey="score" name="Score" stroke={MAROON} strokeWidth={3} fill="url(#monthlyEngagementFill)" />
                   <Line type="monotone" dataKey="events" name="Events" stroke="#71717a" strokeWidth={2} dot={false} />
@@ -159,21 +161,25 @@ export default function ChairmanEngagement() {
               description="Assigned program compared with other programs"
               icon={<Users className="h-4 w-4" />}
             >
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={courseComparison} margin={{ left: 0, right: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={SOFT_GRAY} />
-                  <XAxis dataKey="shortLabel" tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ProgramTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: "12px" }} />
-                  <Bar dataKey="engagementScore" name="Engagement Score" radius={[6, 6, 0, 0]}>
-                    {courseComparison.map((entry) => (
-                      <Cell key={entry.department} fill={entry.isCurrent ? MAROON : "#71717a"} />
-                    ))}
-                  </Bar>
-                  <Bar dataKey="tracerRespondents" name="Tracer Updated" fill="#a1a1aa" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-full max-w-full overflow-x-auto overscroll-x-contain" tabIndex={0} aria-label="Scrollable course engagement chart">
+                <div className="h-full" style={{ minWidth: isPhone ? `${Math.max(300, courseComparison.length * 62)}px` : undefined }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={courseComparison} margin={{ left: 0, right: isPhone ? 4 : 16 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={SOFT_GRAY} />
+                      <XAxis dataKey="shortLabel" tick={{ fontSize: isPhone ? 9 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                      <YAxis width={isPhone ? 34 : 60} tick={{ fontSize: isPhone ? 10 : 11, fill: DARK_GRAY }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<ProgramTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: isPhone ? "10px" : "12px" }} />
+                      <Bar dataKey="engagementScore" name="Engagement Score" radius={[6, 6, 0, 0]}>
+                        {courseComparison.map((entry) => (
+                          <Cell key={entry.department} fill={entry.isCurrent ? MAROON : "#71717a"} />
+                        ))}
+                      </Bar>
+                      <Bar dataKey="tracerRespondents" name="Tracer Updated" fill="#a1a1aa" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </ChartPanel>
           </div>
         </div>
@@ -185,7 +191,7 @@ export default function ChairmanEngagement() {
 function LoadingState() {
   return (
     <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-border bg-card shadow-card">
-      <p className="text-sm text-muted-foreground">Loading engagement graphs...</p>
+      <p className="text-sm text-muted-foreground">Loading</p>
     </div>
   );
 }
@@ -212,7 +218,7 @@ function ChartPanel({
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
       </div>
-      <div className="h-[320px] p-4">{children}</div>
+      <div className="mobile-chart h-[320px] min-w-0 p-4">{children}</div>
     </section>
   );
 }

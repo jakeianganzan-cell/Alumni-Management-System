@@ -185,7 +185,7 @@ export default function AdminCommunity() {
                     {loading ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-10 text-center">
-                          <p className="text-sm text-muted-foreground">Loading Freedom Wall posts...</p>
+                          <p className="text-sm text-muted-foreground">Loading</p>
                         </td>
                       </tr>
                     ) : filteredPosts.length === 0 ? (

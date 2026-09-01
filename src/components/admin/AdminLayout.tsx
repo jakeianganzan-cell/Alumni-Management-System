@@ -179,6 +179,22 @@ export default function AdminLayout({
           );
         })}
       </nav>
+
+      {mobile && (
+        <div className="hidden border-t border-white/20 p-3 max-[640px]:block">
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarOpen(false);
+              openHomepageMediaDialog();
+            }}
+            className="portal-sidebar-item"
+          >
+            <ImagePlus className="h-4 w-4 flex-shrink-0" />
+            <span>Post homepage media</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -215,7 +231,7 @@ export default function AdminLayout({
             <button
               type="button"
               onClick={() => openHomepageMediaDialog()}
-              className="portal-header-button"
+              className="portal-header-button max-[640px]:hidden"
               aria-label="Post homepage media"
               title="Post media"
             >

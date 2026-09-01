@@ -174,7 +174,7 @@ export default function ReportProblemPanel() {
 
           <Button type="submit" disabled={submitting} className="w-full gap-2">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {submitting ? "Sending" : "Submit Report"}
+            {submitting ? "Loading" : "Submit Report"}
           </Button>
         </form>
 
@@ -187,7 +187,7 @@ export default function ReportProblemPanel() {
           <div className="mt-4 space-y-3">
             {loadingReports ? (
               <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                Loading reports...
+                Loading
               </div>
             ) : reports.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-6 text-center">

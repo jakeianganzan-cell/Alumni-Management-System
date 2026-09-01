@@ -378,7 +378,7 @@ export default function AlumniAchievements() {
                   {saving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Submitting...
+                      Loading
                     </>
                   ) : (
                     <>
@@ -397,7 +397,7 @@ export default function AlumniAchievements() {
           <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="space-y-4">
               {loading ? (
-                <div className="text-sm text-muted-foreground">Loading achievements...</div>
+                <div className="text-sm text-muted-foreground">Loading</div>
               ) : approvedAchievements.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-muted-foreground">
                   No approved achievements yet.
@@ -474,7 +474,7 @@ export default function AlumniAchievements() {
                               {loadingComments[achievement.id] ? (
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                   <Loader2 className="h-4 w-4 animate-spin" />
-                                  Loading comments...
+                                  Loading
                                 </div>
                               ) : achievementComments.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">No comments yet.</p>

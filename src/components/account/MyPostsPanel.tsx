@@ -250,7 +250,7 @@ export default function MyPostsPanel() {
       <div className="mt-4 space-y-2">
         {loading ? (
           <div className="rounded-2xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
-            Loading your posts...
+            Loading
           </div>
         ) : filteredPosts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-5 text-center">
@@ -364,7 +364,7 @@ export default function MyPostsPanel() {
                 <Button type="button" variant="outline" onClick={closeEdit} disabled={saving}>Cancel</Button>
                 <Button type="submit" disabled={saving}>
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Save Changes
+                  {saving ? "Loading" : "Save Changes"}
                 </Button>
               </div>
             </form>

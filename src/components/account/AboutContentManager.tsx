@@ -240,7 +240,7 @@ export default function AboutContentManager() {
               <Label>Image (optional)</Label>
               {draft.imageUrl ? <img src={resolveAssetUrl(draft.imageUrl) || draft.imageUrl} alt="Entry preview" className="h-32 w-full rounded-xl border border-border object-cover" /> : <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-border text-muted-foreground"><ImagePlus className="h-6 w-6" /></div>}
               <label className="inline-flex min-h-10 cursor-pointer items-center rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted">
-                {uploading ? "Uploading..." : "Upload Image"}
+                {uploading ? "Loading" : "Upload Image"}
                 <input type="file" accept="image/*" className="hidden" onChange={(event) => void uploadImage(event)} />
               </label>
             </div>
@@ -251,13 +251,13 @@ export default function AboutContentManager() {
           </div>
           <Button type="button" className="w-full text-xs" onClick={() => void saveItem()} disabled={saving || uploading}>
             {editingId ? <Save className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
-            {saving ? "Saving..." : editingId ? "Save Changes" : "Add Entry"}
+            {saving ? "Loading" : editingId ? "Save Changes" : "Add Entry"}
           </Button>
         </div>
 
         <div className="space-y-3">
           {showLeadership && <label className="relative block"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search staff by name, role, office, or category" className="pl-9 text-xs" aria-label="Search leadership and staff" /></label>}
-          {loading && <p className="rounded-2xl border border-border p-6 text-center text-xs text-muted-foreground">Loading entries...</p>}
+          {loading && <p className="rounded-2xl border border-border p-6 text-center text-xs text-muted-foreground">Loading</p>}
           {!loading && items.length === 0 && <p className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground">No entries yet. Add the first one using the form.</p>}
           {!loading && items.length > 0 && visibleItems.length === 0 && <p className="rounded-2xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">No staff match your search.</p>}
           {visibleItems.map((item) => {

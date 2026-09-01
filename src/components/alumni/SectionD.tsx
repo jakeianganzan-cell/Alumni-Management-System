@@ -313,7 +313,7 @@ export default function SectionD({ form, errors, setField, toggleArrayValue, add
           Back
         </Button>
         <Button type="button" onClick={onSubmit} disabled={submitting}>
-          {submitting ? "Saving..." : hasExistingResponse ? "Update CHED Tracer Form" : "Submit CHED Tracer Form"}
+          {submitting ? "Loading" : hasExistingResponse ? "Update CHED Tracer Form" : "Submit CHED Tracer Form"}
         </Button>
       </div>
     </section>

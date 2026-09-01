@@ -246,7 +246,7 @@ export default function SessionMonitoringPanel() {
               </thead>
               <tbody className="divide-y divide-border">
                 {loading ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">Loading sessions...</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">Loading</td></tr>
                 ) : activeAccounts.length === 0 ? (
                   <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">No active accounts found.</td></tr>
                 ) : activeAccounts.map((item) => (

@@ -453,7 +453,7 @@ export default function AlumniDashboard() {
     return (
       <AlumniLayout title={settings.institutionName}>
         <div className="flex h-full min-h-[50vh] items-center justify-center">
-          <LoadingProgress label="Loading alumni dashboard" className="px-4" />
+          <LoadingProgress className="px-4" />
         </div>
       </AlumniLayout>
     );
@@ -461,7 +461,7 @@ export default function AlumniDashboard() {
 
   return (
     <AlumniLayout title={settings.institutionName} subtitle={settings.systemShortName}>
-      <HomepageSlideshow slides={slideshow} className="mb-8" />
+      <HomepageSlideshow slides={slideshow} className="mb-8 max-[640px]:mb-3" />
 
       <div
         className="hidden"
@@ -538,10 +538,10 @@ export default function AlumniDashboard() {
         </div>
       </div>
 
-      <div className="featured-dashboard-sections space-y-4 md:space-y-6">
+      <div className="featured-dashboard-sections space-y-4 md:space-y-6 max-[640px]:space-y-3">
         <DashboardContentSection
-          title="Featured Announcements"
-          description="Official notices and alumni updates."
+          title=""
+          description=""
           count={allAnnouncements.length}
           emptyText="No announcements are available."
         >
@@ -551,8 +551,8 @@ export default function AlumniDashboard() {
         </DashboardContentSection>
 
         <DashboardContentSection
-          title="Featured Events"
-          description="Events remain visible after completion until they move to archive."
+          title=""
+          description=""
           count={allEvents.length}
           emptyText="No events are available."
         >
@@ -562,8 +562,8 @@ export default function AlumniDashboard() {
         </DashboardContentSection>
 
         <DashboardContentSection
-          title="Featured Surveys"
-          description="Answer platform surveys directly inside the system."
+          title=""
+          description=""
           count={answerableSurveys.length}
           emptyText="No surveys are available."
         >
@@ -572,19 +572,19 @@ export default function AlumniDashboard() {
               key={survey.id}
               type="button"
               onClick={() => openSurvey(survey)}
-              className="relative rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+              className="relative rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md max-[640px]:rounded-lg max-[640px]:p-2.5"
             >
-              <div className="mb-2 flex flex-wrap items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2 max-[640px]:mb-1.5 max-[640px]:gap-1">
                 <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Survey</Badge>
                 <DurationBadge status={survey.computed_status || survey.duration_status} remainingTime={survey.remaining_time} startDatetime={survey.start_datetime} endDatetime={survey.end_datetime} />
                 {survey.userAnswers.length > 0 && <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Answered</Badge>}
               </div>
-              <h4 className="line-clamp-2 text-base font-semibold leading-tight text-navy-dark md:text-sm">{survey.title}</h4>
-              <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground md:mt-1 md:line-clamp-2 md:text-xs md:leading-5">{survey.description || "No description provided."}</p>
-              <p className="mt-3 text-xs font-semibold text-muted-foreground md:mt-2">
+              <h4 className="line-clamp-2 text-base font-semibold leading-tight text-navy-dark md:text-sm max-[640px]:text-xs">{survey.title}</h4>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground md:mt-1 md:line-clamp-2 md:text-xs md:leading-5 max-[640px]:mt-1 max-[640px]:line-clamp-2 max-[640px]:text-[10px] max-[640px]:leading-4">{survey.description || "No description provided."}</p>
+              <p className="mt-3 text-xs font-semibold text-muted-foreground md:mt-2 max-[640px]:mt-1.5 max-[640px]:text-[10px]">
                 {survey.questions.length} question{survey.questions.length === 1 ? "" : "s"} | {survey.responseCount} response{survey.responseCount === 1 ? "" : "s"}
               </p>
-              <span className="mt-4 inline-flex rounded-full bg-navy px-3.5 py-2 text-xs font-bold text-white md:hidden">
+              <span className="mt-4 inline-flex rounded-full bg-navy px-3.5 py-2 text-xs font-bold text-white md:hidden max-[640px]:mt-2 max-[640px]:px-2.5 max-[640px]:py-1.5 max-[640px]:text-[10px]">
                 Open survey
               </span>
             </button>
@@ -653,7 +653,7 @@ export default function AlumniDashboard() {
       </div>
 
       <Dialog open={Boolean(selectedAnnouncement)} onOpenChange={(open) => !open && setSelectedAnnouncement(null)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="mobile-compact-content-dialog max-h-[90vh] max-w-2xl overflow-y-auto">
           {selectedAnnouncement && (
             <>
               <DialogHeader>
@@ -734,7 +734,7 @@ export default function AlumniDashboard() {
       </Dialog>
 
       <Dialog open={Boolean(selectedSurvey)} onOpenChange={(open) => !open && setSelectedSurvey(null)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogContent className="mobile-compact-content-dialog max-h-[90vh] max-w-3xl overflow-y-auto">
           {selectedSurvey && (
             <>
               <DialogHeader>
@@ -850,20 +850,20 @@ function DashboardContentSection({
   };
 
   return (
-    <section className="featured-dashboard-section relative flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 p-3.5 shadow-sm md:min-h-0 md:rounded-xl md:p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <section className="featured-dashboard-section relative flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 p-3.5 shadow-sm md:min-h-0 md:rounded-xl md:p-4 max-[640px]:min-h-[12rem] max-[640px]:rounded-lg max-[640px]:p-2.5">
+      <div className="mb-3 flex items-start justify-between gap-3 max-[640px]:mb-2 max-[640px]:gap-2">
         <div>
-          <h3 className="text-base font-semibold text-navy-dark">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <h3 className="text-base font-semibold text-navy-dark max-[640px]:text-sm">{title}</h3>
+          <p className="text-sm text-muted-foreground max-[640px]:line-clamp-1 max-[640px]:text-[10px]">{description}</p>
         </div>
         <Badge variant="outline">{count}</Badge>
       </div>
       {count === 0 ? (
-        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground md:flex-none">{emptyText}</div>
+        <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground md:flex-none max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-4 max-[640px]:text-xs">{emptyText}</div>
       ) : (
         <div
           ref={swipeRowRef}
-          className="dashboard-swipe-row flex flex-1 snap-x snap-mandatory touch-pan-x items-stretch gap-3 overflow-x-auto pb-1 pr-7 [&>*]:min-h-[12rem] [&>*]:w-[calc(100vw-4.5rem)] [&>*]:shrink-0 [&>*]:snap-start sm:[&>*]:w-[min(24rem,72vw)] md:flex-none md:pr-1 md:[&>*]:min-h-0 md:[&>*]:w-[min(22rem,45vw)] lg:[&>*]:w-[min(24rem,31vw)]"
+          className="dashboard-swipe-row flex flex-1 snap-x snap-mandatory touch-pan-x items-stretch gap-3 overflow-x-auto pb-1 pr-7 [&>*]:min-h-[12rem] [&>*]:w-[calc(100vw-4.5rem)] [&>*]:shrink-0 [&>*]:snap-start sm:[&>*]:w-[min(24rem,72vw)] md:flex-none md:pr-1 md:[&>*]:min-h-0 md:[&>*]:w-[min(22rem,45vw)] lg:[&>*]:w-[min(24rem,31vw)] max-[640px]:gap-2 max-[640px]:pr-5 max-[640px]:[&>*]:min-h-[8.5rem] max-[640px]:[&>*]:w-[calc(100vw-4rem)]"
           onPointerDown={startSwipe}
           onPointerMove={moveSwipe}
           onPointerUp={endSwipe}
@@ -874,7 +874,7 @@ function DashboardContentSection({
         </div>
       )}
       {count > 1 && (
-        <div className="pointer-events-none absolute bottom-5 right-3 flex items-center gap-1 rounded-full border border-white/80 bg-white/90 px-2 py-1 text-[10px] font-semibold text-navy shadow-sm md:hidden">
+        <div className="pointer-events-none absolute bottom-5 right-3 flex items-center gap-1 rounded-full border border-white/80 bg-white/90 px-2 py-1 text-[10px] font-semibold text-navy shadow-sm md:hidden max-[640px]:bottom-3 max-[640px]:right-2 max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px]">
           <span>Swipe</span>
           <ChevronRight className="h-3.5 w-3.5" />
         </div>
@@ -885,7 +885,7 @@ function DashboardContentSection({
 
 function DonationActivitySection({ donations }: { donations: DonationActivity[] }) {
   return (
-    <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+    <section className="mobile-compact-donation-activity mt-4 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
       <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-2">
         <h3 className="text-xs font-bold text-navy-dark">Donation Activity</h3>
         <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">
@@ -925,8 +925,8 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
       onClick={() => onOpen(item)}
       className={
         hasImage
-          ? "relative min-h-[220px] overflow-hidden rounded-xl border border-slate-900/20 bg-slate-950 p-0 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md sm:min-h-0 sm:border-slate-200 sm:bg-white sm:p-4"
-          : "rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
+          ? "relative min-h-[220px] overflow-hidden rounded-xl border border-slate-900/20 bg-slate-950 p-0 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md sm:min-h-0 sm:border-slate-200 sm:bg-white sm:p-4 max-[640px]:min-h-[145px] max-[640px]:rounded-lg"
+          : "rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md max-[640px]:rounded-lg max-[640px]:p-2.5"
       }
     >
       {hasImage && (
@@ -935,14 +935,14 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/55 to-black/20 sm:hidden" />
         </>
       )}
-      <div className={hasImage ? "relative flex min-h-[220px] flex-col justify-end p-4 sm:min-h-0 sm:flex sm:flex-col sm:justify-start sm:gap-4 sm:p-0 md:flex-row md:items-start" : "flex flex-col gap-4 md:flex-row md:items-start"}>
+      <div className={hasImage ? "relative flex min-h-[220px] flex-col justify-end p-4 sm:min-h-0 sm:flex sm:flex-col sm:justify-start sm:gap-4 sm:p-0 md:flex-row md:items-start max-[640px]:min-h-[145px] max-[640px]:p-2.5" : "flex flex-col gap-4 md:flex-row md:items-start max-[640px]:gap-2"}>
         {imageUrl && (
           <div className="hidden h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 sm:flex md:w-36">
             <img src={imageUrl} alt={item.title} className="h-full w-full object-contain" />
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2 max-[640px]:mb-1 max-[640px]:gap-1">
             <Badge className={isSurvey ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : isEvent ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"}>
               {isSurvey ? "Survey" : isEvent ? "Event" : "Announcement"}
             </Badge>
@@ -950,9 +950,9 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
               <DurationBadge status={item.computed_status || item.duration_status} remainingTime={item.remaining_time} startDatetime={item.start_datetime} endDatetime={item.end_datetime} />
             )}
           </div>
-          <h4 className={hasImage ? "line-clamp-2 text-base font-semibold text-white drop-shadow-sm sm:text-sm sm:text-navy-dark sm:drop-shadow-none" : "line-clamp-2 text-sm font-semibold text-navy-dark"}>{item.title}</h4>
-          <p className={hasImage ? "mt-2 line-clamp-3 text-xs leading-5 text-white/90 drop-shadow-sm sm:mt-1 sm:line-clamp-2 sm:text-muted-foreground sm:drop-shadow-none" : "mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground"}>{item.description || "No description provided."}</p>
-          <p className={hasImage ? "mt-3 text-xs font-semibold text-white/85 sm:mt-2 sm:text-muted-foreground" : "mt-2 text-xs font-semibold text-muted-foreground"}>
+          <h4 className={hasImage ? "line-clamp-2 text-base font-semibold text-white drop-shadow-sm sm:text-sm sm:text-navy-dark sm:drop-shadow-none max-[640px]:text-xs" : "line-clamp-2 text-sm font-semibold text-navy-dark max-[640px]:text-xs"}>{item.title}</h4>
+          <p className={hasImage ? "mt-2 line-clamp-3 text-xs leading-5 text-white/90 drop-shadow-sm sm:mt-1 sm:line-clamp-2 sm:text-muted-foreground sm:drop-shadow-none max-[640px]:mt-1 max-[640px]:line-clamp-2 max-[640px]:text-[10px] max-[640px]:leading-4" : "mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground max-[640px]:text-[10px] max-[640px]:leading-4"}>{item.description || "No description provided."}</p>
+          <p className={hasImage ? "mt-3 text-xs font-semibold text-white/85 sm:mt-2 sm:text-muted-foreground max-[640px]:mt-1.5 max-[640px]:text-[10px]" : "mt-2 text-xs font-semibold text-muted-foreground max-[640px]:mt-1.5 max-[640px]:text-[10px]"}>
             {isEvent ? "Open event details" : "Open full details"}
           </p>
         </div>

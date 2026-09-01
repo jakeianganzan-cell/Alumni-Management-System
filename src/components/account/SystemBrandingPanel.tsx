@@ -247,7 +247,7 @@ export default function SystemBrandingPanel() {
         </div>
         <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground transition hover:bg-muted/50">
           <Upload className="h-4 w-4" />
-          {uploadingField === field ? "Uploading..." : "Upload"}
+          {uploadingField === field ? "Loading" : "Upload"}
           <input type="file" accept={accept} className="hidden" onChange={(event) => void handleSingleUpload(field, event)} />
         </label>
         {form[field] && <p className="mt-2 break-all text-xs text-muted-foreground">{form[field]}</p>}
@@ -264,7 +264,7 @@ export default function SystemBrandingPanel() {
           </div>
           <Button type="button" onClick={() => void saveSettings()} disabled={saving || Boolean(uploadingField)}>
             <Save className="mr-2 h-4 w-4" />
-            {saving ? "Saving..." : "Save Branding"}
+            {saving ? "Loading" : "Save Branding"}
           </Button>
         </div>
 
@@ -388,7 +388,7 @@ export default function SystemBrandingPanel() {
             </div>
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground transition hover:bg-muted/50">
               <Upload className="h-4 w-4" />
-              {uploadingField === "loginBackgrounds" ? "Uploading..." : "Upload Multiple Backgrounds"}
+              {uploadingField === "loginBackgrounds" ? "Loading" : "Upload Multiple Backgrounds"}
               <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => void handleMultipleBackgrounds(event)} />
             </label>
           </div>

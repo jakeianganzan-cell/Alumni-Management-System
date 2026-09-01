@@ -232,7 +232,7 @@ export default function AlumniDonate() {
     const receiptNumber = confirmation.id > 0 ? `DON-${String(confirmation.id).padStart(6, "0")}` : "Pending assignment";
     return (
       <AlumniLayout title="Donation Receipt">
-        <div className="mx-auto max-w-xl">
+        <div className="mobile-compact-donation mx-auto max-w-xl">
           <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-card print:shadow-none">
             <div className="bg-navy px-5 py-4 text-white">
               <div className="flex items-center justify-between gap-3">
@@ -249,14 +249,14 @@ export default function AlumniDonate() {
                 This confirms submission only. Your donation remains pending until an administrator verifies the payment.
               </div>
 
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-3 text-sm min-[360px]:grid-cols-2">
                 <ReceiptField label="Receipt Number" value={receiptNumber} />
                 <ReceiptField label="Status" value={confirmation.status || "Pending Review"} />
                 <ReceiptField label="Submitted" value={formatDateTime(confirmation.createdAt)} />
                 <ReceiptField label="Donor" value={confirmation.isAnonymous ? "Anonymous Donor" : form.fullName || "Alumni Donor"} />
                 <ReceiptField label="Amount" value={`PHP ${confirmation.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} />
                 <ReceiptField label="Payment Method" value={confirmation.method} />
-                <div className="col-span-2"><ReceiptField label="Purpose" value={confirmation.purpose} /></div>
+                <div className="min-[360px]:col-span-2"><ReceiptField label="Purpose" value={confirmation.purpose} /></div>
                 {confirmation.refNumber && <ReceiptField label="Reference Number" value={confirmation.refNumber} />}
               </div>
 
@@ -284,7 +284,7 @@ export default function AlumniDonate() {
 
   return (
     <AlumniLayout title="Make a Donation" subtitle={`Support ${brandingSettings.institutionName} students and programs`}>
-      <div className="mx-auto max-w-2xl">
+      <div className="mobile-compact-donation mx-auto max-w-2xl">
         <div className="mb-4 grid grid-cols-3 gap-1 rounded-xl border border-border bg-white p-1.5 shadow-sm">
           {STEP_LABELS.map((label, index) => {
             const number = index + 1;
@@ -356,7 +356,7 @@ export default function AlumniDonate() {
 
                 <div className="mt-3 rounded-xl border border-border bg-muted/20 p-3">
                   {loadingSettings ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading payment details...</div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading</div>
                   ) : method === "GCash" ? (
                     <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
                       <button type="button" onClick={() => settings.gcash_qr && setShowQrPreview(true)} className="flex min-h-28 items-center justify-center rounded-lg border border-dashed border-border bg-white p-2">
@@ -420,7 +420,7 @@ export default function AlumniDonate() {
 
             {formError && <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{formError}</div>}
 
-            <div className="mt-5 flex items-center justify-between gap-2">
+            <div className="mobile-action-group mt-5 flex items-center justify-between gap-2 min-[380px]:flex-row">
               <button type="button" onClick={() => { setStep((current) => Math.max(1, current - 1)); setFormError(""); }} disabled={step === 1 || submitting} className="inline-flex h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-semibold text-navy disabled:opacity-40">
                 <ChevronLeft className="h-4 w-4" /> Previous
               </button>
@@ -431,7 +431,7 @@ export default function AlumniDonate() {
               ) : (
                 <button type="submit" disabled={submitting} className="inline-flex h-10 items-center gap-2 rounded-lg bg-navy px-4 text-xs font-semibold text-white hover:bg-navy-light disabled:opacity-50">
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Heart className="h-4 w-4" />}
-                  {submitting ? "Submitting..." : "Confirm Donation"}
+                  {submitting ? "Loading" : "Confirm Donation"}
                 </button>
               )}
             </div>

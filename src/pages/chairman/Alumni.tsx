@@ -163,7 +163,7 @@ export default function ChairmanAlumni() {
         <div className="flex min-h-[360px] items-center justify-center rounded-2xl border border-border bg-card shadow-card">
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading department alumni...
+            Loading
           </div>
         </div>
       ) : error ? (

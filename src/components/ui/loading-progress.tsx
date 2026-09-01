@@ -8,7 +8,7 @@ interface LoadingProgressProps {
   compact?: boolean;
 }
 
-export function LoadingProgress({ label = "Loading", className, compact = false }: LoadingProgressProps) {
+export function LoadingProgress({ className, compact = false }: LoadingProgressProps) {
   const progress = useEstimatedProgress();
 
   return (
@@ -16,14 +16,14 @@ export function LoadingProgress({ label = "Loading", className, compact = false 
       <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-navy" aria-hidden="true" />
-          <span className="truncate">{label}</span>
+          <span className="truncate">Loading</span>
         </span>
         <span className="tabular-nums text-navy-dark">{progress}%</span>
       </div>
       <div
         className="h-2 overflow-hidden rounded-full bg-muted"
         role="progressbar"
-        aria-label={label || "Loading"}
+        aria-label="Loading"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={progress}
@@ -43,7 +43,7 @@ interface CircularLoadingProgressProps {
   size?: "small" | "medium";
 }
 
-export function CircularLoadingProgress({ label = "Loading", className, size = "medium" }: CircularLoadingProgressProps) {
+export function CircularLoadingProgress({ className, size = "medium" }: CircularLoadingProgressProps) {
   const progress = useEstimatedProgress();
   const diameter = size === "small" ? 40 : 52;
   const strokeWidth = size === "small" ? 3 : 4;
@@ -56,7 +56,7 @@ export function CircularLoadingProgress({ label = "Loading", className, size = "
       <div
         className="relative"
         role="progressbar"
-        aria-label={label || "Loading"}
+        aria-label="Loading"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={progress}
@@ -79,7 +79,7 @@ export function CircularLoadingProgress({ label = "Loading", className, size = "
         </svg>
         <span className={cn("absolute inset-0 flex items-center justify-center font-semibold tabular-nums text-navy-dark", size === "small" ? "text-[9px]" : "text-[11px]")}>{progress}%</span>
       </div>
-      {label && <span className="text-center text-xs">{label}</span>}
+      <span className="text-center text-xs">Loading</span>
     </div>
   );
 }

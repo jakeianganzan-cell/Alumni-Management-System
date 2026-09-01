@@ -249,7 +249,7 @@ export default function HomepageMediaPostDialog() {
           <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={saving}>Cancel</Button>
           <Button type="button" onClick={() => void save()} disabled={saving || !canSave}>
             <Save className="mr-2 h-4 w-4" />
-            {saving ? "Saving..." : editingId ? "Save Changes" : "Post Media"}
+            {saving ? "Loading" : editingId ? "Save Changes" : "Post Media"}
           </Button>
         </DialogFooter>
       </DialogContent>

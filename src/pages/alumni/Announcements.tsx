@@ -413,8 +413,8 @@ export default function AlumniAnnouncements() {
   return (
     <AlumniLayout title="Announcements" subtitle="Browse published updates and submit alumni announcements for admin approval">
       <div className="mx-auto max-w-4xl space-y-4">
-        <div className="sticky top-0 z-20 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-          <div className="flex min-w-0 flex-nowrap gap-1">
+        <div className="sticky top-0 z-20 max-w-full overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="flex min-w-[18rem] flex-nowrap gap-1 sm:min-w-0">
             {tabItems.map((tab) => (
               <button
                 key={tab.id}
@@ -438,7 +438,7 @@ export default function AlumniAnnouncements() {
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <Loader2 className="mb-2 h-8 w-8 animate-spin" />
-            <p>Loading announcements...</p>
+            <p>Loading</p>
           </div>
         ) : (
           <>
@@ -485,7 +485,7 @@ export default function AlumniAnnouncements() {
       </button>
 
       <Dialog open={Boolean(selectedAnnouncement)} onOpenChange={(open) => !open && setSelectedAnnouncement(null)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="mobile-compact-content-dialog max-h-[90vh] max-w-2xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           {selectedAnnouncement && (
             <>
               <DialogHeader>
@@ -566,7 +566,7 @@ export default function AlumniAnnouncements() {
       </Dialog>
 
       <Dialog open={formOpen} onOpenChange={(open) => !submitting && setFormOpen(open)}>
-        <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="mobile-compact-content-dialog max-h-[92vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           <DialogHeader>
             <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">Submit Alumni Announcement</DialogTitle>
             <DialogDescription>Your announcement will stay in Pending Approval until an admin reviews and publishes it.</DialogDescription>
@@ -611,7 +611,7 @@ export default function AlumniAnnouncements() {
                 {submitting ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Submitting...
+                    Loading
                   </>
                 ) : (
                   <>
@@ -626,7 +626,7 @@ export default function AlumniAnnouncements() {
       </Dialog>
 
       <Dialog open={Boolean(selectedSurvey)} onOpenChange={(open) => !open && setSelectedSurvey(null)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="mobile-compact-content-dialog max-h-[90vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           {selectedSurvey && (
             <>
               <DialogHeader>
@@ -961,7 +961,7 @@ function AnnouncementCommentThread({
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading comments...
+            Loading
           </div>
         ) : comments.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">

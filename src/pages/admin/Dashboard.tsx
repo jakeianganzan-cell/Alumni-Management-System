@@ -4,6 +4,7 @@ import AdminLayout from "@/components/admin/AdminLayout";
 import { Calendar, Heart, MapPin, TrendingUp, Users, Briefcase, Clock3, MonitorSmartphone } from "lucide-react";
 import { API_URL, getAuthToken, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { useIsPhone } from "@/hooks/use-mobile";
 import {
   Bar,
   BarChart,
@@ -148,6 +149,7 @@ const formatCompactNumber = (value: number) =>
 
 export default function AdminDashboard() {
   const { settings } = useSystemSettings();
+  const isPhone = useIsPhone();
   const [totalAlumni, setTotalAlumni] = useState(0);
   const [totalDonations, setTotalDonations] = useState(0);
   const [recentTracer, setRecentTracer] = useState<TracerRow[]>([]);
@@ -365,16 +367,16 @@ export default function AdminDashboard() {
 
           <div className="p-4">
             {loading ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading engagement graph...</div>
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading</div>
             ) : !monthlyEngagement.length || !hasMonthlyData ? (
               <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No monthly engagement activity found yet.</div>
             ) : (
-              <div className="h-[320px]">
+              <div className="mobile-chart h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyEngagement} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <BarChart data={monthlyEngagement} margin={{ top: 8, right: isPhone ? 2 : 8, left: isPhone ? -18 : 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} />
-                    <XAxis dataKey="month" tick={chartAxisTick} axisLine={false} tickLine={false} />
-                    <YAxis tick={chartAxisTick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <XAxis dataKey="month" tick={isPhone ? { ...chartAxisTick, fontSize: 10 } : chartAxisTick} axisLine={false} tickLine={false} />
+                    <YAxis width={isPhone ? 34 : 60} tick={isPhone ? { ...chartAxisTick, fontSize: 10 } : chartAxisTick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
                     <Tooltip
                       contentStyle={tooltipStyle}
                       cursor={{ fill: chartColors.cursor }}
@@ -395,16 +397,16 @@ export default function AdminDashboard() {
 
           <div className="p-4">
             {loading ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading contribution graph...</div>
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading</div>
             ) : !topCourseChartData.length || !hasCourseData ? (
               <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No course contribution activity found yet.</div>
             ) : (
-              <div className="h-[320px]">
+              <div className="mobile-chart h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topCourseChartData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                  <BarChart data={topCourseChartData} layout="vertical" margin={{ top: 8, right: isPhone ? 4 : 16, left: isPhone ? 0 : 8, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} horizontal={false} />
                     <XAxis type="number" tick={chartAxisTick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <YAxis type="category" dataKey="shortCourse" width={120} interval={0} tick={chartCategoryTick} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="shortCourse" width={isPhone ? 82 : 120} interval={0} tick={isPhone ? { ...chartCategoryTick, fontSize: 9 } : chartCategoryTick} axisLine={false} tickLine={false} />
                     <Tooltip
                       contentStyle={tooltipStyle}
                       cursor={{ fill: chartColors.cursor }}
@@ -465,7 +467,7 @@ export default function AdminDashboard() {
           </div>
           <div className="p-4">
             {donationTrends.some((item) => item.donatedAmount > 0) ? (
-              <div className="h-[280px]">
+              <div className="mobile-chart h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={donationTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} />

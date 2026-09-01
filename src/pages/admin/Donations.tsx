@@ -527,7 +527,7 @@ export default function AdminDonations() {
                   {loading ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                        Loading donations...
+                        Loading
                       </td>
                     </tr>
                   ) : filteredDonations.length === 0 ? (
@@ -585,7 +585,7 @@ export default function AdminDonations() {
           {loadingDetail ? (
             <div className="flex items-center justify-center py-16 text-muted-foreground">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Loading donation details...
+              Loading
             </div>
           ) : selectedDonation ? (
             <>
@@ -653,7 +653,7 @@ export default function AdminDonations() {
                     {submittingAction === "request-info" ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Sending...
+                        Loading
                       </>
                     ) : (
                       <>
@@ -744,7 +744,7 @@ export default function AdminDonations() {
             <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" onClick={() => setShowWalkInForm(false)} disabled={submittingWalkIn}>Cancel</Button>
               <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={submittingWalkIn}>
-                {submittingWalkIn ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Save as Approved</>}
+                {submittingWalkIn ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Save as Approved</>}
               </Button>
             </div>
           </form>
@@ -881,7 +881,7 @@ export default function AdminDonations() {
                 {savingSettings ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
+                    Loading
                   </>
                 ) : (
                   "Save Settings"

@@ -153,13 +153,13 @@ function PostedMediaPanel({
           <p className="mt-1 text-sm text-muted-foreground">Edit, reorder, or remove slides shown on the homepage.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
+          {loading ? "Loading" : "Refresh"}
         </Button>
       </div>
 
       <div className="mt-4 space-y-3">
         {loading ? (
-          <LoadingProgress label="Loading homepage slides" compact />
+          <LoadingProgress compact />
         ) : slides.length === 0 ? (
           <p className="text-sm text-muted-foreground">No homepage slides posted yet.</p>
         ) : (
@@ -719,7 +719,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       <section className="space-y-6">
         {activeSection === "profile" && (
           <>
-          <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
+          <div className={`${!isAdminView ? "mobile-compact-profile " : ""}rounded-3xl border border-border bg-card p-6 shadow-card`}>
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h3 className="font-display text-2xl font-bold text-navy-dark">
@@ -728,7 +728,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
               </div>
               <Button type="button" onClick={() => void saveProfile()} disabled={savingProfile}>
                 <Save className="mr-2 h-4 w-4" />
-                {savingProfile ? "Saving..." : "Save Changes"}
+                {savingProfile ? "Loading" : "Save Changes"}
               </Button>
             </div>
 
@@ -812,7 +812,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
               </div>
               <Button type="button" onClick={() => void saveSecurity()} disabled={savingSecurity}>
                 <Shield className="mr-2 h-4 w-4" />
-                {savingSecurity ? "Saving..." : "Change Password"}
+                {savingSecurity ? "Loading" : "Change Password"}
               </Button>
             </div>
 
@@ -885,7 +885,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
               </div>
               <Button type="button" onClick={() => void saveNotificationSettings()} disabled={savingNotifications || loadingNotifications}>
                 <Save className="mr-2 h-4 w-4" />
-                {savingNotifications ? "Saving..." : "Save Preferences"}
+                {savingNotifications ? "Loading" : "Save Preferences"}
               </Button>
             </div>
 

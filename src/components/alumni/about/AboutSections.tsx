@@ -83,10 +83,10 @@ export function InstitutionalHero({ settings }: { settings: SystemSettings }) {
         {logo && <img src={logo} alt={`${settings.institutionName} seal`} className="h-12 w-12 shrink-0 rounded-xl border border-border bg-white object-contain p-1.5 shadow-sm" />}
         {settings.institutionAddress && <p className="flex min-w-0 items-start gap-2 text-[11px] leading-5 text-muted-foreground md:text-xs"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />{settings.institutionAddress}</p>}
       </div>
-      <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-start">
-        <Button asChild variant="outline" className="w-full border-primary/35 bg-transparent text-xs text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:w-auto"><Link to="/alumni/about/institution"><Building2 className="mr-2 h-4 w-4" />Institution</Link></Button>
-        <Button asChild variant="outline" className="w-full border-primary/35 bg-transparent text-xs text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:w-auto"><Link to="/alumni/about/academics-alumni"><GraduationCap className="mr-2 h-4 w-4" />Association</Link></Button>
-        {websiteUrl && <Button asChild variant="outline" className="w-full bg-transparent text-xs sm:w-auto"><a href={websiteUrl} target="_blank" rel="noreferrer">Visit Official Website<ExternalLink className="ml-2 h-4 w-4" /></a></Button>}
+      <div className="grid w-full grid-cols-2 gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-2">
+        <Button asChild variant="outline" className="h-8 w-full border-primary/35 bg-transparent px-2 text-[10px] text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:h-9 sm:w-auto sm:px-4 sm:text-xs"><Link to="/alumni/about/institution"><Building2 className="mr-1.5 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />Institution</Link></Button>
+        <Button asChild variant="outline" className="h-8 w-full border-primary/35 bg-transparent px-2 text-[10px] text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:h-9 sm:w-auto sm:px-4 sm:text-xs"><Link to="/alumni/about/academics-alumni"><GraduationCap className="mr-1.5 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4" />Association</Link></Button>
+        {websiteUrl && <Button asChild variant="outline" className="col-span-2 h-8 w-full bg-transparent px-2 text-[10px] sm:h-9 sm:w-auto sm:px-4 sm:text-xs"><a href={websiteUrl} target="_blank" rel="noreferrer">Visit Official Website<ExternalLink className="ml-1.5 h-3.5 w-3.5 sm:ml-2 sm:h-4 sm:w-4" /></a></Button>}
       </div>
     </section>
   );
@@ -272,9 +272,9 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
     item: { key: string; position: string; positionIndex: number; entry: AboutContentItem | null },
     size: "large" | "medium" | "small",
   ) => {
-    const avatarClass = size === "large" ? "h-16 w-16 md:h-20 md:w-20" : size === "medium" ? "h-14 w-14 md:h-16 md:w-16" : "h-11 w-11 md:h-12 md:w-12";
-    const roleClass = size === "small" ? "text-[8px] md:text-[9px]" : "text-[9px] md:text-[10px]";
-    const nameClass = size === "large" ? "text-[11px] md:text-xs" : "text-[10px] md:text-[11px]";
+    const avatarClass = size === "large" ? "h-14 w-14 md:h-20 md:w-20" : size === "medium" ? "h-12 w-12 md:h-16 md:w-16" : "h-10 w-10 md:h-12 md:w-12";
+    const roleClass = size === "small" ? "text-[7px] md:text-[9px]" : "text-[8px] md:text-[10px]";
+    const nameClass = size === "large" ? "text-[10px] md:text-xs" : "text-[9px] md:text-[11px]";
 
     return (
       <article className="flex min-w-0 flex-col items-center text-center">
@@ -285,8 +285,8 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
             <Building2 className="h-5 w-5 text-white/80" />
           )}
         </div>
-        <p className={`mt-1.5 max-w-32 font-bold leading-tight text-white ${nameClass}`}>{item.entry?.title || "TBA"}{item.entry?.credentials ? `, ${item.entry.credentials}` : ""}</p>
-        <span className={`mt-1 inline-flex max-w-40 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 font-semibold leading-3 text-white ${roleClass}`}>{item.position}</span>
+        <p className={`mt-1 max-w-24 font-bold leading-tight text-white md:mt-1.5 md:max-w-32 ${nameClass}`}>{item.entry?.title || "TBA"}{item.entry?.credentials ? `, ${item.entry.credentials}` : ""}</p>
+        <span className={`mt-0.5 inline-flex max-w-28 rounded-full border border-white/25 bg-white/10 px-1.5 py-0.5 font-semibold leading-3 text-white md:mt-1 md:max-w-40 md:px-2 ${roleClass}`}>{item.position}</span>
       </article>
     );
   };
@@ -294,7 +294,7 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
   return (
     <section>
       <div
-        className="relative overflow-hidden rounded-xl border border-border/60 bg-card p-3 shadow-sm md:p-4"
+        className="relative overflow-hidden rounded-xl border border-border/60 bg-card p-2.5 shadow-sm md:p-4"
         style={{
           backgroundImage: `linear-gradient(rgba(20,20,20,0.82), rgba(85,0,0,0.78)), url(${salayBackground})`,
           backgroundPosition: "center",
@@ -302,26 +302,26 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
         }}
       >
         <div className="relative z-10">
-          <div className="mb-3 text-center">
+          <div className="mb-2 text-center md:mb-3">
             <h3 className="font-display text-sm font-bold text-white md:text-base">Institution Officials and Staff</h3>
             <p className="mt-1 text-[9px] text-white/70 md:text-[10px]">Salay Community College institutional organization</p>
-            <div className="mx-auto mt-2 h-0.5 w-12 rounded-full bg-gold" />
+            <div className="mx-auto mt-1.5 h-0.5 w-10 rounded-full bg-gold md:mt-2 md:w-12" />
           </div>
 
-          <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-2 md:gap-3">
             {municipalLeaders.map((item) => <div key={item.key}>{positionCard(item, "large")}</div>)}
           </div>
 
-          <div className="mx-auto my-3 w-full max-w-xl border-t border-dashed border-white/30" />
+          <div className="mx-auto my-2 w-full max-w-xl border-t border-dashed border-white/30 md:my-3" />
 
-          <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-2 md:gap-3">
             {executiveLeaders.map((item) => <div key={item.key}>{positionCard(item, "medium")}</div>)}
           </div>
 
-          <div className="mx-auto my-3 w-full max-w-3xl border-t border-dashed border-white/30" />
+          <div className="mx-auto my-2 w-full max-w-3xl border-t border-dashed border-white/30 md:my-3" />
 
-          <p className="mb-3 text-center text-[9px] font-semibold uppercase tracking-[0.16em] text-white/70 md:text-[10px]">College Staff</p>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <p className="mb-2 text-center text-[8px] font-semibold uppercase tracking-[0.14em] text-white/70 md:mb-3 md:text-[10px] md:tracking-[0.16em]">College Staff</p>
+          <div className="grid grid-cols-3 gap-x-1 gap-y-2 sm:gap-x-2 sm:gap-y-3 lg:grid-cols-4 xl:grid-cols-5">
             {staff.map((item) => <div key={item.key}>{positionCard(item, "small")}</div>)}
           </div>
         </div>

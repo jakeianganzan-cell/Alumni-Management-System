@@ -556,7 +556,7 @@ export default function AdminAnnouncements() {
                 {isLoading ? (
                   <div className="flex min-h-[220px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading content...
+                    Loading
                   </div>
                 ) : filteredAnnouncements.length === 0 ? (
                   <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-muted-foreground">
@@ -635,7 +635,7 @@ export default function AdminAnnouncements() {
         )}
 
         <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-          <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+          <DialogContent className="mobile-compact-content-dialog max-h-[92vh] max-w-4xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
             {selectedAnnouncement && (
               <>
                 <DialogHeader>
@@ -693,7 +693,7 @@ export default function AdminAnnouncements() {
                     </div>
                     <div className="mt-4 space-y-3">
                       {commentsLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading comments...</div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading</div>
                       ) : announcementComments.length === 0 ? (
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">No comments yet.</div>
                       ) : (
@@ -789,7 +789,7 @@ export default function AdminAnnouncements() {
 
                       <div className="mt-4 overflow-hidden rounded-2xl border border-amber-200 bg-white">
                         {interestsLoading ? (
-                          <div className="px-4 py-6 text-center text-sm text-muted-foreground">Loading interest records...</div>
+                          <div className="px-4 py-6 text-center text-sm text-muted-foreground">Loading</div>
                         ) : !interestSummary?.alumni.length ? (
                           <div className="px-4 py-6 text-center text-sm text-muted-foreground">No alumni records found.</div>
                         ) : (
@@ -903,7 +903,7 @@ export default function AdminAnnouncements() {
         </Dialog>
 
         <Dialog open={formOpen} onOpenChange={(open) => !open && closeForm()}>
-          <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+          <DialogContent className="mobile-compact-content-dialog max-h-[92vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
             <DialogHeader>
               <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">
                 {editId ? "Edit content" : formData.type === "event" ? "Create event" : "Create announcement"}
@@ -1071,7 +1071,7 @@ export default function AdminAnnouncements() {
                   {saving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
+                      Loading
                     </>
                   ) : editId ? (
                     "Save changes"

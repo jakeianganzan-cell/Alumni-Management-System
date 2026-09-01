@@ -1103,6 +1103,253 @@
     }
   }
 
+  /* Phone-only refinements. Keep these below 641px so tablet and desktop stay unchanged. */
+  @media (max-width: 640px) {
+    .alumni-portal .portal-main :where(.homepage-slideshow-frame) {
+      min-height: 340px !important;
+    }
+
+    /* Compact alumni forms on phones without changing their desktop/admin variants. */
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer) {
+      font-size: 0.6875rem;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer)
+      :where([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"], [class*="text-xl"], [class*="text-2xl"]) {
+      font-size: 0.625rem !important;
+      line-height: 1rem !important;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer) :where(h2) {
+      font-size: 0.875rem !important;
+      line-height: 1.125rem !important;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer) :where(h3, h4) {
+      font-size: 0.75rem !important;
+      line-height: 1rem !important;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer)
+      :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, [role="combobox"]) {
+      height: 2rem !important;
+      min-height: 2rem !important;
+      padding: 0.375rem 0.5rem !important;
+      font-size: 0.6875rem !important;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer) :where(textarea) {
+      min-height: 4rem !important;
+      padding: 0.5rem !important;
+      font-size: 0.6875rem !important;
+      line-height: 1rem !important;
+    }
+
+    :is(.mobile-compact-donation, .mobile-compact-profile, .mobile-compact-tracer)
+      :where(button[class*="h-10"], button[class*="h-11"], button[class*="min-h-11"]) {
+      height: 2rem !important;
+      min-height: 2rem !important;
+      padding-left: 0.625rem !important;
+      padding-right: 0.625rem !important;
+      font-size: 0.625rem !important;
+    }
+
+    .mobile-compact-donation > :where(.mb-4) {
+      margin-bottom: 0.5rem !important;
+      padding: 0.25rem !important;
+    }
+
+    .mobile-compact-donation > form > section {
+      padding: 0.75rem !important;
+    }
+
+    .mobile-compact-donation > form > section :where([class*="mt-4"], [class*="mt-5"]) {
+      margin-top: 0.75rem !important;
+    }
+
+    .mobile-compact-donation > form > section :where([class*="gap-4"]) {
+      gap: 0.75rem !important;
+    }
+
+    .mobile-compact-profile {
+      padding: 0.75rem !important;
+    }
+
+    .mobile-compact-profile > :first-child {
+      padding-bottom: 0.75rem !important;
+    }
+
+    .mobile-compact-profile > :nth-child(2) {
+      margin-top: 0.75rem !important;
+      gap: 0.75rem !important;
+    }
+
+    .mobile-compact-tracer {
+      gap: 0.75rem !important;
+    }
+
+    .mobile-compact-tracer > :where(.rounded-3xl) {
+      padding: 0.75rem !important;
+    }
+
+    .mobile-compact-tracer > :where(.grid) {
+      gap: 0.75rem !important;
+    }
+
+    .mobile-compact-tracer :where(button.rounded-2xl) {
+      padding: 0.5rem 0.625rem !important;
+    }
+
+    .mobile-compact-tracer :where(section) {
+      gap: 1rem !important;
+    }
+
+    .mobile-compact-tracer :where(section [class*="gap-4"], section [class*="gap-3"]) {
+      gap: 0.625rem !important;
+    }
+
+    .mobile-compact-tracer :where(section [class*="p-4"], section [class*="p-3"]) {
+      padding: 0.625rem !important;
+    }
+
+    .mobile-compact-tracer :where([class~="h-2"]) {
+      height: 0.25rem !important;
+    }
+
+    .mobile-compact-category-filter {
+      gap: 0.25rem !important;
+      margin-bottom: 0.5rem !important;
+    }
+
+    .mobile-compact-category-filter > button {
+      padding: 0.25rem 0.5rem !important;
+      font-size: 0.5625rem !important;
+      line-height: 0.875rem !important;
+    }
+
+    .mobile-compact-donation-activity {
+      margin-top: 0.5rem !important;
+    }
+
+    .mobile-compact-donation-activity > :first-child {
+      padding: 0.375rem 0.5rem !important;
+    }
+
+    .mobile-compact-donation-activity > :last-child > div {
+      padding: 0.375rem 0.5rem !important;
+    }
+
+    .mobile-compact-donation-activity :where(h3, p, span) {
+      font-size: 0.5625rem !important;
+      line-height: 0.875rem !important;
+    }
+
+    .mobile-compact-content-dialog {
+      width: calc(100vw - 1rem) !important;
+      max-height: calc(100dvh - 1rem) !important;
+      gap: 0.625rem !important;
+      padding: 0.75rem !important;
+    }
+
+    .mobile-compact-content-dialog :where([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"], [class*="text-xl"], [class*="text-2xl"]) {
+      font-size: 0.625rem !important;
+      line-height: 1rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(h2, [role="heading"]) {
+      font-size: 0.875rem !important;
+      line-height: 1.125rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(h3, h4) {
+      font-size: 0.75rem !important;
+      line-height: 1rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(label) {
+      font-size: 0.625rem !important;
+      line-height: 1rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, [role="combobox"]) {
+      height: 2rem !important;
+      min-height: 2rem !important;
+      padding: 0.375rem 0.5rem !important;
+      font-size: 0.625rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(textarea) {
+      min-height: 4rem !important;
+      padding: 0.5rem !important;
+      font-size: 0.625rem !important;
+      line-height: 1rem !important;
+    }
+
+    .mobile-compact-content-dialog :where(button) {
+      min-height: 1.875rem;
+      padding-left: 0.625rem;
+      padding-right: 0.625rem;
+      font-size: 0.625rem !important;
+    }
+
+    .mobile-compact-content-dialog :where([class*="space-y-5"], [class*="space-y-4"], [class*="space-y-3"]) > :not([hidden]) ~ :not([hidden]) {
+      margin-top: 0.625rem !important;
+    }
+
+    .mobile-compact-content-dialog :where([class*="gap-5"], [class*="gap-4"], [class*="gap-3"]) {
+      gap: 0.625rem !important;
+    }
+
+    .mobile-compact-content-dialog :where([class*="p-5"], [class*="p-4"], [class*="p-3"]) {
+      padding: 0.625rem !important;
+    }
+
+    .mobile-compact-content-dialog :where([class~="h-56"], [class~="h-40"]) {
+      height: 8rem !important;
+    }
+
+    .portal-main :where(.mobile-chart) {
+      height: clamp(14rem, 72vw, 17rem) !important;
+      min-width: 0;
+    }
+
+    .portal-main :where(.mobile-chart .recharts-responsive-container, .mobile-chart .recharts-wrapper, .mobile-chart .recharts-surface) {
+      max-width: 100%;
+    }
+
+    .portal-main :where(.recharts-default-tooltip) {
+      max-width: calc(100vw - 3rem);
+      overflow-wrap: anywhere;
+    }
+
+    .portal-main :where(.recharts-default-legend) {
+      white-space: normal;
+      line-height: 1.25;
+    }
+
+    .portal-main :where(.responsive-table-shell) {
+      border-radius: 0.75rem;
+    }
+
+    .portal-main :where(.responsive-table-shell table) {
+      min-width: 40rem;
+    }
+
+    .portal-main :where(.responsive-table-shell th, .responsive-table-shell td) {
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+
+    .portal-main :where(input[type="file"]) {
+      max-width: 100%;
+      font-size: 0.75rem;
+    }
+
+    .portal-main :where([data-radix-popper-content-wrapper]) {
+      max-width: calc(100vw - 1rem) !important;
+    }
+  }
+
   @media (max-width: 380px) {
     .alumni-portal .portal-header {
       gap: 0.35rem;

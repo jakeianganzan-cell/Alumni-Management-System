@@ -109,7 +109,7 @@ function ArchiveList({ years, selectedId, onSelect }: { years: SchoolYear[]; sel
 function RosterCard({ detail, archived }: { detail: Detail | null; archived: boolean }) {
   if (!detail) return <Card className="border-border/70 shadow-sm"><CardContent className="py-14 text-center text-sm text-muted-foreground">{archived ? "Choose an archived year to view its assigned officers." : "No current officer bundle has been set."}</CardContent></Card>;
   const officers = [...detail.officers].sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name));
-  return <Card className="border-border/70 shadow-sm"><CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/60"><div><CardTitle>{archived ? `${detail.schoolYear.label} Archived Officers` : "Current Officers"}</CardTitle><p className="mt-1 text-sm text-muted-foreground">{detail.schoolYear.label} | {officers.length} assigned officer{officers.length === 1 ? "" : "s"}</p></div><Badge variant="outline" className={archived ? "border-amber-200 bg-amber-50 text-amber-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>{archived ? "Archived" : "Current"}</Badge></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Officer</TableHead><TableHead>Position</TableHead><TableHead>Course / Batch</TableHead><TableHead>Contact</TableHead></TableRow></TableHeader><TableBody>{officers.map((officer) => <TableRow key={officer.id}><TableCell><div className="flex items-center gap-3"><Avatar officer={officer} /><div><p className="font-medium">{officer.name}</p><p className="text-xs text-muted-foreground">{officer.email || "No email"}</p></div></div></TableCell><TableCell className="font-medium">{officer.positionLabel}</TableCell><TableCell>{officer.course || "N/A"}<span className="block text-xs text-muted-foreground">{officer.batch || "No batch"}</span></TableCell><TableCell>{officer.contactNumber || "N/A"}</TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>;
+  return <Card className="border-border/70 shadow-sm"><CardHeader className="flex-col items-start gap-2 space-y-0 border-b border-border/60 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><CardTitle>{archived ? `${detail.schoolYear.label} Archived Officers` : "Current Officers"}</CardTitle><p className="mt-1 break-words text-sm text-muted-foreground">{detail.schoolYear.label} | {officers.length} assigned officer{officers.length === 1 ? "" : "s"}</p></div><Badge variant="outline" className={`shrink-0 ${archived ? "border-amber-200 bg-amber-50 text-amber-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{archived ? "Archived" : "Current"}</Badge></CardHeader><CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Officer</TableHead><TableHead>Position</TableHead><TableHead>Course / Batch</TableHead><TableHead>Contact</TableHead></TableRow></TableHeader><TableBody>{officers.map((officer) => <TableRow key={officer.id}><TableCell><div className="flex items-center gap-3"><Avatar officer={officer} /><div className="min-w-0"><p className="break-words font-medium">{officer.name}</p><p className="break-all text-xs text-muted-foreground">{officer.email || "No email"}</p></div></div></TableCell><TableCell className="font-medium">{officer.positionLabel}</TableCell><TableCell>{officer.course || "N/A"}<span className="block text-xs text-muted-foreground">{officer.batch || "No batch"}</span></TableCell><TableCell>{officer.contactNumber || "N/A"}</TableCell></TableRow>)}</TableBody></Table></CardContent></Card>;
 }
 
 function Avatar({ officer }: { officer: Officer }) { const photo = resolveAssetUrl(officer.photo); return <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold text-muted-foreground">{photo ? <img src={photo} alt="" className="h-full w-full object-cover" /> : officer.name.split(" ").map((item) => item[0]).slice(0, 2).join("")}</div>; }
@@ -137,12 +137,12 @@ function CurrentInstitutionOfficials() {
 
   return (
     <Card className="border-border/70 shadow-sm">
-      <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/60">
-        <div>
+      <CardHeader className="flex-col items-start gap-2 space-y-0 border-b border-border/60 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <CardTitle>Current Institution Officials</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">Officials currently shown in the Institution Organization Chart.</p>
         </div>
-        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Current</Badge>
+        <Badge variant="outline" className="shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700">Current</Badge>
       </CardHeader>
       <CardContent className="space-y-5 p-4 sm:p-5">
         {loading ? (
@@ -312,7 +312,7 @@ function InstitutionOfficialsSettings({ onSaved }: { onSaved: () => void }) {
           ))
         )}
         <div className="flex justify-end border-t border-border/60 pt-4">
-          <Button onClick={() => void save()} disabled={loading || saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{saving ? "Saving..." : "Save Institution Officials"}</Button>
+          <Button onClick={() => void save()} disabled={loading || saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{saving ? "Loading" : "Save Institution Officials"}</Button>
         </div>
       </CardContent>
     </Card>

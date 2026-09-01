@@ -7,7 +7,7 @@ import {
   toYouTubeEmbedUrl,
   type SlideMediaType,
 } from "@/lib/slideshowMedia";
-import { Play, Volume2, VolumeX } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Volume2, VolumeX } from "lucide-react";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { CircularLoadingProgress } from "@/components/ui/loading-progress";
 
@@ -507,13 +507,13 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
 
   return (
     <section
-      className={`group relative w-full overflow-hidden rounded-2xl bg-gray-950 shadow-[0_24px_70px_rgba(15,23,42,0.18)] ${className}`}
+      className={`group relative w-full overflow-hidden rounded-2xl bg-gray-950 shadow-[0_24px_70px_rgba(15,23,42,0.18)] max-[640px]:rounded-xl max-[640px]:shadow-sm ${className}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onFocus={() => setIsHovered(true)}
       onBlur={() => setIsHovered(false)}
     >
-      <div className="relative min-h-[340px] overflow-hidden rounded-2xl bg-gray-950 sm:min-h-[430px] lg:min-h-[540px]">
+      <div className="homepage-slideshow-frame relative min-h-[340px] overflow-hidden rounded-2xl bg-gray-950 sm:min-h-[430px] lg:min-h-[540px] max-[640px]:rounded-xl">
         {visibleSlides.map((slide, index) => {
           const isActive = index === activeSlide;
           const isLinkedImage = Boolean(slide.linkUrl) && slide.mediaKind !== "youtube";
@@ -568,16 +568,16 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
               {(slide.title || slide.caption) && (
                 <div
                   className={`pointer-events-none absolute inset-x-4 z-30 max-w-xs text-white sm:inset-x-8 sm:max-w-sm lg:inset-x-10 ${
-                    slide.mediaKind === "video" || slide.mediaKind === "youtube" ? "bottom-20 sm:bottom-20" : "bottom-14 sm:bottom-7"
+                    slide.mediaKind === "video" || slide.mediaKind === "youtube" ? "bottom-20 sm:bottom-20 max-[640px]:bottom-12" : "bottom-14 sm:bottom-7 max-[640px]:bottom-10"
                   }`}
                 >
                   {slide.title && (
-                    <h2 className="line-clamp-1 font-display text-base font-semibold leading-tight sm:text-lg lg:text-xl">
+                    <h2 className="line-clamp-1 font-display text-base font-semibold leading-tight sm:text-lg lg:text-xl max-[640px]:text-xs">
                       {slide.title}
                     </h2>
                   )}
                   {slide.caption && (
-                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/78 sm:text-sm">
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/78 sm:text-sm max-[640px]:text-[10px] max-[640px]:leading-4">
                       {slide.caption}
                     </p>
                   )}
@@ -592,15 +592,23 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
             <button
               type="button"
               onClick={goToPrevious}
-              className="absolute inset-y-0 left-0 z-30 w-1/5 cursor-pointer bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70"
+              className="absolute inset-y-0 left-0 z-30 flex w-1/5 cursor-pointer items-center justify-start bg-transparent pl-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70"
               aria-label="Previous slide"
-            />
+            >
+              <span className="hidden h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white shadow-sm max-[640px]:inline-flex">
+                <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </button>
             <button
               type="button"
               onClick={goToNext}
-              className="absolute inset-y-0 right-0 z-30 w-1/5 cursor-pointer bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70"
+              className="absolute inset-y-0 right-0 z-30 flex w-1/5 cursor-pointer items-center justify-end bg-transparent pr-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70"
               aria-label="Next slide"
-            />
+            >
+              <span className="hidden h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white shadow-sm max-[640px]:inline-flex">
+                <ChevronRight className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </button>
           </>
         )}
 
@@ -611,22 +619,22 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
               event.stopPropagation();
               setVideoMuted((current) => !current);
             }}
-            className="absolute bottom-4 left-4 z-40 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg transition hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:bottom-5 sm:left-5"
+            className="absolute bottom-4 left-4 z-40 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg transition hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:bottom-5 sm:left-5 max-[640px]:bottom-2 max-[640px]:left-2 max-[640px]:h-8 max-[640px]:w-8 max-[640px]:shadow-sm"
             aria-label={videoMuted ? "Turn video sound on" : "Mute video sound"}
             title={videoMuted ? "Turn sound on" : "Mute sound"}
           >
-            {videoMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+            {videoMuted ? <VolumeX className="h-5 w-5 max-[640px]:h-3.5 max-[640px]:w-3.5" /> : <Volume2 className="h-5 w-5 max-[640px]:h-3.5 max-[640px]:w-3.5" />}
           </button>
         )}
 
-        <div className="absolute bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/12 bg-black/45 px-2.5 py-2 backdrop-blur sm:bottom-5 sm:right-5">
+        <div className="absolute bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/12 bg-black/45 px-2.5 py-2 backdrop-blur sm:bottom-5 sm:right-5 max-[640px]:hidden">
           {visibleSlides.map((slide, index) => (
             <button
               key={slide.id}
               type="button"
               onClick={() => setActiveSlide(index)}
-              className={`h-2 rounded-full transition-all duration-300 ${
-                index === activeSlide ? "w-8 bg-white" : "w-2 bg-white/55 hover:bg-white/80"
+              className={`h-2 rounded-full transition-all duration-300 max-[640px]:h-1.5 ${
+                index === activeSlide ? "w-8 bg-white max-[640px]:w-5" : "w-2 bg-white/55 hover:bg-white/80 max-[640px]:w-1.5"
               }`}
               aria-label={`Show slide ${index + 1}`}
               aria-current={index === activeSlide}

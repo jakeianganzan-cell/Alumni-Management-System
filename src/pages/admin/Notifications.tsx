@@ -615,7 +615,7 @@ export default function AdminNotifications() {
                 {sendError}
               </div>
             )}
-            {loadingLogs && <div className="py-12 text-center text-sm text-muted-foreground">Loading email logs...</div>}
+            {loadingLogs && <div className="py-12 text-center text-sm text-muted-foreground">Loading</div>}
             {!loadingLogs && logs.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No email logs found.</div>}
             <div className="space-y-2">
               {paginatedLogs.map((log) => {
@@ -722,7 +722,7 @@ export default function AdminNotifications() {
                 className="flex items-center justify-center gap-2 rounded-lg bg-navy px-4 py-2 text-sm font-bold text-white hover:bg-navy-light disabled:opacity-50"
               >
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Send to {selectedAlumni.length} Selected Alumni
+                {sending ? "Loading" : `Send to ${selectedAlumni.length} Selected Alumni`}
               </button>
             </div>
           </div>

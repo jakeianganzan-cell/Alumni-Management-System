@@ -161,7 +161,7 @@ export default function ChairmanAnnouncements() {
           {loading ? (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
               <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Loading announcements...</p>
+              <p className="text-sm text-muted-foreground">Loading</p>
             </div>
           ) : error ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>

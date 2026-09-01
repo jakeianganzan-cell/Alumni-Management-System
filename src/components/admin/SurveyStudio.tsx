@@ -263,7 +263,7 @@ export default function SurveyStudio() {
 
           <div className="space-y-3">
           {loading ? (
-            <div className="flex min-h-[220px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading surveys...</div>
+            <div className="flex min-h-[220px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading</div>
           ) : surveys.length === 0 ? (
             <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-muted-foreground">No internal surveys yet.</div>
           ) : (
@@ -363,7 +363,7 @@ export default function SurveyStudio() {
             </div>
             <Button type="button" variant="outline" onClick={addQuestion}><Plus className="mr-2 h-4 w-4" />Add question</Button>
             <div className="flex gap-2">
-              <Button type="button" onClick={() => void saveSurvey()} disabled={saving || !form.title.trim()}>{saving ? "Saving..." : editingId ? "Save survey" : "Create survey"}</Button>
+              <Button type="button" onClick={() => void saveSurvey()} disabled={saving || !form.title.trim()}>{saving ? "Loading" : editingId ? "Save survey" : "Create survey"}</Button>
               {editingId && <Button type="button" variant="outline" onClick={() => { setEditingId(null); setForm(BLANK_FORM); setActiveQuestionIndex(0); }}>Cancel</Button>}
             </div>
           </div>

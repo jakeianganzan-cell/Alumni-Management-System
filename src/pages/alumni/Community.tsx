@@ -254,7 +254,7 @@ export default function Community() {
       <div className="space-y-6">
         <div className="flex justify-center">
           <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-4 flex flex-wrap gap-2">
+            <div className="mobile-compact-category-filter mb-4 flex flex-wrap gap-2">
               {CATEGORIES.map((category) => (
                 <button
                   key={category}
@@ -275,7 +275,7 @@ export default function Community() {
               {loading ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
                   <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">Loading Freedom Wall posts...</p>
+                  <p className="text-sm text-muted-foreground">Loading</p>
                 </div>
               ) : filteredPosts.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
@@ -363,7 +363,7 @@ export default function Community() {
                           {loadingComments[post.id] ? (
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                               <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading comments...
+                              Loading
                             </div>
                           ) : postComments.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No comments yet.</p>
@@ -447,7 +447,7 @@ export default function Community() {
       </button>
 
       <Dialog open={Boolean(selectedPost)} onOpenChange={(open) => !open && setSelectedPost(null)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="mobile-compact-content-dialog max-h-[90vh] max-w-3xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
           {selectedPost && (
             <>
               <DialogHeader>
@@ -469,7 +469,7 @@ export default function Community() {
       </Dialog>
 
       <Dialog open={postDialogOpen} onOpenChange={(open) => !submittingPost && setPostDialogOpen(open)}>
-        <DialogContent className="max-w-2xl border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="mobile-compact-content-dialog max-w-2xl border-slate-200 bg-white shadow-2xl">
           <DialogHeader>
             <DialogTitle className="pr-8 text-xl text-navy-dark">Create Freedom Wall Post</DialogTitle>
           </DialogHeader>

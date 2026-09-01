@@ -137,7 +137,7 @@ export default function OrganizationChart() {
         </div>
 
         {loading ? (
-          <div className="py-8 text-center text-xs font-medium text-white/80">Loading organization chart...</div>
+          <div className="py-8 text-center text-xs font-medium text-white/80">Loading</div>
         ) : error ? (
           <div role="status" className="rounded-lg border border-white/20 bg-black/20 px-4 py-6 text-center text-xs font-medium text-white/80">{error}</div>
         ) : (

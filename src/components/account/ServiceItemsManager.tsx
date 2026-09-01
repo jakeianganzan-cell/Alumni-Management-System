@@ -143,13 +143,13 @@ export default function ServiceItemsManager({ service, onClose }: { service: Abo
             <Switch id="service-detail-active" checked={draft.isActive} onCheckedChange={(isActive) => setDraft((current) => ({ ...current, isActive }))} />
           </div>
           <div className="flex gap-2">
-            <Button type="button" size="sm" className="flex-1 text-xs" disabled={saving} onClick={() => void saveItem()}>{editingId ? <Save className="mr-1.5 h-3.5 w-3.5" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}{saving ? "Saving..." : editingId ? "Save" : "Add Detail"}</Button>
+            <Button type="button" size="sm" className="flex-1 text-xs" disabled={saving} onClick={() => void saveItem()}>{editingId ? <Save className="mr-1.5 h-3.5 w-3.5" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}{saving ? "Loading" : editingId ? "Save" : "Add Detail"}</Button>
             {editingId && <Button type="button" size="sm" variant="outline" className="text-xs" onClick={resetDraft}>Cancel</Button>}
           </div>
         </div>
 
         <div className="space-y-2">
-          {loading && <p className="rounded-xl border border-border bg-background p-4 text-center text-xs text-muted-foreground">Loading details...</p>}
+          {loading && <p className="rounded-xl border border-border bg-background p-4 text-center text-xs text-muted-foreground">Loading</p>}
           {!loading && items.length === 0 && <p className="rounded-xl border border-dashed border-border bg-background p-5 text-center text-xs text-muted-foreground">No service details yet.</p>}
           {items.map((item, index) => (
             <article key={item.id} className="rounded-xl border border-border bg-background p-3">

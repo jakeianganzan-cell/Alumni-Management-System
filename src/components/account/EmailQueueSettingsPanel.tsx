@@ -146,7 +146,7 @@ export default function EmailQueueSettingsPanel() {
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading email settings...</div>
+        <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading</div>
       ) : (
         <div className="mt-5 space-y-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -193,13 +193,13 @@ export default function EmailQueueSettingsPanel() {
 
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => void save()} disabled={saving}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} Save Settings
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />} {saving ? "Loading" : "Save Settings"}
             </Button>
             <Button type="button" variant="outline" onClick={() => void runAction("check")} disabled={runningCheck}>
-              {runningCheck ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Clock className="mr-2 h-4 w-4" />} Run Daily Check
+              {runningCheck ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Clock className="mr-2 h-4 w-4" />} {runningCheck ? "Loading" : "Run Daily Check"}
             </Button>
             <Button type="button" variant="outline" onClick={() => void runAction("process")} disabled={processing}>
-              {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />} Process Queue
+              {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />} {processing ? "Loading" : "Process Queue"}
             </Button>
           </div>
         </div>
