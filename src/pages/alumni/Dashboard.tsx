@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import salayBackground from "@/assets/salay-background.png";
 import DurationBadge from "@/components/DurationBadge";
 import HomepageSlideshow from "@/components/HomepageSlideshow";
+import { LoadingProgress } from "@/components/ui/loading-progress";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 
 interface CommentData {
@@ -215,6 +216,16 @@ export default function AlumniDashboard() {
   useEffect(() => {
     if (!user) return;
 
+    const fetchSlideshow = async () => {
+      try {
+        const response = await fetch(`${API_URL}/slideshow`, { headers: getAuthHeaders() });
+        const slides = await readApiResponse<SlideData[]>(response);
+        if (Array.isArray(slides)) setSlideshow(slides);
+      } catch (error) {
+        clientLogger.debug("Failed to load slideshow early; using dashboard response fallback", error);
+      }
+    };
+
     const fetchData = async () => {
       const keepSpinner = !hasLoadedDashboard.current;
       try {
@@ -225,7 +236,7 @@ export default function AlumniDashboard() {
 
         setAnnouncements(data.events || []);
         setSurveys(data.surveys || []);
-        setSlideshow(data.slideshow || []);
+        setSlideshow((current) => current.length > 0 ? current : data.slideshow || []);
         setDonationActivity((data.donationUpdates || []).slice(0, 4));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
@@ -256,6 +267,7 @@ export default function AlumniDashboard() {
       }
     };
 
+    void fetchSlideshow();
     void fetchData();
   }, [user]);
 
@@ -440,8 +452,8 @@ export default function AlumniDashboard() {
   if (loading) {
     return (
       <AlumniLayout title={settings.institutionName}>
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-navy border-t-transparent" />
+        <div className="flex h-full min-h-[50vh] items-center justify-center">
+          <LoadingProgress label="Loading alumni dashboard" className="px-4" />
         </div>
       </AlumniLayout>
     );

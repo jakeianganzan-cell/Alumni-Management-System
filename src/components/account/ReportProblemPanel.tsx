@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Inbox, Loader2, MessageSquare, Reply, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,6 +38,7 @@ export default function ReportProblemPanel() {
   const [loadingReports, setLoadingReports] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
+  const [reportToDelete, setReportToDelete] = useState<ProblemReport | null>(null);
   const [form, setForm] = useState({
     subject: "",
     category: "General Concern",
@@ -87,9 +89,6 @@ export default function ReportProblemPanel() {
     }
   };
   const deleteReport = async (report: ProblemReport) => {
-    const confirmed = window.confirm("Are you sure you want to remove this problem report?");
-    if (!confirmed) return;
-
     setDeletingReportId(report.id);
     try {
       const response = await fetchApi(`${API_URL}/concerns/${report.id}`, {
@@ -98,6 +97,7 @@ export default function ReportProblemPanel() {
       });
       const data = await readApiResponse<{ message: string }>(response);
       setReports((current) => current.filter((item) => item.id !== report.id));
+      setReportToDelete(null);
       toast.success(data.message || "Problem report removed successfully.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to remove problem report.");
@@ -213,7 +213,7 @@ export default function ReportProblemPanel() {
                         type="button"
                         title="Delete problem report"
                         aria-label="Delete problem report"
-                        onClick={() => void deleteReport(report)}
+                        onClick={() => setReportToDelete(report)}
                         disabled={deletingReportId === report.id}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -240,6 +240,14 @@ export default function ReportProblemPanel() {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(reportToDelete)}
+        onOpenChange={(open) => !open && setReportToDelete(null)}
+        onConfirm={() => reportToDelete && deleteReport(reportToDelete)}
+        title="Delete this problem report?"
+        description={`${reportToDelete?.subject || "This report"} will be permanently removed.`}
+        busy={Boolean(reportToDelete && deletingReportId === reportToDelete.id)}
+      />
     </div>
   );
 }

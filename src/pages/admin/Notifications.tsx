@@ -244,19 +244,6 @@ export default function AdminNotifications() {
     };
   }, [alumniSearch, selectedBatch, selectedCourse, selectedReason]);
 
-  const stats = useMemo(
-    () => ({
-      sent: logs.filter((log) => log.status === "sent").length,
-      failed: logs.filter((log) => log.status === "failed").length,
-      total: logs.length,
-      recent: logs.filter((log) => {
-        const created = new Date(log.created_at).getTime();
-        return Number.isFinite(created) && Date.now() - created <= 24 * 60 * 60 * 1000;
-      }).length,
-    }),
-    [logs]
-  );
-
   const totalLogPages = Math.max(1, Math.ceil(logs.length / LOGS_PAGE_SIZE));
   const paginatedLogs = useMemo(() => {
     const start = (logsPage - 1) * LOGS_PAGE_SIZE;
@@ -388,25 +375,6 @@ export default function AdminNotifications() {
 
   return (
     <AdminLayout title="Mailing">
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: "Sent", value: stats.sent, icon: CheckCircle, color: "bg-emerald-100 text-emerald-700" },
-          { label: "Failed", value: stats.failed, icon: XCircle, color: "bg-red-100 text-red-700" },
-          { label: "Last 24 Hours", value: stats.recent, icon: Clock, color: "bg-amber-100 text-amber-700" },
-          { label: "Total Logs", value: stats.total, icon: Mail, color: "bg-slate-100 text-slate-700" },
-        ].map((item) => (
-          <div key={item.label} className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 shadow-sm">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${item.color}`}>
-              <item.icon className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-navy-dark">{loadingLogs ? "..." : item.value}</p>
-              <p className="text-xs text-muted-foreground">{item.label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
       <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
         <div className="flex border-b border-border">
           {[

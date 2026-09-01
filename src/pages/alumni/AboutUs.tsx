@@ -46,11 +46,11 @@ export default function AboutUs() {
   const leadership = aboutData?.leadership || [];
   const otherLeadership = leadership.filter((entry) => entry.category !== INSTITUTION_OFFICIAL_CATEGORY);
   const activePage = location.pathname.endsWith("/academics-alumni") ? "academics-alumni" : "institution";
-  const pageTitle = activePage === "institution" ? "Institution" : "Academics & Alumni";
+  const pageTitle = activePage === "institution" ? "Institution" : "Association";
 
   return (
     <AlumniLayout title={`About Us - ${pageTitle}`} subtitle={pageSettings.systemShortName}>
-      <main className="mx-auto max-w-6xl space-y-4 pb-4 md:space-y-6">
+      <main className="mx-auto max-w-6xl space-y-3 pb-3 md:space-y-4">
         {(loading || settingsLoading) && !aboutData ? (
           <AboutPageSkeleton />
         ) : (

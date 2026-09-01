@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BarChart2, ChevronDown, FileText, FileSpreadsheet, Inbox, Loader2, MessageSquare, Printer, Reply, Trash2, Users } from "lucide-react";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { downloadBrandedExcel, openPrintableReport, type ReportColumn } from "@/lib/reportExport";
 
 interface AlumniExportRow {
@@ -84,6 +85,7 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
   const [loadingConcerns, setLoadingConcerns] = useState(true);
   const [savingConcernId, setSavingConcernId] = useState<number | null>(null);
   const [deletingConcernId, setDeletingConcernId] = useState<number | null>(null);
+  const [concernToDelete, setConcernToDelete] = useState<AdminConcern | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const preparedBy = profile?.name || user?.email || "System Administrator";
 
@@ -163,9 +165,6 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
   };
 
   const deleteConcern = async (concern: AdminConcern) => {
-    const confirmed = window.confirm(`Remove the concern "${concern.subject}"? This action cannot be undone.`);
-    if (!confirmed) return;
-
     setDeletingConcernId(concern.id);
     setConcernMessage("");
     try {
@@ -175,6 +174,7 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
       });
       const data = await readApiResponse<{ message: string }>(res);
       setConcerns((current) => current.filter((item) => item.id !== concern.id));
+      setConcernToDelete(null);
       setReplyDrafts((current) => {
         const next = { ...current };
         delete next[concern.id];
@@ -533,7 +533,7 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
                       </button>
                       <button
                         type="button"
-                        onClick={() => void deleteConcern(concern)}
+                        onClick={() => setConcernToDelete(concern)}
                         disabled={savingConcernId === concern.id || deletingConcernId === concern.id}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                         title="Delete concern"
@@ -549,6 +549,14 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(concernToDelete)}
+        onOpenChange={(open) => !open && setConcernToDelete(null)}
+        onConfirm={() => concernToDelete && deleteConcern(concernToDelete)}
+        title="Delete this concern?"
+        description={`“${concernToDelete?.subject || "This concern"}” and its reply history will be permanently removed.`}
+        busy={Boolean(concernToDelete && deletingConcernId === concernToDelete.id)}
+      />
     </div>
   );
 }

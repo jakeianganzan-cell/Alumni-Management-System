@@ -37,6 +37,7 @@ export interface SystemSettings {
   mapUrl: string;
   officeHours: string;
   facebookLink: string;
+  googleLink: string;
   twitterLink: string;
   instagramLink: string;
   programs: CourseOption[];
@@ -76,9 +77,10 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   institutionalGoal: "",
   alumniPortalDescription: "The Salay Community College Alumni Management System serves as a centralized digital platform for maintaining alumni records, conducting graduate tracer studies, strengthening alumni engagement, sharing institutional announcements and events, facilitating donations, and providing data-driven reports for the college administration.",
   aboutCoverImagePath: "",
-  mapUrl: "",
+  mapUrl: "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3942.2072578607067!2d124.78691430418375!3d8.860287812277864!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3300198f7087c7db%3A0xcf5856653f342c57!2sSalay%20Community%20College!5e0!3m2!1sen!2sph!4v1788268732165!5m2!1sen!2sph",
   officeHours: "",
   facebookLink: "",
+  googleLink: "",
   twitterLink: "",
   instagramLink: "",
   programs: COURSE_OPTIONS,

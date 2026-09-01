@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Award, CalendarClock, CheckCircle2, Eye, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 
 type AchievementStatus = "pending" | "approved" | "rejected" | "archived";
@@ -33,6 +34,8 @@ export default function AdminAchievements() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [achievementToDelete, setAchievementToDelete] = useState<AchievementRecord | null>(null);
+  const [deletingAchievementId, setDeletingAchievementId] = useState<number | null>(null);
 
   const loadAchievements = async () => {
     try {
@@ -139,10 +142,7 @@ export default function AdminAchievements() {
   };
 
   const removeAchievement = async (item: AchievementRecord) => {
-    if (!window.confirm("Delete this achievement?")) {
-      return;
-    }
-
+    setDeletingAchievementId(item.id);
     try {
       const res = await fetch(`${API_URL}/achievements/${item.id}`, {
         method: "DELETE",
@@ -152,16 +152,27 @@ export default function AdminAchievements() {
       await readApiResponse(res);
 
       toast.success("Achievement deleted");
+      setAchievementToDelete(null);
       await loadAchievements();
     } catch (error) {
       clientLogger.error(error);
       toast.error("Could not delete achievement");
+    } finally {
+      setDeletingAchievementId(null);
     }
   };
 
   return (
     <AdminLayout title="Achievements" subtitle="Review, approve, reject, and curate alumni milestones">
       <div className="space-y-6">
+        <ConfirmDialog
+          open={Boolean(achievementToDelete)}
+          onOpenChange={(open) => !open && setAchievementToDelete(null)}
+          onConfirm={() => achievementToDelete && removeAchievement(achievementToDelete)}
+          title="Delete this achievement?"
+          description={`${achievementToDelete?.title || "This achievement"} will be permanently removed.`}
+          busy={Boolean(achievementToDelete && deletingAchievementId === achievementToDelete.id)}
+        />
         <section className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
           <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
@@ -326,7 +337,7 @@ export default function AdminAchievements() {
                                   <IconButton label="Reject" onClick={() => setSelected(item)} icon={<XCircle className="h-3.5 w-3.5 text-rose-600" />} />
                                 </>
                               )}
-                              <IconButton label="Delete" onClick={() => removeAchievement(item)} icon={<Trash2 className="h-3.5 w-3.5 text-rose-600" />} />
+                              <IconButton label="Delete" onClick={() => setAchievementToDelete(item)} icon={<Trash2 className="h-3.5 w-3.5 text-rose-600" />} />
                             </div>
                           </td>
                         </tr>

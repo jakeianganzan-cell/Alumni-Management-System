@@ -138,6 +138,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, [fetchSession]);
 
+    useEffect(() => {
+        if (!session) return;
+
+        const sendHeartbeat = () => {
+            if (document.visibilityState !== "visible") return;
+            void fetch(`${API_URL}/auth/heartbeat`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${session}` },
+            }).then((response) => {
+                if (response.status === 401 || response.status === 403) {
+                    clearAuthToken();
+                    clearAuthState();
+                }
+            }).catch(() => undefined);
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "visible") sendHeartbeat();
+        };
+
+        sendHeartbeat();
+        const timer = window.setInterval(sendHeartbeat, 60_000);
+        window.addEventListener("focus", sendHeartbeat);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => {
+            window.clearInterval(timer);
+            window.removeEventListener("focus", sendHeartbeat);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
+        };
+    }, [clearAuthState, session]);
+
     const signIn = async (email: string, password: string, rememberMe = false) => {
         try {
             const res = await fetch(`${API_URL}/auth/login`, {

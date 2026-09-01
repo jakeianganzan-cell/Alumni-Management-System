@@ -2,6 +2,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { BarChart2, ChevronLeft, ChevronRight, ClipboardList, Loader2, Plus, Trash2 } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import DurationBadge from "@/components/DurationBadge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -91,6 +92,8 @@ export default function SurveyStudio() {
   const [surveyPage, setSurveyPage] = useState(1);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [questionDirection, setQuestionDirection] = useState<"forward" | "back">("forward");
+  const [surveyToDelete, setSurveyToDelete] = useState<SurveyRecord | null>(null);
+  const [deletingSurveyId, setDeletingSurveyId] = useState<number | null>(null);
 
   const loadSurveys = async () => {
     try {
@@ -223,15 +226,28 @@ export default function SurveyStudio() {
     setQuestionDirection("back");
   };
 
-  const deleteSurvey = async (surveyId: number) => {
-    if (!window.confirm("Delete this survey and its responses?")) return;
-    const response = await fetch(`${API_URL}/surveys/${surveyId}`, { method: "DELETE", headers: getAuthHeaders() });
-    await readApiResponse(response);
-    await loadSurveys();
+  const deleteSurvey = async (survey: SurveyRecord) => {
+    setDeletingSurveyId(survey.id);
+    try {
+      const response = await fetch(`${API_URL}/surveys/${survey.id}`, { method: "DELETE", headers: getAuthHeaders() });
+      await readApiResponse(response);
+      setSurveyToDelete(null);
+      await loadSurveys();
+    } finally {
+      setDeletingSurveyId(null);
+    }
   };
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <ConfirmDialog
+        open={Boolean(surveyToDelete)}
+        onOpenChange={(open) => !open && setSurveyToDelete(null)}
+        onConfirm={() => surveyToDelete && deleteSurvey(surveyToDelete)}
+        title="Delete this survey?"
+        description={`${surveyToDelete?.title || "This survey"} and all of its responses will be permanently removed.`}
+        busy={Boolean(surveyToDelete && deletingSurveyId === surveyToDelete.id)}
+      />
       <div className="mb-5 flex justify-end">
         <Badge variant="outline">{surveys.length} surveys</Badge>
       </div>
@@ -266,7 +282,7 @@ export default function SurveyStudio() {
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="outline" onClick={() => void loadResponses(survey)}><BarChart2 className="mr-2 h-4 w-4" />Analyze</Button>
                     <Button type="button" size="sm" variant="outline" onClick={() => editSurvey(survey)}>Edit</Button>
-                    <Button type="button" size="sm" variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => void deleteSurvey(survey.id)}><Trash2 className="h-4 w-4" /></Button>
+                    <Button type="button" size="sm" variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setSurveyToDelete(survey)}><Trash2 className="h-4 w-4" /></Button>
                   </div>
                 </div>
               </article>

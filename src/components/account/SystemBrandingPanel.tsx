@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { uploadBrandingFile } from "@/lib/adminUploads";
+import { getMapEmbedUrl } from "@/lib/mapEmbed";
 
 type BrandingForm = SystemSettings;
 type BrandingCategory = "identity" | "assets" | "login" | "theme" | "homepage" | "programs";
@@ -29,6 +30,18 @@ const COLOR_FIELDS: Array<{ key: keyof Pick<BrandingForm, "primaryColor" | "seco
   { key: "buttonColor", label: "Button Color" },
   { key: "cardColor", label: "Card Accent Color" },
 ];
+
+const normalizeExternalLink = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
+};
 
 function Field({
   label,
@@ -173,10 +186,23 @@ export default function SystemBrandingPanel() {
     setSaving(true);
     setMessage("");
     try {
+      const mapUrl = getMapEmbedUrl(form.mapUrl);
+      if (form.mapUrl.trim() && !mapUrl) {
+        setMessage("Paste a valid HTTPS Google Maps embed URL or the complete iframe embed code.");
+        return;
+      }
+      const linkFields = ["websiteUrl", "facebookLink", "googleLink", "twitterLink", "instagramLink"] as const;
+      const normalizedLinks = Object.fromEntries(linkFields.map((key) => [key, normalizeExternalLink(form[key])])) as Pick<BrandingForm, (typeof linkFields)[number]>;
+      const invalidLink = linkFields.find((key) => form[key].trim() && !normalizedLinks[key]);
+      if (invalidLink) {
+        setMessage("Enter valid website and social links.");
+        return;
+      }
+      const settingsToSave = { ...form, ...normalizedLinks, mapUrl };
       const response = await fetch(`${API_URL}/admin/system-settings`, {
         method: "POST",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(form),
+        body: JSON.stringify(settingsToSave),
       });
       const data = await readApiResponse<{ message: string; settings: SystemSettings }>(response);
       setForm(data.settings);
@@ -230,11 +256,11 @@ export default function SystemBrandingPanel() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
-        <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-3">
+      <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="font-display text-2xl font-bold text-navy-dark">System Branding & Customization</h3>
+            <h3 className="font-display text-lg font-bold text-navy-dark">System Branding & Customization</h3>
           </div>
           <Button type="button" onClick={() => void saveSettings()} disabled={saving || Boolean(uploadingField)}>
             <Save className="mr-2 h-4 w-4" />
@@ -242,7 +268,7 @@ export default function SystemBrandingPanel() {
           </Button>
         </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/70 pt-3">
           {BRANDING_CATEGORIES.map((category) => (
             <Button
               key={category.value}
@@ -269,9 +295,6 @@ export default function SystemBrandingPanel() {
           </Field>
           <Field label="Contact Number">
             <Input value={form.institutionContact} onChange={(event) => updateForm("institutionContact", event.target.value)} />
-          </Field>
-          <Field label="Official Email">
-            <Input type="email" value={form.institutionEmail} onChange={(event) => updateForm("institutionEmail", event.target.value)} />
           </Field>
           <Field label="Website URL">
             <Input value={form.websiteUrl} onChange={(event) => updateForm("websiteUrl", event.target.value)} />
@@ -443,49 +466,56 @@ export default function SystemBrandingPanel() {
       )}
 
       {activeCategory === "homepage" && (
-      <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
-        <div className="flex items-center gap-3 border-b border-border pb-4">
+      <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+        <div className="flex items-center gap-2 border-b border-border/70 pb-3">
           <Building2 className="h-5 w-5 text-navy" />
           <div>
-            <h3 className="font-display text-xl font-bold text-navy-dark">About Us Settings</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Content and contact details displayed on the alumni About Us page.</p>
+            <h3 className="font-display text-base font-bold text-navy-dark">About Us Settings</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">Content and contact details displayed on the alumni About Us page.</p>
           </div>
         </div>
-        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="md:col-span-2">
           <Field label="Institution Description">
-            <textarea value={form.aboutContent} onChange={(event) => updateForm("aboutContent", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+            <textarea value={form.aboutContent} onChange={(event) => updateForm("aboutContent", event.target.value)} className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
           </Field>
           </div>
-          <Field label="School History">
-            <textarea value={form.history} onChange={(event) => updateForm("history", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
-          </Field>
           <Field label="Mission">
-            <textarea value={form.mission} onChange={(event) => updateForm("mission", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+            <textarea value={form.mission} onChange={(event) => updateForm("mission", event.target.value)} className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
           </Field>
           <Field label="Vision">
-            <textarea value={form.vision} onChange={(event) => updateForm("vision", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+            <textarea value={form.vision} onChange={(event) => updateForm("vision", event.target.value)} className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
           </Field>
-          <Field label="Philosophy">
-            <textarea value={form.philosophy} onChange={(event) => updateForm("philosophy", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
-          </Field>
-          <Field label="Institutional Goal">
-            <textarea value={form.institutionalGoal} onChange={(event) => updateForm("institutionalGoal", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
-          </Field>
-          <Field label="Map / Location URL">
-            <Input value={form.mapUrl} onChange={(event) => updateForm("mapUrl", event.target.value)} />
+          <Field label="Map / Location Embed">
+            <textarea
+              value={form.mapUrl}
+              onChange={(event) => updateForm("mapUrl", event.target.value)}
+              placeholder="Paste the Google Maps embed URL or the complete <iframe> code"
+              className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <p className="text-[11px] text-muted-foreground">Google Maps → Share → Embed a map, then paste either the link or the complete iframe code.</p>
           </Field>
           <Field label="Office Hours">
             <Input value={form.officeHours} onChange={(event) => updateForm("officeHours", event.target.value)} />
           </Field>
+          <div className="md:col-span-2 border-t border-border/70 pt-3">
+            <p className="text-xs font-semibold text-foreground">Connect With SaCConnect</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">These links appear directly in Alumni → About Us → Connect With SaCConnect.</p>
+          </div>
+          <Field label="Official Website Link">
+            <Input type="url" value={form.websiteUrl} onChange={(event) => updateForm("websiteUrl", event.target.value)} placeholder="https://..." />
+          </Field>
           <Field label="Facebook Link">
-            <Input value={form.facebookLink} onChange={(event) => updateForm("facebookLink", event.target.value)} />
+            <Input type="url" value={form.facebookLink} onChange={(event) => updateForm("facebookLink", event.target.value)} placeholder="https://..." />
+          </Field>
+          <Field label="Google Link">
+            <Input type="url" value={form.googleLink} onChange={(event) => updateForm("googleLink", event.target.value)} placeholder="https://..." />
           </Field>
           <Field label="Twitter Link">
-            <Input value={form.twitterLink} onChange={(event) => updateForm("twitterLink", event.target.value)} />
+            <Input type="url" value={form.twitterLink} onChange={(event) => updateForm("twitterLink", event.target.value)} placeholder="https://..." />
           </Field>
           <Field label="Instagram Link">
-            <Input value={form.instagramLink} onChange={(event) => updateForm("instagramLink", event.target.value)} />
+            <Input type="url" value={form.instagramLink} onChange={(event) => updateForm("instagramLink", event.target.value)} placeholder="https://..." />
           </Field>
         </div>
       </div>

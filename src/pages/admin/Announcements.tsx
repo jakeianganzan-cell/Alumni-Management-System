@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   CheckCircle2,
   ExternalLink,
@@ -127,6 +128,7 @@ export default function AdminAnnouncements() {
   const [search, setSearch] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [contentPage, setContentPage] = useState(1);
+  const [announcementToDelete, setAnnouncementToDelete] = useState<Announcement | null>(null);
 
   const { data: announcements = [], isLoading } = useQuery<Announcement[]>({
     queryKey: ["announcements"],
@@ -201,6 +203,7 @@ export default function AdminAnnouncements() {
       closeForm();
       setDetailOpen(false);
       setSelectedAnnouncement(null);
+      setAnnouncementToDelete(null);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to update announcement");
@@ -388,8 +391,7 @@ export default function AdminAnnouncements() {
   };
 
   const handleDelete = (id: string) => {
-    if (!window.confirm("Delete this content item?")) return;
-    deleteMutation.mutate(id);
+    setAnnouncementToDelete(announcements.find((item) => item.id === id) ?? selectedAnnouncement);
   };
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -442,6 +444,14 @@ export default function AdminAnnouncements() {
   return (
     <AdminLayout title="Announcements" subtitle="Review alumni submissions, publish content, and keep the public feed clean">
       <div className="space-y-6">
+        <ConfirmDialog
+          open={Boolean(announcementToDelete)}
+          onOpenChange={(open) => !open && setAnnouncementToDelete(null)}
+          onConfirm={() => announcementToDelete && deleteMutation.mutate(announcementToDelete.id)}
+          title="Delete this content item?"
+          description={`${announcementToDelete?.title || "This item"} will be permanently removed.`}
+          busy={deleteMutation.isPending}
+        />
         {activeWorkspace !== "survey" && (
           <div className="flex justify-end">
             <Button onClick={openCreate}>

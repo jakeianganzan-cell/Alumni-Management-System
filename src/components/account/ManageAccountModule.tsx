@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bell, Camera, ChevronDown, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, Youtube } from "lucide-react";
+import { Bell, Camera, ChevronDown, Film, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, Youtube } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { canAccessModule, getRoleLabel, type OfficerRole } from "@/lib/rbac";
@@ -22,6 +22,8 @@ import SystemBrandingPanel from "@/components/account/SystemBrandingPanel";
 import SessionMonitoringPanel from "@/components/account/SessionMonitoringPanel";
 import EmailQueueSettingsPanel from "@/components/account/EmailQueueSettingsPanel";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LoadingProgress } from "@/components/ui/loading-progress";
 
 type ModuleMode = "alumni" | "admin";
 type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports" | "settings";
@@ -157,7 +159,7 @@ function PostedMediaPanel({
 
       <div className="mt-4 space-y-3">
         {loading ? (
-          <p className="text-sm text-muted-foreground">Loading homepage slides...</p>
+          <LoadingProgress label="Loading homepage slides" compact />
         ) : slides.length === 0 ? (
           <p className="text-sm text-muted-foreground">No homepage slides posted yet.</p>
         ) : (
@@ -189,7 +191,9 @@ function PostedMediaPanel({
                       <Youtube className="h-6 w-6" />
                     </div>
                   ) : slideMedia && slideType === "video" ? (
-                    <video src={slideMedia} className="h-full w-full object-contain" muted playsInline preload="metadata" />
+                    <div className="flex h-full w-full items-center justify-center bg-slate-900 text-white" title="Video preview">
+                      <Film className="h-6 w-6" />
+                    </div>
                   ) : slideMedia ? (
                     <img src={slideMedia} alt={slide.title} className="h-full w-full object-contain" loading="lazy" />
                   ) : (
@@ -278,6 +282,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   const [loadingHomepageSlides, setLoadingHomepageSlides] = useState(false);
   const [homepageSlideMessage, setHomepageSlideMessage] = useState("");
   const [draggedHomepageSlideId, setDraggedHomepageSlideId] = useState<number | string | null>(null);
+  const [homepageSlideToDelete, setHomepageSlideToDelete] = useState<HomepageSlide | null>(null);
+  const [deletingHomepageSlideId, setDeletingHomepageSlideId] = useState<number | string | null>(null);
 
   const loadHomepageSlides = useCallback(async () => {
     if (!isAdminView) return;
@@ -593,22 +599,23 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     await saveHomepageSlideOrder(nextSlides);
   };
 
-  const deleteHomepageSlide = async (slideId: number | string) => {
-    const confirmed = window.confirm("Delete this homepage slide?");
-    if (!confirmed) return;
-
+  const deleteHomepageSlide = async (slide: HomepageSlide) => {
     setHomepageSlideMessage("");
+    setDeletingHomepageSlideId(slide.id);
 
     try {
-      const response = await fetchApi(`${API_URL}/admin/slideshow/${slideId}`, {
+      const response = await fetchApi(`${API_URL}/admin/slideshow/${slide.id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
       await readApiResponse(response);
-      setHomepageSlides((current) => current.filter((slide) => String(slide.id) !== String(slideId)));
+      setHomepageSlides((current) => current.filter((item) => String(item.id) !== String(slide.id)));
+      setHomepageSlideToDelete(null);
       setHomepageSlideMessage("Homepage slide deleted.");
     } catch (error) {
       setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to delete homepage slide.");
+    } finally {
+      setDeletingHomepageSlideId(null);
     }
   };
 
@@ -981,7 +988,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
                 onDrop={(event, slideId) => void handleHomepageSlideDrop(event, slideId)}
                 onDragEnd={() => setDraggedHomepageSlideId(null)}
                 onEdit={editHomepageSlide}
-                onDelete={(slideId) => void deleteHomepageSlide(slideId)}
+                onDelete={(slideId) => setHomepageSlideToDelete(homepageSlides.find((slide) => String(slide.id) === String(slideId)) ?? null)}
               />
             ) : (
               <SessionMonitoringPanel />
@@ -992,6 +999,14 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       </section>
     </div>
     <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
+    <ConfirmDialog
+      open={Boolean(homepageSlideToDelete)}
+      onOpenChange={(open) => !open && setHomepageSlideToDelete(null)}
+      onConfirm={() => homepageSlideToDelete && deleteHomepageSlide(homepageSlideToDelete)}
+      title="Delete homepage slide?"
+      description={`“${homepageSlideToDelete?.title || "This slide"}” will be permanently removed from Post Media and the alumni dashboard slideshow.`}
+      busy={Boolean(homepageSlideToDelete && String(deletingHomepageSlideId) === String(homepageSlideToDelete.id))}
+    />
     </>
   );
 }

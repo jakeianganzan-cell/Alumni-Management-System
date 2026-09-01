@@ -7,8 +7,9 @@ import {
   toYouTubeEmbedUrl,
   type SlideMediaType,
 } from "@/lib/slideshowMedia";
-import { Loader2, Play, Volume2, VolumeX } from "lucide-react";
+import { Play, Volume2, VolumeX } from "lucide-react";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { CircularLoadingProgress } from "@/components/ui/loading-progress";
 
 type YouTubePlayer = {
   destroy: () => void;
@@ -124,19 +125,10 @@ function formatDuration(seconds: number | null | undefined) {
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
-function BackgroundMedia({ slide, priority, active }: { slide: PreparedSlide; priority: boolean; active: boolean }) {
+function BackgroundMedia({ slide, priority }: { slide: PreparedSlide; priority: boolean }) {
   if (slide.mediaKind === "video") {
     return (
-      <video
-        src={slide.resolvedUrl}
-        className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
-        autoPlay={active}
-        muted
-        loop
-        playsInline
-        preload={active ? "auto" : "metadata"}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_22%,rgba(255,255,255,0.12),transparent_30%),linear-gradient(135deg,rgba(120,18,36,0.72),rgba(17,24,39,0.98))]" />
     );
   }
 
@@ -327,7 +319,7 @@ function YouTubeSlide({
     <div className="relative z-10 h-full w-full bg-black">
       {loading && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45 text-white">
-          <Loader2 className="h-7 w-7 animate-spin" />
+          <CircularLoadingProgress label="" size="small" className="text-white [&_circle:last-of-type]:text-white [&_span]:text-white" />
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" title={slide.title} />
@@ -480,6 +472,15 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
   }, [activeSlide, currentSlide, handleProgressChange]);
 
   useEffect(() => {
+    if (!hasMultipleSlides) return;
+    const nextSlide = visibleSlides[(activeSlide + 1) % visibleSlides.length];
+    if (!nextSlide || nextSlide.mediaKind !== "image") return;
+    const preloadImage = new Image();
+    preloadImage.decoding = "async";
+    preloadImage.src = nextSlide.resolvedUrl;
+  }, [activeSlide, hasMultipleSlides, visibleSlides]);
+
+  useEffect(() => {
     if (!hasMultipleSlides || isHovered || videoPlaying || currentSlide?.mediaKind === "youtube") return;
 
     const interval = window.setInterval(() => {
@@ -526,31 +527,35 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
               aria-hidden={!isActive}
               onClick={() => isLinkedImage && openSlideLink(slide.linkUrl)}
             >
-              <BackgroundMedia slide={slide} priority={index === 0} active={isActive} />
+              {isActive && <BackgroundMedia slide={slide} priority={index === 0} />}
               <div className="absolute inset-0 bg-gradient-to-r from-black/72 via-black/28 to-black/52" />
               <div className="absolute inset-x-0 bottom-0 z-20 h-1/2 bg-gradient-to-t from-black/78 via-black/20 to-transparent" />
 
-              {slide.mediaKind === "youtube" && isActive ? (
-                <YouTubeSlide
-                  slide={slide}
-                  active={isActive}
-                  muted={videoMuted}
-                  onPlayingChange={setVideoPlaying}
-                  onDurationChange={handleDurationChange}
-                  onProgressChange={handleProgressChange}
-                  onEnded={goToNext}
-                />
+              {slide.mediaKind === "youtube" ? (
+                isActive ? (
+                  <YouTubeSlide
+                    slide={slide}
+                    active
+                    muted={videoMuted}
+                    onPlayingChange={setVideoPlaying}
+                    onDurationChange={handleDurationChange}
+                    onProgressChange={handleProgressChange}
+                    onEnded={goToNext}
+                  />
+                ) : null
               ) : slide.mediaKind === "video" ? (
-                <UploadedVideoSlide
-                  slide={slide}
-                  active={isActive}
-                  muted={videoMuted}
-                  onPlayingChange={setVideoPlaying}
-                  onDurationChange={handleDurationChange}
-                  onProgressChange={handleProgressChange}
-                  onEnded={goToNext}
-                />
-              ) : (
+                isActive ? (
+                  <UploadedVideoSlide
+                    slide={slide}
+                    active
+                    muted={videoMuted}
+                    onPlayingChange={setVideoPlaying}
+                    onDurationChange={handleDurationChange}
+                    onProgressChange={handleProgressChange}
+                    onEnded={goToNext}
+                  />
+                ) : null
+              ) : isActive ? (
                 <img
                   src={slide.resolvedUrl}
                   alt={slide.title}
@@ -558,7 +563,7 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
                   decoding="async"
                   className="relative z-10 h-full w-full object-contain"
                 />
-              )}
+              ) : null}
 
               {(slide.title || slide.caption) && (
                 <div

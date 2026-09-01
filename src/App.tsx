@@ -49,6 +49,7 @@ const ChairmanCommunity = lazy(() => import("./pages/chairman/Community"));
 
 // Non-lazy component (small)
 import OfficerBundlesModule from "./components/admin/OfficerBundlesModule";
+import { CircularLoadingProgress } from "@/components/ui/loading-progress";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,7 +68,7 @@ function isOfficerRole(role: string | null): role is OfficerRole {
 function FullScreenLoader() {
   return (
     <div className="flex h-screen items-center justify-center">
-      <div className="animate-spin w-8 h-8 border-4 border-navy border-t-transparent rounded-full" />
+      <CircularLoadingProgress label="Loading" />
     </div>
   );
 }

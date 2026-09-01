@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
-import { Activity, Loader2, TrendingUp, Users } from "lucide-react";
+import { Activity, TrendingUp, Users } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -185,10 +185,7 @@ export default function ChairmanEngagement() {
 function LoadingState() {
   return (
     <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-border bg-card shadow-card">
-      <div className="flex items-center gap-3 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading engagement metrics...
-      </div>
+      <p className="text-sm text-muted-foreground">Loading engagement graphs...</p>
     </div>
   );
 }

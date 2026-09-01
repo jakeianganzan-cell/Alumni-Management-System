@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, ImagePlus, ListTree, Pencil, Plus, Save, Search, Tr
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Switch } from "@/components/ui/switch";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { uploadBrandingFile } from "@/lib/adminUploads";
@@ -58,6 +59,8 @@ export default function AboutContentManager() {
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [selectedService, setSelectedService] = useState<AboutContentItem | null>(null);
+  const [itemToArchive, setItemToArchive] = useState<AboutContentItem | null>(null);
+  const [archivingId, setArchivingId] = useState<number | null>(null);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -159,16 +162,20 @@ export default function AboutContentManager() {
   };
 
   const archiveItem = async (item: AboutContentItem) => {
+    setArchivingId(item.id);
     try {
       const response = await fetch(`${API_URL}/admin/about/${contentType}/${item.id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
       await readApiResponse(response);
+      setItemToArchive(null);
       await loadItems();
       if (editingId === item.id) resetDraft();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to archive the entry.");
+    } finally {
+      setArchivingId(null);
     }
   };
 
@@ -273,7 +280,7 @@ export default function AboutContentManager() {
                 <Button type="button" size="icon" variant="ghost" aria-label="Edit entry" onClick={() => editItem(item)}><Pencil className="h-4 w-4" /></Button>
                 {contentType === "service" && <Button type="button" size="sm" variant="outline" className="text-[11px]" onClick={() => setSelectedService(item)}><ListTree className="mr-1.5 h-3.5 w-3.5" />Details</Button>}
                 <Button type="button" size="sm" variant="outline" className="text-[11px]" onClick={() => void toggleItem(item)}>{item.isActive ? "Hide" : "Show"}</Button>
-                <Button type="button" size="icon" variant="ghost" aria-label="Archive entry" onClick={() => void archiveItem(item)}><Trash2 className="h-4 w-4" /></Button>
+                <Button type="button" size="icon" variant="ghost" aria-label="Archive entry" onClick={() => setItemToArchive(item)}><Trash2 className="h-4 w-4" /></Button>
               </div>
             </article>
             );
@@ -282,6 +289,15 @@ export default function AboutContentManager() {
         </div>
       </div>
       {message && <p className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">{message}</p>}
+      <ConfirmDialog
+        open={Boolean(itemToArchive)}
+        onOpenChange={(open) => !open && setItemToArchive(null)}
+        onConfirm={() => itemToArchive && archiveItem(itemToArchive)}
+        title="Archive this About Us entry?"
+        description={`${itemToArchive?.title || "This entry"} will no longer appear on the public About Us page.`}
+        confirmLabel="Archive entry"
+        busy={Boolean(itemToArchive && archivingId === itemToArchive.id)}
+      />
     </div>
   );
 }

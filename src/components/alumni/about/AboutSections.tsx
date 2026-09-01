@@ -32,6 +32,7 @@ import type { SystemSettings } from "@/context/SystemSettingsContext";
 import type { AboutContentItem } from "@/lib/about";
 import type { CourseOption } from "@/lib/courseCatalog";
 import { resolveAssetUrl } from "@/lib/api";
+import { getMapEmbedUrl } from "@/lib/mapEmbed";
 import salayBackground from "@/assets/salay-background.png";
 import { INSTITUTION_OFFICIAL_SLOTS, normalizeInstitutionPosition, type InstitutionOfficialSlot } from "@/lib/institutionOfficials";
 
@@ -84,7 +85,7 @@ export function InstitutionalHero({ settings }: { settings: SystemSettings }) {
       </div>
       <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-start">
         <Button asChild variant="outline" className="w-full border-primary/35 bg-transparent text-xs text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:w-auto"><Link to="/alumni/about/institution"><Building2 className="mr-2 h-4 w-4" />Institution</Link></Button>
-        <Button asChild variant="outline" className="w-full border-primary/35 bg-transparent text-xs text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:w-auto"><Link to="/alumni/about/academics-alumni"><GraduationCap className="mr-2 h-4 w-4" />Academic &amp; Alumni</Link></Button>
+        <Button asChild variant="outline" className="w-full border-primary/35 bg-transparent text-xs text-primary hover:border-primary hover:bg-transparent hover:text-primary sm:w-auto"><Link to="/alumni/about/academics-alumni"><GraduationCap className="mr-2 h-4 w-4" />Association</Link></Button>
         {websiteUrl && <Button asChild variant="outline" className="w-full bg-transparent text-xs sm:w-auto"><a href={websiteUrl} target="_blank" rel="noreferrer">Visit Official Website<ExternalLink className="ml-2 h-4 w-4" /></a></Button>}
       </div>
     </section>
@@ -96,7 +97,7 @@ function SectionHeading({ eyebrow, title, description, compact = false }: { eyeb
 }
 
 export function InstitutionOverview({ settings }: { settings: SystemSettings }) {
-  return <section className="rounded-2xl border border-border bg-card p-4 shadow-sm md:rounded-3xl md:p-8"><SectionHeading eyebrow="Our Institution" title={`About ${settings.institutionName}`} /><p className="mt-4 max-w-4xl whitespace-pre-line text-xs leading-5 text-foreground md:leading-6">{settings.aboutContent}</p></section>;
+  return <section className="rounded-xl border border-border/70 bg-card p-3 shadow-sm md:p-4"><SectionHeading compact eyebrow="Our Institution" title={`About ${settings.institutionName}`} /><p className="mt-2.5 max-w-4xl whitespace-pre-line text-[11px] leading-5 text-foreground md:text-xs">{settings.aboutContent}</p></section>;
 }
 
 export function InstitutionIdentity({ settings }: { settings: SystemSettings }) {
@@ -108,12 +109,12 @@ export function InstitutionIdentity({ settings }: { settings: SystemSettings }) 
   ].filter((card) => card.content);
   if (!cards.length) return null;
 
-  return <section><div className="grid gap-3 sm:grid-cols-2">{cards.map((card) => <article key={card.title} className="rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5">{card.title !== "Vision" && card.title !== "Mission" && <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10"><card.icon className="h-4 w-4 text-primary" /></div>}<h3 className={`${card.title !== "Vision" && card.title !== "Mission" ? "mt-3 " : ""}font-display text-sm font-bold text-foreground`}>{card.title}</h3>{card.subtitle && <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">{card.subtitle}</p>}<p className="mt-3 whitespace-pre-line text-xs leading-5 text-foreground md:leading-6">{card.content}</p></article>)}</div></section>;
+  return <section><div className="grid gap-2 sm:grid-cols-2">{cards.map((card) => <article key={card.title} className="rounded-xl border border-border/70 bg-card p-3 shadow-sm">{card.title !== "Vision" && card.title !== "Mission" && <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10"><card.icon className="h-3.5 w-3.5 text-primary" /></div>}<h3 className={`${card.title !== "Vision" && card.title !== "Mission" ? "mt-2 " : ""}font-display text-xs font-bold text-foreground`}>{card.title}</h3>{card.subtitle && <p className="mt-0.5 text-[9px] font-medium text-muted-foreground">{card.subtitle}</p>}<p className="mt-2 whitespace-pre-line text-[11px] leading-5 text-foreground md:text-xs">{card.content}</p></article>)}</div></section>;
 }
 
 export function InstitutionalHistory({ entries, fallback }: { entries: AboutContentItem[]; fallback: string }) {
   if (!entries.length && !fallback) return null;
-  return <section id="institutional-history" className="scroll-mt-24"><SectionHeading eyebrow="Our Story" title="Institutional Journey" description="The people, decisions, and milestones that shaped the college." />{fallback && <div className="mt-4 rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5"><p className="whitespace-pre-line text-xs leading-5 text-foreground md:leading-6">{fallback}</p></div>}{entries.length > 0 && <div className="relative mt-5 space-y-4 border-l-2 border-primary/20 pl-5 md:ml-3 md:pl-8">{entries.map((entry) => <article key={entry.id} className="relative rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5"><span className="absolute -left-[26px] top-6 h-2.5 w-2.5 rounded-full bg-primary ring-4 ring-background md:-left-[38px]" />{entry.year && <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-primary md:text-[10px]">{entry.year}</p>}<div className="mt-1.5 grid gap-4 sm:grid-cols-[minmax(0,1fr)_150px]"> <div><h3 className="font-display text-sm font-bold text-foreground">{entry.title}</h3>{entry.subtitle && <p className="mt-1 text-[11px] font-medium text-muted-foreground">{entry.subtitle}</p>}<p className="mt-2 whitespace-pre-line text-xs leading-5 text-foreground md:leading-6">{entry.description}</p></div>{entry.imageUrl && <img src={resolveAssetUrl(entry.imageUrl) || entry.imageUrl} alt={entry.title} className="h-28 w-full rounded-xl object-cover" loading="lazy" />}</div></article>)}</div>}</section>;
+  return <section id="institutional-history" className="scroll-mt-24"><SectionHeading compact eyebrow="Our Story" title="Institutional Journey" description="The people, decisions, and milestones that shaped the college." />{fallback && <div className="mt-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm"><p className="whitespace-pre-line text-[11px] leading-5 text-foreground md:text-xs">{fallback}</p></div>}{entries.length > 0 && <div className="relative mt-3 space-y-2 border-l border-primary/20 pl-4 md:ml-2 md:pl-5">{entries.map((entry) => <article key={entry.id} className="relative rounded-xl border border-border/70 bg-card p-3 shadow-sm"><span className="absolute -left-[19px] top-5 h-2 w-2 rounded-full bg-primary ring-3 ring-background md:-left-[25px]" />{entry.year && <p className="text-[8px] font-bold uppercase tracking-[0.14em] text-primary md:text-[9px]">{entry.year}</p>}<div className="mt-1 grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]"> <div><h3 className="font-display text-xs font-bold text-foreground">{entry.title}</h3>{entry.subtitle && <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">{entry.subtitle}</p>}<p className="mt-1.5 whitespace-pre-line text-[11px] leading-5 text-foreground md:text-xs">{entry.description}</p></div>{entry.imageUrl && <img src={resolveAssetUrl(entry.imageUrl) || entry.imageUrl} alt={entry.title} className="h-24 w-full rounded-lg object-cover" loading="lazy" />}</div></article>)}</div>}</section>;
 }
 
 export function AcademicPrograms({ programs }: { programs: CourseOption[] }) {
@@ -123,7 +124,7 @@ export function AcademicPrograms({ programs }: { programs: CourseOption[] }) {
 
 export function RecognitionMilestones({ entries }: { entries: AboutContentItem[] }) {
   if (!entries.length) return null;
-  return <section><SectionHeading eyebrow="Institutional Progress" title="Recognition & Milestones" /><div className="mt-4 grid gap-3 md:grid-cols-2">{entries.map((entry) => <article key={entry.id} className="flex gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gold/20"><Award className="h-4 w-4 text-amber-700" /></div><div>{entry.year && <p className="text-[10px] font-bold text-primary">{entry.year}</p>}<h3 className="mt-1 font-display text-sm font-bold text-foreground">{entry.title}</h3>{entry.organization && <p className="mt-1 text-[10px] font-medium text-muted-foreground">{entry.organization}</p>}<p className="mt-2 text-xs leading-5 text-muted-foreground">{entry.description}</p></div></article>)}</div></section>;
+  return <section><SectionHeading compact eyebrow="Institutional Progress" title="Recognition & Milestones" /><div className="mt-3 grid gap-2 md:grid-cols-2">{entries.map((entry) => <article key={entry.id} className="flex gap-2.5 rounded-xl border border-border/70 bg-card p-3 shadow-sm"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gold/20"><Award className="h-3.5 w-3.5 text-amber-700" /></div><div>{entry.year && <p className="text-[9px] font-bold text-primary">{entry.year}</p>}<h3 className="mt-0.5 font-display text-xs font-bold text-foreground">{entry.title}</h3>{entry.organization && <p className="mt-0.5 text-[9px] font-medium text-muted-foreground">{entry.organization}</p>}<p className="mt-1.5 text-[11px] leading-4 text-muted-foreground md:text-xs">{entry.description}</p></div></article>)}</div></section>;
 }
 
 export function CollegeLeadership({ entries }: { entries: AboutContentItem[] }) {
@@ -138,16 +139,16 @@ export function CollegeLeadership({ entries }: { entries: AboutContentItem[] }) 
 
   return (
     <section>
-      <SectionHeading eyebrow="People of Service" title="College Leadership & Staff" description="Officials and personnel currently serving the institution, organized by office and role." />
-      <div className="mt-5 space-y-6">
+      <SectionHeading compact eyebrow="People of Service" title="College Leadership & Staff" description="Officials and personnel currently serving the institution, organized by office and role." />
+      <div className="mt-3 space-y-4">
         {groupedEntries.map((group) => (
           <div key={group.category}>
-            <h3 className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{group.category}</h3>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <h3 className="mb-2 text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{group.category}</h3>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {group.people.map((entry) => (
                 <article key={entry.id} className="overflow-hidden rounded-xl border border-border bg-card text-center shadow-sm md:rounded-2xl">
                   {entry.imageUrl ? <img src={resolveAssetUrl(entry.imageUrl) || entry.imageUrl} alt={entry.title} className="aspect-square w-full object-cover sm:aspect-[4/3]" loading="lazy" /> : <div className="flex aspect-square items-center justify-center bg-primary/10 sm:aspect-[4/3]"><Users className="h-8 w-8 text-primary/50 md:h-10 md:w-10" /></div>}
-                  <div className="p-3 md:p-4">
+                  <div className="p-2.5 md:p-3">
                     <h4 className="font-display text-[11px] font-bold leading-4 text-foreground md:text-sm">{entry.title}{entry.credentials ? `, ${entry.credentials}` : ""}</h4>
                     {entry.subtitle && <p className="mt-1 text-[10px] font-semibold leading-4 text-primary md:text-[11px]">{entry.subtitle}</p>}
                     {entry.department && <p className="mt-1 text-[9px] leading-4 text-muted-foreground md:text-[10px]">{entry.department}</p>}
@@ -285,7 +286,7 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
           )}
         </div>
         <p className={`mt-1.5 max-w-32 font-bold leading-tight text-white ${nameClass}`}>{item.entry?.title || "TBA"}{item.entry?.credentials ? `, ${item.entry.credentials}` : ""}</p>
-        <span className={`mt-1 inline-flex max-w-40 rounded-full bg-gold px-2 py-0.5 font-semibold leading-3 text-navy-dark ${roleClass}`}>{item.position}</span>
+        <span className={`mt-1 inline-flex max-w-40 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 font-semibold leading-3 text-white ${roleClass}`}>{item.position}</span>
       </article>
     );
   };
@@ -293,7 +294,7 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
   return (
     <section>
       <div
-        className="relative overflow-hidden rounded-xl border border-border/60 bg-card p-4 shadow-sm md:rounded-2xl md:p-6"
+        className="relative overflow-hidden rounded-xl border border-border/60 bg-card p-3 shadow-sm md:p-4"
         style={{
           backgroundImage: `linear-gradient(rgba(20,20,20,0.82), rgba(85,0,0,0.78)), url(${salayBackground})`,
           backgroundPosition: "center",
@@ -301,26 +302,26 @@ export function InstitutionLeadershipHierarchy({ entries }: { entries: AboutCont
         }}
       >
         <div className="relative z-10">
-          <div className="mb-5 text-center">
+          <div className="mb-3 text-center">
             <h3 className="font-display text-sm font-bold text-white md:text-base">Institution Officials and Staff</h3>
             <p className="mt-1 text-[9px] text-white/70 md:text-[10px]">Salay Community College institutional organization</p>
             <div className="mx-auto mt-2 h-0.5 w-12 rounded-full bg-gold" />
           </div>
 
-          <div className="mx-auto grid max-w-md grid-cols-2 gap-5">
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
             {municipalLeaders.map((item) => <div key={item.key}>{positionCard(item, "large")}</div>)}
           </div>
 
-          <div className="mx-auto my-4 w-full max-w-xl border-t border-dashed border-white/30" />
+          <div className="mx-auto my-3 w-full max-w-xl border-t border-dashed border-white/30" />
 
-          <div className="mx-auto grid max-w-md grid-cols-2 gap-5">
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
             {executiveLeaders.map((item) => <div key={item.key}>{positionCard(item, "medium")}</div>)}
           </div>
 
-          <div className="mx-auto my-4 w-full max-w-3xl border-t border-dashed border-white/30" />
+          <div className="mx-auto my-3 w-full max-w-3xl border-t border-dashed border-white/30" />
 
-          <p className="mb-4 text-center text-[9px] font-semibold uppercase tracking-[0.16em] text-white/70 md:text-[10px]">College Staff</p>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <p className="mb-3 text-center text-[9px] font-semibold uppercase tracking-[0.16em] text-white/70 md:text-[10px]">College Staff</p>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {staff.map((item) => <div key={item.key}>{positionCard(item, "small")}</div>)}
           </div>
         </div>
@@ -333,18 +334,18 @@ export function InstitutionServices({ entries }: { entries: AboutContentItem[] }
   if (!entries.length) return null;
   return (
     <section>
-      <SectionHeading eyebrow="Campus Support" title="Frontline Services" description="Quick access to the offices and services available to students, alumni, and the wider community." />
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <SectionHeading compact eyebrow="Campus Support" title="Frontline Services" description="Quick access to the offices and services available to students, alumni, and the wider community." />
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {entries.map((entry) => {
           const Icon = SERVICE_ICONS[entry.icon.toLowerCase()] || Building2;
-          const content = <><div className="flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Icon className="h-4 w-4 text-primary" /></div><div className="min-w-0 flex-1"><h3 className="font-display text-sm font-bold text-foreground">{entry.title}</h3>{entry.department && <p className="mt-0.5 text-[10px] font-semibold text-primary">{entry.department}</p>}</div>{entry.items?.length ? <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" /> : null}</div>{entry.description && <p className="mt-3 text-xs leading-5 text-muted-foreground">{entry.description}</p>}</>;
+          const content = <><div className="flex items-start gap-2.5"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Icon className="h-3.5 w-3.5 text-primary" /></div><div className="min-w-0 flex-1"><h3 className="font-display text-xs font-bold text-foreground">{entry.title}</h3>{entry.department && <p className="mt-0.5 text-[9px] font-semibold text-primary">{entry.department}</p>}</div>{entry.items?.length ? <ChevronDown className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" /> : null}</div>{entry.description && <p className="mt-2 text-[11px] leading-4 text-muted-foreground md:text-xs">{entry.description}</p>}</>;
 
-          if (!entry.items?.length) return <article key={entry.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">{content}</article>;
+          if (!entry.items?.length) return <article key={entry.id} className="rounded-xl border border-border/70 bg-card p-3 shadow-sm">{content}</article>;
 
           return (
-            <details key={entry.id} className="group rounded-2xl border border-border bg-card shadow-sm">
-              <summary className="cursor-pointer list-none rounded-2xl p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">{content}</summary>
-              <ul className="mx-4 mb-4 space-y-2 border-t border-border pt-3">
+            <details key={entry.id} className="group rounded-xl border border-border/70 bg-card shadow-sm">
+              <summary className="cursor-pointer list-none rounded-xl p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">{content}</summary>
+              <ul className="mx-3 mb-3 space-y-1.5 border-t border-border pt-2.5">
                 {entry.items.map((item) => <li key={item.id} className="rounded-lg bg-muted/30 px-3 py-2"><p className="text-[11px] font-semibold text-foreground">{item.title}</p>{item.description && <p className="mt-1 text-[10px] leading-4 text-muted-foreground md:text-[11px] md:leading-5">{item.description}</p>}</li>)}
               </ul>
             </details>
@@ -365,7 +366,7 @@ export function AlumniPortalAbout({ description }: { description: string }) {
 }
 
 export function ContactAndSocial({ settings }: { settings: SystemSettings }) {
-  const embeddedMapUrl = safeExternalUrl(settings.mapUrl);
+  const embeddedMapUrl = getMapEmbedUrl(settings.mapUrl);
   const contacts = [
     { icon: MapPin, label: "Address", value: settings.institutionAddress },
     { icon: Phone, label: "Contact", value: settings.institutionContact, href: settings.institutionContact ? `tel:${settings.institutionContact.replace(/\s/g, "")}` : "" },
@@ -375,9 +376,10 @@ export function ContactAndSocial({ settings }: { settings: SystemSettings }) {
   const links = [
     { icon: ExternalLink, label: `${settings.institutionName} Website`, value: settings.websiteUrl },
     { icon: Facebook, label: `${settings.institutionName} Facebook Page`, value: settings.facebookLink },
+    { icon: ExternalLink, label: "Google", value: settings.googleLink },
     { icon: ExternalLink, label: "Twitter", value: settings.twitterLink },
     { icon: ExternalLink, label: "Instagram", value: settings.instagramLink },
   ].map((item) => ({ ...item, value: safeExternalUrl(item.value) })).filter((item) => item.value);
 
-  return <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]"><div className="rounded-2xl border border-border bg-card p-4 shadow-sm md:rounded-3xl md:p-6"><SectionHeading eyebrow="Get in Touch" title="Contact & Location" /><div className="mt-4 grid gap-2 sm:grid-cols-2">{contacts.map((item) => <div key={item.label} className="rounded-xl border border-border bg-muted/20 p-3"><item.icon className="h-4 w-4 text-primary" /><p className="mt-2 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground md:text-[10px]">{item.label}</p>{item.href ? <a href={item.href} className="mt-1 block break-words text-xs font-medium text-foreground hover:text-primary hover:underline">{item.value}</a> : <p className="mt-1 text-xs font-medium text-foreground">{item.value}</p>}</div>)}</div>{embeddedMapUrl && <div className="mt-4 overflow-hidden rounded-xl border border-border"><iframe src={embeddedMapUrl} title={`${settings.institutionName} location`} className="h-64 w-full border-0 md:h-72" allowFullScreen loading="lazy" referrerPolicy="strict-origin-when-cross-origin" /></div>}</div><div className="rounded-2xl border border-border bg-card p-4 shadow-sm md:rounded-3xl md:p-6"><SectionHeading eyebrow="Stay Connected" title={`Connect With ${settings.systemShortName}`} />{links.length ? <div className="mt-4 space-y-2">{links.map((item) => <a key={item.label} href={item.value} target="_blank" rel="noreferrer" className="flex min-h-11 items-center justify-between rounded-xl border border-border px-3 py-2.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:bg-primary/5"><span className="flex items-center gap-2"><item.icon className="h-4 w-4 text-primary" />{item.label}</span><ExternalLink className="h-4 w-4 text-muted-foreground" /></a>)}</div> : <p className="mt-4 text-xs text-muted-foreground">Social links have not been configured yet.</p>}</div></section>;
+  return <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]"><div className="rounded-xl border border-border/70 bg-card p-3 shadow-sm md:p-4"><SectionHeading compact eyebrow="Get in Touch" title="Contact & Location" /><div className="mt-3 grid gap-2 sm:grid-cols-2">{contacts.map((item) => <div key={item.label} className="rounded-lg border border-border/70 bg-muted/20 p-2.5"><item.icon className="h-3.5 w-3.5 text-primary" /><p className="mt-1.5 text-[8px] font-semibold uppercase tracking-wide text-muted-foreground md:text-[9px]">{item.label}</p>{item.href ? <a href={item.href} className="mt-0.5 block break-words text-[11px] font-medium text-foreground hover:text-primary hover:underline md:text-xs">{item.value}</a> : <p className="mt-0.5 text-[11px] font-medium text-foreground md:text-xs">{item.value}</p>}</div>)}</div>{embeddedMapUrl && <div className="mt-3 overflow-hidden rounded-lg border border-border/70"><iframe src={embeddedMapUrl} title={`${settings.institutionName} location`} className="h-52 w-full border-0 md:h-60" allowFullScreen loading="lazy" referrerPolicy="strict-origin-when-cross-origin" /></div>}</div><div className="rounded-xl border border-border/70 bg-card p-3 shadow-sm md:p-4"><SectionHeading compact eyebrow="Stay Connected" title="Connect With SaCConnect" />{links.length ? <div className="mt-3 space-y-1.5">{links.map((item) => <a key={item.label} href={item.value} target="_blank" rel="noreferrer" className="flex min-h-9 items-center justify-between rounded-lg border border-border/70 px-2.5 py-2 text-[11px] font-semibold text-foreground transition hover:border-primary/40 hover:bg-primary/5"><span className="flex items-center gap-2"><item.icon className="h-3.5 w-3.5 text-primary" />{item.label}</span><ExternalLink className="h-3.5 w-3.5 text-muted-foreground" /></a>)}</div> : <p className="mt-3 text-[11px] text-muted-foreground">Social links have not been configured yet.</p>}</div></section>;
 }

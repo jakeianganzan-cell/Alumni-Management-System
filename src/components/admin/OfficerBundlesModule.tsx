@@ -37,6 +37,12 @@ const SLOTS: Slot[] = [
   { key: "assistant_treasurer", label: "Assistant Treasurer", description: "Optional support role for the treasurer." },
 ];
 
+const INSTITUTION_OFFICIAL_GROUPS = [
+  { key: "municipal", title: "Municipal Leadership" },
+  { key: "executive", title: "College Executive Leadership" },
+  { key: "staff", title: "College Staff" },
+] as const;
+
 const emptyManuals = (): Record<PositionKey, ManualOfficer> => SLOTS.reduce((drafts, slot) => ({ ...drafts, [slot.key]: { name: "", email: "", course: "", batch: "", contactNumber: "", photo: "" } }), {} as Record<PositionKey, ManualOfficer>);
 const emptyDrafts = (): Drafts => SLOTS.reduce((drafts, slot) => ({ ...drafts, [slot.key]: "" }), {} as Drafts);
 const getError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
@@ -52,6 +58,7 @@ function OfficerDirectory() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [history, setHistory] = useState(false);
   const [institutionSettings, setInstitutionSettings] = useState(false);
+  const [editingInstitutionOfficials, setEditingInstitutionOfficials] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -76,22 +83,22 @@ function OfficerDirectory() {
   useEffect(() => { if (shownYear && detail?.schoolYear.id !== shownYear) void loadDetail(shownYear).catch((error) => toast.error(getError(error))); }, [shownYear]);
 
   const selectHistory = (schoolYearId: number) => { setSelectedHistoryId(schoolYearId); setHistory(true); };
-  const title = institutionSettings ? "Institution Officials Settings" : history ? "Officer History" : "Officer Directory";
+  const title = institutionSettings ? (editingInstitutionOfficials ? "Set Institution Officials" : "Institution Officials") : history ? "Officer History" : "Officer Directory";
   return <AdminLayout title={title} subtitle={institutionSettings ? "Institution Settings" : "Alumni Officers"}><div className="mx-auto w-full max-w-7xl space-y-4">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex w-fit flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card p-2 shadow-sm">
-        <Button variant={history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(true); setInstitutionSettings(false); setSelectedHistoryId((current) => current || archivedYears[0]?.id || null); }}><History className="mr-2 h-4 w-4" />Officer History</Button>
+        <Button variant={history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(true); setInstitutionSettings(false); setEditingInstitutionOfficials(false); setSelectedHistoryId((current) => current || archivedYears[0]?.id || null); }}><History className="mr-2 h-4 w-4" />Officer History</Button>
       </div>
       <div className="flex w-fit flex-wrap items-center gap-2 self-end rounded-xl border border-border/70 bg-card p-2 shadow-sm">
-        <Button variant={!history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(false); setInstitutionSettings(false); setSelectedHistoryId(null); }}><Users className="mr-2 h-4 w-4" />Current Officers</Button>
-        <Button variant={institutionSettings ? "default" : "outline"} onClick={() => { setInstitutionSettings(true); setHistory(false); }}><Building2 className="mr-2 h-4 w-4" />Institution Officials</Button>
-        <Button onClick={() => institutionSettings ? document.getElementById(`institution-official-${INSTITUTION_OFFICIAL_SLOTS[0].key}`)?.focus() : navigate("/admin/officers/add")}>
+        <Button variant={!history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(false); setInstitutionSettings(false); setEditingInstitutionOfficials(false); setSelectedHistoryId(null); }}><Users className="mr-2 h-4 w-4" />Current Officers</Button>
+        <Button variant={institutionSettings ? "default" : "outline"} onClick={() => { setInstitutionSettings(true); setEditingInstitutionOfficials(false); setHistory(false); }}><Building2 className="mr-2 h-4 w-4" />Institution Officials</Button>
+        <Button onClick={() => institutionSettings ? setEditingInstitutionOfficials(true) : navigate("/admin/officers/add")} disabled={institutionSettings && editingInstitutionOfficials}>
           {institutionSettings ? <Building2 className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}{institutionSettings ? "Set Officials" : "Set Officers"}
         </Button>
       </div>
     </div>
     {history && <ArchiveList years={archivedYears} selectedId={selectedHistoryId} onSelect={selectHistory} />}
-    {institutionSettings ? <InstitutionOfficialsSettings /> : loading ? <Card><CardContent className="space-y-3 p-4"><Skeleton className="h-10 w-52" /><Skeleton className="h-64 w-full" /></CardContent></Card> : <RosterCard detail={history && !selectedHistoryId ? null : detail} archived={history} />}
+    {institutionSettings ? (editingInstitutionOfficials ? <InstitutionOfficialsSettings onSaved={() => setEditingInstitutionOfficials(false)} /> : <CurrentInstitutionOfficials />) : loading ? <Card><CardContent className="space-y-3 p-4"><Skeleton className="h-10 w-52" /><Skeleton className="h-64 w-full" /></CardContent></Card> : <RosterCard detail={history && !selectedHistoryId ? null : detail} archived={history} />}
   </div></AdminLayout>;
 }
 
@@ -107,7 +114,71 @@ function RosterCard({ detail, archived }: { detail: Detail | null; archived: boo
 
 function Avatar({ officer }: { officer: Officer }) { const photo = resolveAssetUrl(officer.photo); return <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold text-muted-foreground">{photo ? <img src={photo} alt="" className="h-full w-full object-cover" /> : officer.name.split(" ").map((item) => item[0]).slice(0, 2).join("")}</div>; }
 
-function InstitutionOfficialsSettings() {
+function CurrentInstitutionOfficials() {
+  const [items, setItems] = useState<AboutContentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await fetchApi(`${API_URL}/admin/about/leadership`, { headers: getAuthHeaders() });
+        const records = await readApiResponse<AboutContentItem[]>(response);
+        setItems(records.filter((item) => item.category === INSTITUTION_OFFICIAL_CATEGORY && item.isActive));
+      } catch (error) {
+        toast.error(getError(error));
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
+  }, []);
+
+  const officialForSlot = (label: string) => items.find((item) => normalizeInstitutionPosition(item.subtitle) === normalizeInstitutionPosition(label));
+
+  return (
+    <Card className="border-border/70 shadow-sm">
+      <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/60">
+        <div>
+          <CardTitle>Current Institution Officials</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">Officials currently shown in the Institution Organization Chart.</p>
+        </div>
+        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Current</Badge>
+      </CardHeader>
+      <CardContent className="space-y-5 p-4 sm:p-5">
+        {loading ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 9 }).map((_, index) => <Skeleton key={index} className="h-20 rounded-lg" />)}</div>
+        ) : items.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">No current institution officials have been set.</p>
+        ) : (
+          INSTITUTION_OFFICIAL_GROUPS.map((group) => (
+            <section key={group.key}>
+              <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">{group.title}</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {INSTITUTION_OFFICIAL_SLOTS.filter((slot) => slot.level === group.key).map((slot) => {
+                  const official = officialForSlot(slot.label);
+                  const photo = official?.imageUrl ? resolveAssetUrl(official.imageUrl) || official.imageUrl : "";
+                  return (
+                    <div key={slot.key} className="flex items-center gap-3 rounded-lg border border-border/70 bg-muted/15 p-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted text-xs font-semibold text-muted-foreground">
+                        {photo ? <img src={photo} alt={official?.title || slot.label} className="h-full w-full object-cover" /> : <Building2 className="h-5 w-5" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-navy-dark">{official?.title || "Not set"}</p>
+                        <p className="text-xs text-muted-foreground">{slot.label}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function InstitutionOfficialsSettings({ onSaved }: { onSaved: () => void }) {
   const [records, setRecords] = useState<Record<string, AboutContentItem | undefined>>({});
   const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(INSTITUTION_OFFICIAL_SLOTS.map((slot) => [slot.key, ""])));
   const [photos, setPhotos] = useState<Record<string, string>>(() => Object.fromEntries(INSTITUTION_OFFICIAL_SLOTS.map((slot) => [slot.key, ""])));
@@ -193,18 +264,13 @@ function InstitutionOfficialsSettings() {
       }));
       toast.success("Institution officials and staff saved. Alumni officer records were not changed.");
       await load();
+      onSaved();
     } catch (error) {
       toast.error(getError(error));
     } finally {
       setSaving(false);
     }
   };
-
-  const groups = [
-    { key: "municipal", title: "Municipal Leadership" },
-    { key: "executive", title: "College Executive Leadership" },
-    { key: "staff", title: "College Staff" },
-  ] as const;
 
   return (
     <Card id="institution-officials-settings" className="scroll-mt-4 border-border/70 shadow-sm">
@@ -221,7 +287,7 @@ function InstitutionOfficialsSettings() {
         {loading ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 9 }).map((_, index) => <Skeleton key={index} className="h-16 rounded-lg" />)}</div>
         ) : (
-          groups.map((group) => (
+          INSTITUTION_OFFICIAL_GROUPS.map((group) => (
             <section key={group.key}>
               <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">{group.title}</h3>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -171,7 +171,9 @@ export default function AdminEngagement() {
             <h3 className="font-bold text-sm text-navy-dark">Engagement Prediction</h3>
           </div>
           <div className="space-y-3 p-4">
-            {predictionCounts.length === 0 ? (
+            {loading ? (
+              <div className="px-4 py-6 text-center text-sm text-muted-foreground">Loading engagement graph...</div>
+            ) : predictionCounts.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">No prediction data yet.</div>
             ) : (
               predictionCounts.map((item) => (
@@ -197,6 +199,9 @@ export default function AdminEngagement() {
             <h3 className="font-bold text-sm text-navy-dark">Engagement Heatmaps</h3>
           </div>
           <div className="overflow-x-auto p-4">
+            {loading ? (
+              <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">Loading engagement heatmap...</div>
+            ) : (
             <div className="min-w-[520px]">
               <div className="grid grid-cols-[56px_repeat(8,minmax(42px,1fr))] gap-1 text-[10px] text-muted-foreground">
                 <div />
@@ -220,6 +225,7 @@ export default function AdminEngagement() {
                 ))}
               </div>
             </div>
+            )}
           </div>
         </section>
       </div>

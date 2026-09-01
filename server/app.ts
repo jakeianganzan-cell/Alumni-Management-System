@@ -308,6 +308,7 @@ interface SystemSettingsRow extends QueryRow {
     map_url: string | null;
     office_hours: string | null;
     facebook_link: string | null;
+    google_link: string | null;
     twitter_link: string | null;
     instagram_link: string | null;
     theme_mode: string | null;
@@ -1582,6 +1583,8 @@ const getRoleDisplayLabel = (role: unknown) => {
         .join(" ") || "User";
 };
 
+const ONLINE_SESSION_WINDOW_MINUTES = 3;
+
 const ensureUserSessionTables = async () => {
     await db.execute(`
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -2647,9 +2650,10 @@ const DEFAULT_SYSTEM_SETTINGS = {
     institutional_goal: "",
     alumni_portal_description: "The Salay Community College Alumni Management System serves as a centralized digital platform for maintaining alumni records, conducting graduate tracer studies, strengthening alumni engagement, sharing institutional announcements and events, facilitating donations, and providing data-driven reports for the college administration.",
     about_cover_image_path: "",
-    map_url: "",
+    map_url: "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3942.2072578607067!2d124.78691430418375!3d8.860287812277864!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3300198f7087c7db%3A0xcf5856653f342c57!2sSalay%20Community%20College!5e0!3m2!1sen!2sph!4v1788268732165!5m2!1sen!2sph",
     office_hours: "",
     facebook_link: "",
+    google_link: "",
     twitter_link: "",
     instagram_link: "",
     theme_mode: "light"
@@ -2690,6 +2694,7 @@ const SYSTEM_SETTING_COLUMNS = [
     "map_url",
     "office_hours",
     "facebook_link",
+    "google_link",
     "twitter_link",
     "instagram_link",
     "theme_mode"
@@ -2802,6 +2807,7 @@ const mapSystemSettingsRow = (row: Partial<SystemSettingsRow> | null | undefined
         mapUrl: String(source.map_url || DEFAULT_SYSTEM_SETTINGS.map_url),
         officeHours: String(source.office_hours || DEFAULT_SYSTEM_SETTINGS.office_hours),
         facebookLink: String(source.facebook_link || DEFAULT_SYSTEM_SETTINGS.facebook_link),
+        googleLink: String(source.google_link || DEFAULT_SYSTEM_SETTINGS.google_link),
         twitterLink: String(source.twitter_link || DEFAULT_SYSTEM_SETTINGS.twitter_link),
         instagramLink: String(source.instagram_link || DEFAULT_SYSTEM_SETTINGS.instagram_link),
         themeMode: normalizeThemeMode(source.theme_mode),
@@ -2846,6 +2852,7 @@ const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
         map_url: "mapUrl",
         office_hours: "officeHours",
         facebook_link: "facebookLink",
+        google_link: "googleLink",
         twitter_link: "twitterLink",
         instagram_link: "instagramLink",
         theme_mode: "themeMode"
@@ -2915,6 +2922,7 @@ const ensureSystemSettingsTable = async () => {
             map_url TEXT,
             office_hours VARCHAR(255),
             facebook_link TEXT,
+            google_link TEXT,
             twitter_link TEXT,
             instagram_link TEXT,
             theme_mode ENUM('light', 'dark', 'auto', 'custom') DEFAULT 'light',
@@ -2932,7 +2940,8 @@ const ensureSystemSettingsTable = async () => {
         { name: "alumni_portal_description", sql: "ALTER TABLE system_settings ADD COLUMN alumni_portal_description TEXT AFTER institutional_goal" },
         { name: "about_cover_image_path", sql: "ALTER TABLE system_settings ADD COLUMN about_cover_image_path LONGTEXT AFTER alumni_portal_description" },
         { name: "map_url", sql: "ALTER TABLE system_settings ADD COLUMN map_url TEXT AFTER about_cover_image_path" },
-        { name: "office_hours", sql: "ALTER TABLE system_settings ADD COLUMN office_hours VARCHAR(255) AFTER map_url" }
+        { name: "office_hours", sql: "ALTER TABLE system_settings ADD COLUMN office_hours VARCHAR(255) AFTER map_url" },
+        { name: "google_link", sql: "ALTER TABLE system_settings ADD COLUMN google_link TEXT AFTER facebook_link" }
     ];
 
     for (const column of columnsToAdd) {
@@ -6298,6 +6307,20 @@ app.get("/api/auth/session", authenticateToken, async (req: AuthenticatedRequest
     }
 });
 
+app.post("/api/auth/heartbeat", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.sessionId) return res.sendStatus(204);
+        await db.execute(
+            "UPDATE user_sessions SET last_activity = NOW() WHERE session_token = ? AND status = 'Active'",
+            [req.user.sessionId]
+        );
+        res.sendStatus(204);
+    } catch (err: unknown) {
+        logger.warn("SESSION HEARTBEAT ERROR:", err);
+        res.status(503).json({ error: "Unable to update session activity." });
+    }
+});
+
 app.get("/api/auth/tracer-status", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) {
@@ -7756,6 +7779,11 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 us.logout_time,
                 us.last_activity,
                 us.status,
+                CASE
+                    WHEN us.status = 'Active'
+                     AND us.last_activity >= DATE_SUB(NOW(), INTERVAL ${ONLINE_SESSION_WINDOW_MINUTES} MINUTE)
+                    THEN 1 ELSE 0
+                END AS is_online,
                 p.name AS full_name,
                 u.email
              FROM user_sessions us
@@ -7818,6 +7846,10 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
 
         const stats = await getSingleRow(
             `SELECT
+                COUNT(DISTINCT CASE WHEN status = 'Active' AND last_activity >= DATE_SUB(NOW(), INTERVAL ${ONLINE_SESSION_WINDOW_MINUTES} MINUTE) THEN user_id END) AS onlineUsers,
+                SUM(CASE WHEN status = 'Active' AND last_activity >= DATE_SUB(NOW(), INTERVAL ${ONLINE_SESSION_WINDOW_MINUTES} MINUTE) THEN 1 ELSE 0 END) AS onlineSessions,
+                COUNT(DISTINCT CASE WHEN login_time >= CURRENT_DATE() AND login_time < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY) THEN user_id END) AS loggedInToday,
+                SUM(CASE WHEN login_time >= CURRENT_DATE() AND login_time < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY) THEN 1 ELSE 0 END) AS loginsToday,
                 COUNT(DISTINCT CASE WHEN status = 'Active' THEN user_id END) AS activeUsers,
                 SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) AS activeSessions,
                 SUM(CASE WHEN status = 'Active' AND role_id IN ('admin', 'president') THEN 1 ELSE 0 END) AS loggedInAdministrators,
@@ -7843,6 +7875,7 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 logoutTime: session.logout_time || null,
                 lastActivity: session.last_activity || null,
                 status: String(session.status || SESSION_ENDED_STATUS),
+                isOnline: Number(session.is_online || 0) === 1,
                 isCurrent: req.user?.sessionId ? String(session.session_token) === req.user.sessionId : false
             })),
             activities: activities.map((activity) => ({
@@ -7860,6 +7893,10 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 createdAt: activity.created_at || null
             })),
             stats: {
+                onlineUsers: Number(stats?.onlineUsers || 0),
+                onlineSessions: Number(stats?.onlineSessions || 0),
+                loggedInToday: Number(stats?.loggedInToday || 0),
+                loginsToday: Number(stats?.loginsToday || 0),
                 activeUsers: Number(stats?.activeUsers || 0),
                 activeSessions: Number(stats?.activeSessions || 0),
                 loggedInAdministrators: Number(stats?.loggedInAdministrators || 0),
@@ -7869,6 +7906,50 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
         });
     } catch (err: unknown) {
         logger.error("ADMIN SESSIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
+    }
+});
+
+app.post("/api/admin/sessions/user/:userId/terminate", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureUserSessionTables();
+        const userId = normalizeText(req.params.userId);
+        if (!userId) return res.status(400).json({ error: "Invalid user ID." });
+
+        const activeSessions = parseRows(await db.query(
+            `SELECT us.*, p.name, u.email
+             FROM user_sessions us
+             LEFT JOIN profiles p ON p.id = us.user_id
+             LEFT JOIN users u ON u.id = us.user_id
+             WHERE us.user_id = ? AND us.status = 'Active'`,
+            [userId]
+        ));
+
+        if (activeSessions.length === 0) {
+            return res.json({ success: true, terminated: 0 });
+        }
+
+        await db.execute(
+            "UPDATE user_sessions SET status = 'Ended', logout_time = COALESCE(logout_time, NOW()), last_activity = NOW() WHERE user_id = ? AND status = 'Active'",
+            [userId]
+        );
+
+        const actorProfile = req.user?.id ? await getProfileForUser(req.user.id) : null;
+        await Promise.all(activeSessions.map((session) => recordActivityLog({
+            userId,
+            sessionToken: session.session_token ? String(session.session_token) : null,
+            action: "Force Logout",
+            description: `${String(actorProfile?.name || req.user?.email || "Administrator")} force logged out ${String(session.name || session.email || "a user")} from ${getRoleDisplayLabel(session.role_id)} session.`,
+            roleUsed: session.role_id ? String(session.role_id) : null,
+            deviceUsed: session.device_type ? String(session.device_type) : null,
+            browserUsed: session.browser ? String(session.browser) : null,
+            ipAddress: session.ip_address ? String(session.ip_address) : null,
+            metadata: { terminatedBy: req.user?.id || null, accountWide: true }
+        })));
+
+        res.json({ success: true, terminated: activeSessions.length });
+    } catch (err: unknown) {
+        logger.error("TERMINATE USER SESSIONS ERROR:", err);
         res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });

@@ -4,6 +4,7 @@ import AdminLayout from "@/components/admin/AdminLayout";
 import { AlertTriangle, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface Post {
   id: number;
@@ -27,6 +28,8 @@ export default function AdminCommunity() {
   const [showFlagged, setShowFlagged] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [postToDelete, setPostToDelete] = useState<Post | null>(null);
+  const [deletingPostId, setDeletingPostId] = useState<number | null>(null);
 
   const loadPosts = async () => {
     try {
@@ -73,20 +76,22 @@ export default function AdminCommunity() {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
 
-  const deletePost = async (id: number) => {
-    if (confirm("Are you sure you want to delete this post?")) {
-      try {
-        const response = await fetch(`${API_URL}/admin/freedom-wall/posts/${id}`, {
-          method: "DELETE",
-          headers: getAuthHeaders(),
-        });
-        await readApiResponse(response);
-        toast.success("Post marked as deleted");
-        await loadPosts();
-      } catch (error) {
-        clientLogger.error(error);
-        toast.error(error instanceof Error ? error.message : "Could not delete post");
-      }
+  const deletePost = async (post: Post) => {
+    setDeletingPostId(post.id);
+    try {
+      const response = await fetch(`${API_URL}/admin/freedom-wall/posts/${post.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      await readApiResponse(response);
+      setPostToDelete(null);
+      toast.success("Post marked as deleted");
+      await loadPosts();
+    } catch (error) {
+      clientLogger.error(error);
+      toast.error(error instanceof Error ? error.message : "Could not delete post");
+    } finally {
+      setDeletingPostId(null);
     }
   };
 
@@ -124,6 +129,14 @@ export default function AdminCommunity() {
   return (
     <AdminLayout title="Freedom Wall">
       <div className="space-y-6">
+        <ConfirmDialog
+          open={Boolean(postToDelete)}
+          onOpenChange={(open) => !open && setPostToDelete(null)}
+          onConfirm={() => postToDelete && deletePost(postToDelete)}
+          title="Delete this Freedom Wall post?"
+          description="This post will be removed from the community feed. This action cannot be undone."
+          busy={Boolean(postToDelete && deletingPostId === postToDelete.id)}
+        />
         <section>
           <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -224,7 +237,7 @@ export default function AdminCommunity() {
                               )}
                               <IconButton
                                 label="Delete"
-                                onClick={() => void deletePost(post.id)}
+                                onClick={() => setPostToDelete(post)}
                                 icon={<Trash2 className="h-3.5 w-3.5 text-rose-600" />}
                               />
                             </div>

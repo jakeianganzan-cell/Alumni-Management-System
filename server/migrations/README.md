@@ -23,3 +23,4 @@ npx tsx run-migration.mjs
 - `007_about_staff_and_service_items.sql` - Staff categories and normalized Frontline Service items
 - `008_add_donation_anonymity.sql` - Anonymous donation visibility
 - `009_add_walk_in_donation_fields.sql` - Admin-recorded walk-in donor information
+- `010_add_google_link.sql` - Admin-managed Google link for the public About Us page

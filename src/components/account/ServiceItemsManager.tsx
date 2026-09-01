@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Switch } from "@/components/ui/switch";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import type { AboutContentItem, InstitutionServiceItem } from "@/lib/about";
@@ -21,6 +22,8 @@ export default function ServiceItemsManager({ service, onClose }: { service: Abo
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [itemToArchive, setItemToArchive] = useState<InstitutionServiceItem | null>(null);
+  const [archivingId, setArchivingId] = useState<number | null>(null);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -103,16 +106,20 @@ export default function ServiceItemsManager({ service, onClose }: { service: Abo
   };
 
   const archiveItem = async (item: InstitutionServiceItem) => {
+    setArchivingId(item.id);
     try {
       const response = await fetch(`${API_URL}/admin/about/services/${service.id}/items/${item.id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
       await readApiResponse(response);
+      setItemToArchive(null);
       await loadItems();
       if (editingId === item.id) resetDraft();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to archive service detail.");
+    } finally {
+      setArchivingId(null);
     }
   };
 
@@ -156,7 +163,7 @@ export default function ServiceItemsManager({ service, onClose }: { service: Abo
                   <Button type="button" size="icon" variant="ghost" aria-label="Move detail down" disabled={index === items.length - 1} onClick={() => void moveItem(index, 1)}><ArrowDown className="h-3.5 w-3.5" /></Button>
                   <Button type="button" size="icon" variant="ghost" aria-label="Edit service detail" onClick={() => { setDraft({ title: item.title, description: item.description, displayOrder: item.displayOrder, isActive: item.isActive }); setEditingId(item.id); }}><Pencil className="h-3.5 w-3.5" /></Button>
                   <Button type="button" size="sm" variant="outline" className="text-[11px]" onClick={() => void toggleItem(item)}>{item.isActive ? "Hide" : "Show"}</Button>
-                  <Button type="button" size="icon" variant="ghost" aria-label="Archive service detail" onClick={() => void archiveItem(item)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button type="button" size="icon" variant="ghost" aria-label="Archive service detail" onClick={() => setItemToArchive(item)}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               </div>
             </article>
@@ -164,6 +171,15 @@ export default function ServiceItemsManager({ service, onClose }: { service: Abo
         </div>
       </div>
       {message && <p className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">{message}</p>}
+      <ConfirmDialog
+        open={Boolean(itemToArchive)}
+        onOpenChange={(open) => !open && setItemToArchive(null)}
+        onConfirm={() => itemToArchive && archiveItem(itemToArchive)}
+        title="Archive this service detail?"
+        description={`${itemToArchive?.title || "This detail"} will be removed from the public service section.`}
+        confirmLabel="Archive detail"
+        busy={Boolean(itemToArchive && archivingId === itemToArchive.id)}
+      />
     </section>
   );
 }

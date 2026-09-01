@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Edit3, FileText, Inbox, Loader2, Megaphone, MessageSquare, Trash2, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -109,6 +110,7 @@ export default function MyPostsPanel() {
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [postToRemove, setPostToRemove] = useState<MyPost | null>(null);
 
   const loadPosts = async () => {
     setLoading(true);
@@ -198,9 +200,6 @@ export default function MyPostsPanel() {
   };
 
   const removePost = async (post: MyPost) => {
-    const confirmed = window.confirm("Remove this post from your list?");
-    if (!confirmed) return;
-
     setRemovingId(`${post.type}-${post.id}`);
     try {
       const response = await fetchApi(`${API_URL}/account/my-posts/${endpointType[post.type]}/${post.id}`, {
@@ -209,6 +208,7 @@ export default function MyPostsPanel() {
       });
       const data = await readApiResponse<{ message?: string }>(response);
       setPosts((current) => current.filter((item) => !(item.type === post.type && item.id === post.id)));
+      setPostToRemove(null);
       toast.success(data.message || "Post removed successfully.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to remove post.");
@@ -282,7 +282,7 @@ export default function MyPostsPanel() {
                     <Edit3 className="h-3.5 w-3.5" />
                     Edit
                   </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => void removePost(post)} disabled={removingId === rowKey} className="gap-1.5 text-rose-700 hover:text-rose-800">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setPostToRemove(post)} disabled={removingId === rowKey} className="gap-1.5 text-rose-700 hover:text-rose-800">
                     {removingId === rowKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                     Delete
                   </Button>
@@ -371,6 +371,14 @@ export default function MyPostsPanel() {
           )}
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(postToRemove)}
+        onOpenChange={(open) => !open && setPostToRemove(null)}
+        onConfirm={() => postToRemove && removePost(postToRemove)}
+        title="Delete this post?"
+        description={`“${postToRemove?.title || "This post"}” will be permanently removed.`}
+        busy={Boolean(postToRemove && removingId === `${postToRemove.type}-${postToRemove.id}`)}
+      />
     </div>
   );
 }

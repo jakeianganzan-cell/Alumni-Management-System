@@ -991,6 +991,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
     map_url TEXT,
     office_hours VARCHAR(255),
     facebook_link TEXT,
+    google_link TEXT,
     twitter_link TEXT,
     instagram_link TEXT,
     theme_mode ENUM('light', 'dark', 'auto', 'custom') DEFAULT 'light',
