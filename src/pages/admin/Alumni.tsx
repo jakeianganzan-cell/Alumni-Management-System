@@ -1,16 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { clientLogger } from "@/lib/logger";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExcelJS from "exceljs";
 import { toast } from "sonner";
 import AdminLayout from "@/components/admin/AdminLayout";
 import {
-  AlertCircle,
   Camera,
   CheckCircle,
-  CreditCard,
   ChevronDown,
   ChevronUp,
-  Eye,
-  EyeOff,
   FileSpreadsheet,
   Filter,
   Loader2,
@@ -28,9 +25,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { downloadBrandedExcel, openPrintableReport, type ReportColumn } from "@/lib/reportExport";
 
-const COURSES = [ALL_COURSES_OPTION, ...SYSTEM_COURSES];
 const BATCHES = ["All Batches", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"];
-const ALUMNI_PAGE_SIZE = 10;
+const ALUMNI_PAGE_SIZE = 15;
 
 interface AlumniRecord {
   id: string;
@@ -50,35 +46,16 @@ interface AlumniRecord {
   photo: string | null;
   role?: string;
 }
-interface AlumniFeeItem {
-  id: number;
-  feeName: string;
-  amount: number;
-  dueDate: string | null;
-  assignedOfficerName: string;
-  paymentInstruction: string;
-  paid: boolean;
-  amountPaid: number;
-  paidDate: string | null;
-  receivedByName: string | null;
-  paymentNote: string;
-}
 
-interface AlumniFeeRecord {
-  alumniId: string;
-  status: "Complete" | "Incomplete";
-  requiredFeeCount: number;
-  paidFeeCount: number;
-  unpaidFeeCount: number;
-  totalRequired: number;
-  totalPaid: number;
-  totalUnpaid: number;
-  requiredFees: AlumniFeeItem[];
-  paidFees: AlumniFeeItem[];
-  unpaidFees: AlumniFeeItem[];
-  paymentInstruction: string;
+interface ProfilesPageResponse {
+  rows: AlumniRecord[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
 }
-
 interface NewAlumniForm {
   name: string;
   course: string;
@@ -150,9 +127,6 @@ const normalizeEmail = (value: unknown) => String(value || "").trim().toLowerCas
 const normalizePhone = (value: unknown) => String(value || "").replace(/[^\d+]/g, "").trim();
 const normalizeYear = (value: unknown) => String(value || "").trim();
 const normalizeHeader = (value: unknown) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-const ADVANCED_STUDIES_LEVELS = ["", "Master's Degree", "Doctoral Degree"] as const;
-const ADVANCED_STUDIES_STATUSES = ["", "Currently enrolled", "Completed", "On leave", "Discontinued"] as const;
-
 const normalizeAdvancedStudiesLevel = (value: unknown) => {
   const text = normalizeText(value);
   const key = text.toLowerCase().replace(/[^a-z]/g, "");
@@ -496,11 +470,12 @@ export default function AdminAlumni() {
   const [sortKey, setSortKey] = useState<keyof AlumniRecord>("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalAlumni, setTotalAlumni] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [showAdd, setShowAdd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState<NewAlumniForm>(BLANK);
-  const [showPass, setShowPass] = useState(false);
   const [addedAlumni, setAddedAlumni] = useState<{ name: string; email: string; alumniId: string } | null>(null);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
@@ -515,13 +490,6 @@ export default function AdminAlumni() {
   const [importResult, setImportResult] = useState<ImportResponse | null>(null);
   const [importSchoolYear, setImportSchoolYear] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [selectedAlumni, setSelectedAlumni] = useState<AlumniRecord | null>(null);
-  const [feeRecords, setFeeRecords] = useState<AlumniFeeRecord[]>([]);
-  const [feeLoading, setFeeLoading] = useState(false);
-
-  useEffect(() => {
-    fetchAlumni();
-  }, []);
 
   useEffect(() => {
     if (systemCourses.length > 0 && !systemCourses.includes(form.course)) {
@@ -532,64 +500,23 @@ export default function AdminAlumni() {
     () => new Set(alumni.map((profile) => normalizeEmail(profile.email)).filter(Boolean)),
     [alumni]
   );
-  const existingStudentIds = useMemo(
-    () => new Set(alumni.map((profile) => normalizeText(profile.student_id).toLowerCase()).filter(Boolean)),
-    [alumni]
-  );
-
   const trimmedName = normalizeText(form.name);
-  const normalizedAddEmail = normalizeEmail(form.email);
-  const normalizedAddStudentId = normalizeText(form.studentId);
   const emailValidationError = form.email ? getAlumniEmailError(form.email) : "Email address is required.";
   const studentIdValidationError = getStudentIdError(form.studentId);
-  const duplicateEmailError = normalizedAddEmail && existingEmails.has(normalizedAddEmail)
-    ? "This alumni account already exists."
-    : "";
-  const duplicateStudentIdError = normalizedAddStudentId && existingStudentIds.has(normalizedAddStudentId.toLowerCase())
-    ? "This Student/Alumni ID already exists."
-    : "";
   const addFormErrors = {
     name: trimmedName ? "" : "Full name is required.",
     batch: /^\d{4}$/.test(form.batch) ? "" : "Batch year must be a 4-digit year.",
     course: systemCourses.includes(form.course) ? "" : "Select a valid course/program.",
-    email: duplicateEmailError || emailValidationError,
-    studentId: duplicateStudentIdError || studentIdValidationError,
+    email: emailValidationError,
+    studentId: studentIdValidationError,
   };
   const canCreateAlumni = Object.values(addFormErrors).every((message) => !message);
 
-  const filtered = useMemo(() => {
-    return alumni
-      .filter((item) =>
-        (course === ALL_COURSES_OPTION || item.course === course) &&
-        (batch === "All Batches" || item.batch === batch) &&
-        (!borFilter || normalizeText(item.bor_number).toLowerCase().includes(borFilter.toLowerCase())) &&
-        (!advancedStudiesFilter || item.advanced_studies_level === advancedStudiesFilter) &&
-        (!search ||
-          item.name.toLowerCase().includes(search.toLowerCase()) ||
-          (item.student_id ?? "").toLowerCase().includes(search.toLowerCase()) ||
-          item.email.toLowerCase().includes(search.toLowerCase()) ||
-          normalizeText(item.bor_number).toLowerCase().includes(search.toLowerCase()) ||
-          formatAdvancedStudies(item).toLowerCase().includes(search.toLowerCase()) ||
-          normalizeText(item.advanced_studies_program).toLowerCase().includes(search.toLowerCase()) ||
-          normalizeText(item.advanced_studies_school).toLowerCase().includes(search.toLowerCase()))
-      )
-      .sort((a, b) => {
-        const av = String(a[sortKey] ?? "");
-        const bv = String(b[sortKey] ?? "");
-        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-      });
-  }, [advancedStudiesFilter, alumni, batch, borFilter, course, search, sortAsc, sortKey]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / ALUMNI_PAGE_SIZE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStartIndex = (safeCurrentPage - 1) * ALUMNI_PAGE_SIZE;
-  const paginatedAlumni = useMemo(
-    () => filtered.slice(pageStartIndex, pageStartIndex + ALUMNI_PAGE_SIZE),
-    [filtered, pageStartIndex]
-  );
-  const visibleStart = filtered.length === 0 ? 0 : pageStartIndex + 1;
-  const visibleEnd = Math.min(pageStartIndex + paginatedAlumni.length, filtered.length);
-  const selectedFeeRecord = selectedAlumni ? feeRecords.find((record) => record.alumniId === selectedAlumni.id) || null : null;
+  const paginatedAlumni = alumni;
+  const visibleStart = totalAlumni === 0 ? 0 : pageStartIndex + 1;
+  const visibleEnd = Math.min(pageStartIndex + paginatedAlumni.length, totalAlumni);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -606,34 +533,72 @@ export default function AdminAlumni() {
 
   const importIssueCount = importRows.length - importReadyCount;
 
-  const fetchAlumni = async () => {
+  const buildProfilesQuery = useCallback((page: number, pageSize: number) => {
+    const params = new URLSearchParams({
+      paginated: "true",
+      role: "alumni",
+      page: String(page),
+      pageSize: String(pageSize),
+      sortBy: String(sortKey),
+      sortDirection: sortAsc ? "asc" : "desc",
+    });
+
+    if (search.trim()) params.set("search", search.trim());
+    if (course !== ALL_COURSES_OPTION) params.set("course", course);
+    if (batch !== "All Batches") params.set("batch", batch);
+    if (borFilter.trim()) params.set("borNumber", borFilter.trim());
+    if (advancedStudiesFilter) params.set("advancedStudiesLevel", advancedStudiesFilter);
+
+    return params;
+  }, [advancedStudiesFilter, batch, borFilter, course, search, sortAsc, sortKey]);
+
+  const fetchAlumni = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
-    setFeeLoading(true);
     const headers = getAuthHeaders();
 
     try {
-      const profilesResponse = await fetch(`${API_URL}/profiles`, { headers });
-      const data = await readApiResponse<AlumniRecord[]>(profilesResponse);
-      const alumniRecords = (data || []).filter((profile) => profile.role === "alumni");
-      setAlumni(alumniRecords);
-      setSelectedAlumni((current) => current && alumniRecords.some((item) => item.id === current.id) ? current : alumniRecords[0] || null);
+      const query = buildProfilesQuery(currentPage, ALUMNI_PAGE_SIZE);
+      const profilesResponse = await fetch(`${API_URL}/profiles?${query}`, { headers, signal });
+      const data = await readApiResponse<ProfilesPageResponse>(profilesResponse);
+      setAlumni(data.rows || []);
+      setTotalAlumni(data.pagination.total);
+      setTotalPages(data.pagination.totalPages);
     } catch (error) {
-      console.error(error);
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      clientLogger.error(error);
       toast.error("Failed to fetch alumni records");
     } finally {
       setLoading(false);
     }
+  }, [buildProfilesQuery, currentPage]);
 
-    try {
-      const feeRecordsResponse = await fetch(`${API_URL}/admin/donations/fee-records`, { headers });
-      setFeeRecords(await readApiResponse<AlumniFeeRecord[]>(feeRecordsResponse));
-    } catch (error) {
-      console.error(error);
-      setFeeRecords([]);
-    } finally {
-      setFeeLoading(false);
-    }
+  const fetchAllFilteredAlumni = async () => {
+    const headers = getAuthHeaders();
+    const rows: AlumniRecord[] = [];
+    let page = 1;
+    let pages = 1;
+
+    do {
+      const query = buildProfilesQuery(page, 100);
+      const response = await fetch(`${API_URL}/profiles?${query}`, { headers });
+      const data = await readApiResponse<ProfilesPageResponse>(response);
+      rows.push(...(data.rows || []));
+      pages = data.pagination.totalPages;
+      page += 1;
+    } while (page <= pages);
+
+    return rows;
   };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void fetchAlumni(controller.signal), search.trim() ? 250 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [fetchAlumni, search]);
 
   const toggleSort = (key: keyof AlumniRecord) => {
     if (sortKey === key) {
@@ -691,10 +656,6 @@ export default function AdminAlumni() {
 
       if (!canCreateAlumni) {
         throw new Error(Object.values(addFormErrors).find(Boolean) || "Complete all required fields before creating the alumni account.");
-      }
-
-      if (existingEmails.has(normalizedEmail)) {
-        throw new Error("This alumni account already exists.");
       }
 
       const res = await fetch(`${API_URL}/profiles`, {
@@ -833,7 +794,7 @@ export default function AdminAlumni() {
       setImportSubmitting(false);
     }
   };
-  const buildAlumniReport = () => {
+  const buildAlumniReport = (records: AlumniRecord[]) => {
     type AlumniExportRow = Record<string, string | number>;
     const columns: Array<ReportColumn<AlumniExportRow>> = [
       { key: "alumniId", label: "Alumni ID" },
@@ -850,7 +811,7 @@ export default function AdminAlumni() {
       { key: "email", label: "Email" },
       { key: "contact", label: "Contact" },
     ];
-    const rows = filtered.map((item) => ({
+    const rows = records.map((item) => ({
       alumniId: item.student_id ?? "",
       name: item.name,
       graduationYear: item.batch ?? "",
@@ -873,40 +834,28 @@ export default function AdminAlumni() {
       rows,
       preparedBy: profile?.name || user?.email || "System Administrator",
       summary: [
-        { label: "Displayed Records", value: filtered.length },
-        { label: "BOR Numbers", value: new Set(filtered.map((item) => item.bor_number).filter(Boolean)).size },
-        { label: "Advanced Studies", value: filtered.filter((item) => item.advanced_studies_level).length },
+        { label: "Displayed Records", value: records.length },
+        { label: "BOR Numbers", value: new Set(records.map((item) => item.bor_number).filter(Boolean)).size },
+        { label: "Advanced Studies", value: records.filter((item) => item.advanced_studies_level).length },
 
-        { label: "Programs", value: new Set(filtered.map((item) => item.course).filter(Boolean)).size },
+        { label: "Programs", value: new Set(records.map((item) => item.course).filter(Boolean)).size },
       ],
     };
   };
 
   const exportExcel = async () => {
-    await downloadBrandedExcel(buildAlumniReport());
+    const records = await fetchAllFilteredAlumni();
+    await downloadBrandedExcel(buildAlumniReport(records));
   };
 
-  const exportPdf = () => {
-    openPrintableReport(buildAlumniReport());
+  const exportPdf = async () => {
+    const records = await fetchAllFilteredAlumni();
+    openPrintableReport(buildAlumniReport(records));
   };
 
   return (
     <AdminLayout title="Alumni Management">
-      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
-        {[
-          { label: "Total Alumni", value: alumni.length },
-          { label: "Programs", value: new Set(alumni.map((item) => item.course).filter(Boolean)).size },
-          { label: "BOR Numbers", value: new Set(alumni.map((item) => item.bor_number).filter(Boolean)).size },
-          { label: "Advanced Studies", value: alumni.filter((item) => item.advanced_studies_level).length },
-        ].map((stat, index) => (
-          <div key={stat.label} className={`rounded-xl border p-3 shadow-card ${index === 0 ? "bg-navy border-navy" : "bg-card border-border"}`}>
-            <p className={`text-lg font-display font-bold ${index === 0 ? "text-white" : "text-navy-dark"}`}>{loading ? "..." : stat.value}</p>
-            <p className={`mt-0.5 text-[11px] font-semibold ${index === 0 ? "text-white/70" : "text-navy"}`}>{stat.label}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_280px] xl:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="min-w-0">
         <div className="min-w-0 rounded-xl border border-border bg-card shadow-card">
           <div className="flex flex-col flex-wrap items-start justify-between gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
@@ -932,23 +881,22 @@ export default function AdminAlumni() {
             <div className="flex flex-wrap gap-1.5">
               <button onClick={() => { resetImportState(); setShowImport(true); }} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Upload className="h-3 w-3" />Import</button>
               <button onClick={() => void exportExcel()} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><FileSpreadsheet className="h-3 w-3" />Excel</button>
-              <button onClick={exportPdf} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Printer className="h-3 w-3" />PDF</button>
+              <button onClick={() => void exportPdf()} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Printer className="h-3 w-3" />PDF</button>
               <button onClick={() => { setForm(BLANK); setAddError(""); setPhotoPreview(null); setShowAdd(true); }} className="flex h-7 items-center gap-1 rounded-md bg-navy px-2 text-[11px] font-medium text-white hover:bg-navy-light"><Plus className="h-3 w-3" />Add</button>
             </div>
           </div>
 
-          <div className="overflow-hidden">
+          <div className="overflow-x-auto" tabIndex={0} aria-label="Alumni records table">
             <table className="w-full table-fixed text-[11px]">
               <colgroup><col className="w-[6%]" /><col className="w-[13%]" /><col className="w-[18%]" /><col className="w-[14%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[14%]" /><col className="w-[17%]" /></colgroup>
               <thead><tr className="border-b border-border bg-muted/50"><th className="px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy">Photo</th>{([ ["student_id", "Alumni ID"], ["name", "Name"], ["course", "Program"], ["batch", "Year"], ["bor_number", "BOR"], ["advanced_studies_level", "Advanced"], ["email", "Email"] ] as [keyof AlumniRecord, string][]).map(([key, label]) => <th key={key} onClick={() => toggleSort(key)} className="cursor-pointer select-none truncate px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy hover:text-navy-dark">{label}<SortIcon k={key} /></th>)}</tr></thead>
               <tbody>
                 {loading && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Loading...</td></tr>}
-                {!loading && filtered.length === 0 && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
+                {!loading && totalAlumni === 0 && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
                 {paginatedAlumni.map((item, index) => {
                   const imageSrc = normalizeImageSrc(item.photo);
-                  const selected = selectedAlumni?.id === item.id;
                   return (
-                    <tr key={item.id} onClick={() => setSelectedAlumni(item)} className={`cursor-pointer border-b border-border transition-colors hover:bg-navy/5 ${selected ? "bg-navy/10" : index % 2 !== 0 ? "bg-muted/10" : ""}`}>
+                    <tr key={item.id} className={`border-b border-border transition-colors hover:bg-navy/5 ${index % 2 !== 0 ? "bg-muted/10" : ""}`}>
                       <td className="px-2 py-1.5" data-label="Photo">{imageSrc ? <button type="button" onClick={(event) => { event.stopPropagation(); setPreviewImage({ src: imageSrc, name: item.name }); }} className="rounded-full focus:outline-none focus:ring-2 focus:ring-navy"><img src={imageSrc} alt={item.name} className="h-7 w-7 rounded-full border border-border object-cover" /></button> : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground">{item.name.charAt(0).toUpperCase()}</div>}</td>
                       <td className="truncate px-2 py-1.5 font-mono text-[10px] text-muted-foreground" title={item.student_id ?? "-"}>{item.student_id ?? "-"}</td>
                       <td className="truncate px-2 py-1.5 font-semibold text-navy-dark" title={item.name}>{item.name}</td>
@@ -965,10 +913,8 @@ export default function AdminAlumni() {
             </table>
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-border px-2.5 py-1.5 text-[10px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><div><strong>{visibleStart}-{visibleEnd}</strong> of <strong>{filtered.length}</strong><span className="text-muted-foreground/80"> ({alumni.length} total)</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage === 1} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Prev</button><span className="rounded-md bg-muted px-2 py-0.5 font-semibold text-navy-dark">Page {safeCurrentPage} of {totalPages}</span><button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage === totalPages} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Next</button></div></div>
+          <div className="flex flex-col gap-3 border-t border-border px-2.5 py-1.5 text-[10px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><div><strong>{visibleStart}-{visibleEnd}</strong> of <strong>{totalAlumni}</strong></div><div className="flex items-center gap-2"><button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage === 1} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Prev</button><span className="rounded-md bg-muted px-2 py-0.5 font-semibold text-navy-dark">Page {safeCurrentPage} of {totalPages}</span><button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage === totalPages} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Next</button></div></div>
         </div>
-
-        <AlumniFeeRecordPanel alumni={selectedAlumni} record={selectedFeeRecord} loading={feeLoading} programOptions={programOptions} />
       </div>
 
       {showAdd && (
@@ -1077,130 +1023,6 @@ export default function AdminAlumni() {
     </AdminLayout>
   );
 }
-function AlumniFeeRecordPanel({ alumni, record, loading, programOptions }: { alumni: AlumniRecord | null; record: AlumniFeeRecord | null; loading: boolean; programOptions: CourseOption[] }) {
-  const exampleFees = [
-    { feeName: "Membership Fee", amount: 200, assignedOfficerName: "Assigned alumni officer", dueDate: "2026-07-30" },
-    { feeName: "Alumni ID Fee", amount: 150, assignedOfficerName: "Authorized staff", dueDate: "2026-07-30" },
-  ];
-  const status = record?.status || "Incomplete";
-
-  return (
-    <aside className="rounded-xl border border-border bg-card shadow-card xl:sticky xl:top-4 xl:self-start">
-      <div className="border-b border-border p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-display font-bold text-navy-dark">
-              <CreditCard className="h-3 w-3 text-navy" />
-              Fee Records
-            </p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">Selected fee status.</p>
-          </div>
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${status === "Complete" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-            {status}
-          </span>
-        </div>
-      </div>
-
-      <div className="space-y-3 p-3">
-        {!alumni ? (
-          <div className="rounded-lg border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-            Select an alumni row to view fees.
-          </div>
-        ) : (
-          <>
-            <div className="rounded-lg bg-muted/30 p-2.5">
-              <p className="truncate text-xs font-semibold text-navy-dark" title={alumni.name}>{alumni.name}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">{alumni.student_id || "No alumni ID"} | {formatCourseCode(alumni.course, programOptions) || "No course"} | Batch {alumni.batch || "Not set"}</p>
-            </div>
-            <section className="rounded-lg border border-border bg-background p-2.5">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-navy">Academic Information</p>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-                <InfoLine label="Graduation Year" value={alumni.batch || "-"} />
-
-                <InfoLine label="BOR Number" value={alumni.bor_number || "-"} />
-
-                <InfoLine label="Program" value={formatCourseCode(alumni.course, programOptions) || "-"} />
-                <InfoLine label="Department" value={getDepartmentLabel(alumni.course) || "-"} />
-                <InfoLine label="Advanced Studies" value={formatAdvancedStudies(alumni)} />
-                <InfoLine label="Graduate Program" value={alumni.advanced_studies_program || "-"} />
-                <InfoLine label="School / University" value={alumni.advanced_studies_school || "-"} />
-                <InfoLine label="Expected Completion" value={alumni.advanced_studies_expected_completion_year || "-"} />
-
-
-              </div>
-            </section>
-
-            {loading ? (
-              <div className="flex items-center gap-1.5 rounded-lg border border-border p-2.5 text-xs text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading fee records...
-              </div>
-            ) : record ? (
-              <>
-{record.status === "Incomplete" ? (
-                  <section>
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Not Paid</p>
-                    <div className="space-y-1.5">
-                      {record.unpaidFees.map((fee) => (
-                        <FeeDueCard key={fee.id} feeName={fee.feeName} amount={fee.amount} officer={fee.assignedOfficerName} dueDate={fee.dueDate} />
-                      ))}
-                    </div>
-                  </section>
-                ) : (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs text-emerald-700">
-                    All required alumni fees are paid.
-                  </div>
-                )}
-
-                {record.paidFees.length > 0 && (
-                  <section>
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Paid</p>
-                    <div className="space-y-1.5">
-                      {record.paidFees.slice(0, 3).map((fee) => (
-                        <div key={fee.id} className="rounded-lg border border-emerald-100 bg-emerald-50 p-2.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="truncate text-xs font-semibold text-emerald-800">{fee.feeName}</p>
-                            <p className="whitespace-nowrap text-xs font-semibold text-emerald-800">PHP {fee.amountPaid.toLocaleString()}</p>
-                          </div>
-                          <p className="mt-1 text-[11px] leading-4 text-emerald-700">Received by {fee.receivedByName || "Authorized staff"}{fee.paidDate ? ` on ${new Date(fee.paidDate).toLocaleDateString()}` : ""}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </>
-            ) : (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
-                No fee data yet.
-              </div>
-            )}
-
-            <section className="rounded-lg border border-dashed border-amber-300 bg-amber-50/70 p-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-900">Not Paid Example</p>
-              <div className="mt-2 space-y-1.5">
-                {exampleFees.map((fee) => (
-                  <FeeDueCard key={fee.feeName} feeName={fee.feeName} amount={fee.amount} officer={fee.assignedOfficerName} dueDate={fee.dueDate} />
-                ))}
-              </div>
-            </section>
-
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-4 text-amber-900">
-              Pay in person to the assigned officer or staff. No online payment.
-            </div>
-          </>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function InfoLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground">{label}</p>
-      <p className="truncate font-semibold text-navy-dark" title={value}>{value}</p>
-    </div>
-  );
-}
 function FieldInput({
   label,
   value,
@@ -1224,29 +1046,6 @@ function FieldInput({
         placeholder={placeholder}
         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none"
       />
-    </div>
-  );
-}
-function MiniStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-border bg-background px-2 py-1.5">
-      <p className="text-sm font-bold text-navy-dark">{value}</p>
-      <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
-function FeeDueCard({ feeName, amount, officer, dueDate }: { feeName: string; amount: number; officer: string; dueDate: string | null }) {
-  return (
-    <div className="rounded-lg border border-amber-200 bg-white p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-xs font-semibold text-navy-dark" title={feeName}>{feeName}</p>
-        <p className="whitespace-nowrap text-xs font-semibold text-navy">PHP {amount.toLocaleString()}</p>
-      </div>
-      <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-        Officer: {officer || "Authorized staff"}<br />
-        Due: {dueDate ? new Date(dueDate).toLocaleDateString() : "No due date"}
-      </p>
     </div>
   );
 }

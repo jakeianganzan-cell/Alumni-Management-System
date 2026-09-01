@@ -1,22 +1,28 @@
 import "./env";
-import express from "express";
 import cors from "cors";
 import type { CorsOptions } from "cors";
-import path from "path";
+import bcrypt from "bcrypt";
+import ExcelJS from "exceljs";
+import express from "express";
 import fs from "fs/promises";
 import jwt from "jsonwebtoken";
-import bcrypt from "bcrypt";
+import path from "path";
+import swaggerUi from "swagger-ui-express";
 import { v4 as uuidv4 } from "uuid";
-import ExcelJS from "exceljs";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import db from "./db.ts";
 import { sendAlumniCredentialsEmail, sendTargetedAlumniEmail, type TargetedEmailPurpose } from "./services/emailService";
 import { generatePassword } from "./utils/generatePassword";
+import { parseImageDataUrl } from "./utils/imageOptimizer";
+import { parseDataUrlUpload } from "./utils/fileUpload";
+import { getPagination, getPaginationMeta } from "./utils/pagination";
+import { getErrorCode, getErrorMessage, getSingleRow, normalizeRoleValue, parseRows } from "./utils/helpers";
 import { authenticateToken } from "./middleware/auth";
 import tracerRoutes from "./routes/tracer.routes";
 import emailRoutes from "./routes/emailRoutes";
 import { AuthenticatedRequest } from "./types/auth";
+import type { DbParam, QueryRow } from "./types/db";
 import {
     assertTracerAdminAccess,
     bulkDownloadTracerPdfs,
@@ -25,14 +31,24 @@ import {
     listTracerRecords,
     previewTracerPdfByRecordId
 } from "./controllers/tracer.controller";
+import { swaggerSpec } from "./swagger";
 import { COURSE_LABELS, COURSE_OPTIONS, normalizeCourseCode, normalizeCourseOptions, SYSTEM_COURSES, type CourseOption } from "./courseCatalog";
+import { securityHeaders, apiRateLimiter, authRateLimiter, importRateLimiter, requestSizeLimiter } from "./middleware/security";
+import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
+import { auditLogger } from "./middleware/auditLogger";
+import { createRbacMiddleware } from "./middleware/rbac";
+import { alumniImportFileParser } from "./middleware/upload";
+import { config, DEFAULT_LOCAL_FRONTEND_ORIGINS } from "./config";
+import { logger } from "./utils/logger";
+import { getPublicErrorMessage } from "./utils/safeError";
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
-const ADMIN_EMAIL = "forjakeproject@gmail.com";
-const ADMIN_PASSWORD = "administrator123";
-const ADMIN_NAME = "System Administrator";
-const APP_BASE_URL = process.env.APP_BASE_URL || "";
+
+const JWT_SECRET = config.jwtSecret;
+const ADMIN_EMAIL = config.adminEmail;
+const ADMIN_PASSWORD = config.adminPassword;
+const ADMIN_NAME = config.adminName;
+const APP_BASE_URL = config.appBaseUrl;
 
 const parseCsvEnv = (value: string | undefined) =>
     String(value || "")
@@ -40,21 +56,12 @@ const parseCsvEnv = (value: string | undefined) =>
         .map((item) => item.trim())
         .filter(Boolean);
 
-const DEFAULT_LOCAL_FRONTEND_ORIGINS = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-];
-
 const configuredCorsOrigins = new Set([
     ...DEFAULT_LOCAL_FRONTEND_ORIGINS,
-    ...parseCsvEnv(process.env.FRONTEND_URL),
+    ...parseCsvEnv(config.frontendUrl),
     ...parseCsvEnv(process.env.CLIENT_ORIGIN),
-    ...parseCsvEnv(process.env.ALLOWED_ORIGINS),
-    ...parseCsvEnv(process.env.APP_BASE_URL)
+    ...config.allowedOrigins,
+    ...parseCsvEnv(config.appBaseUrl)
 ]);
 
 const normalizeOrigin = (value: string) => {
@@ -77,7 +84,7 @@ const corsOptions: CorsOptions = {
 
         const normalizedOrigin = normalizeOrigin(origin);
 
-        if (process.env.CORS_ALLOW_ALL === "true" || allowedCorsOrigins.has(normalizedOrigin)) {
+        if (config.corsAllowAll || allowedCorsOrigins.has(normalizedOrigin)) {
             callback(null, true);
             return;
         }
@@ -86,8 +93,6 @@ const corsOptions: CorsOptions = {
     }
 };
 
-type QueryRow = RowDataPacket & Record<string, unknown>;
-type DbParam = string | number | boolean | Date | Buffer | null;
 type DurationComputedStatus = "Upcoming" | "Active" | "Completed" | "Archived";
 
 interface AlumniImportInputRow {
@@ -162,7 +167,7 @@ type EventVerificationStatus = "Pending" | "Verified" | "Not Verified";
 
 interface DonationListRow extends QueryRow {
     id: number;
-    user_id: string;
+    user_id: string | null;
     amount: number;
     method: string;
     status: string | null;
@@ -170,6 +175,12 @@ interface DonationListRow extends QueryRow {
     ref_number: string | null;
     receipt_url: string | null;
     message: string | null;
+    is_anonymous?: number | boolean | null;
+    donor_name?: string | null;
+    donor_email?: string | null;
+    donor_student_id?: string | null;
+    donor_batch?: string | null;
+    donor_course?: string | null;
     created_at: string;
     reviewed_at?: string | null;
     reviewed_by?: string | null;
@@ -290,11 +301,49 @@ interface SystemSettingsRow extends QueryRow {
     mission: string | null;
     vision: string | null;
     history: string | null;
+    philosophy: string | null;
+    institutional_goal: string | null;
+    alumni_portal_description: string | null;
+    about_cover_image_path: string | null;
+    map_url: string | null;
+    office_hours: string | null;
     facebook_link: string | null;
     twitter_link: string | null;
     instagram_link: string | null;
     theme_mode: string | null;
     updated_at: string | null;
+}
+
+type AboutContentType = "history" | "milestone" | "leadership" | "service";
+
+interface InstitutionContentRow extends QueryRow {
+    id: number;
+    content_type: AboutContentType;
+    year_label: string | null;
+    title: string;
+    subtitle: string | null;
+    description: string | null;
+    organization: string | null;
+    department: string | null;
+    credentials: string | null;
+    category: string | null;
+    image_url: string | null;
+    icon: string | null;
+    display_order: number;
+    is_active: number | boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+interface InstitutionServiceItemRow extends QueryRow {
+    id: number;
+    service_id: number;
+    title: string;
+    description: string | null;
+    display_order: number;
+    is_active: number | boolean;
+    created_at: string;
+    updated_at: string;
 }
 
 interface ConcernRow extends QueryRow {
@@ -499,33 +548,6 @@ interface NormalizedOfficerAssignment {
     displayOrder: number;
 }
 
-const getErrorMessage = (error: unknown) => {
-    return error instanceof Error ? error.message : "Unknown error";
-};
-
-const getErrorCode = (error: unknown) => {
-    if (typeof error === "object" && error !== null && "code" in error) {
-        return String(error.code || "");
-    }
-
-    return "";
-};
-
-const parseRows = <T extends QueryRow = QueryRow>(result: T[] | T[][] | unknown) => {
-    if (Array.isArray(result) && Array.isArray(result[0])) {
-        return result[0];
-    }
-
-    return Array.isArray(result) ? result : [];
-};
-
-const getSingleRow = async <T extends QueryRow = QueryRow>(sql: string, params: DbParam[] = []) => {
-    const rows = parseRows<T>(await db.query<T>(sql, params));
-    return rows[0] || null;
-};
-
-const normalizeRoleValue = (value: unknown) => String(value || "").trim().toLowerCase();
-
 const getRolesForUser = async (userId: string) => {
     const rows = parseRows(await db.query(
         `SELECT role
@@ -603,7 +625,12 @@ const columnExists = async (tableName: string, columnName: string) => {
     }
 };
 
+let alumniProfileColumnsPromise: Promise<void> | null = null;
+
 const ensureAlumniProfileColumns = async () => {
+    if (alumniProfileColumnsPromise) return alumniProfileColumnsPromise;
+
+    alumniProfileColumnsPromise = (async () => {
     const columns = [
         { table: "profiles", name: "bor_number", sql: "ALTER TABLE profiles ADD COLUMN bor_number VARCHAR(100) NULL" },
         { table: "profiles", name: "bor_date", sql: "ALTER TABLE profiles ADD COLUMN bor_date DATE NULL" },
@@ -631,44 +658,86 @@ const ensureAlumniProfileColumns = async () => {
         { table: "imported_alumni_records", name: "email_error", sql: "ALTER TABLE imported_alumni_records ADD COLUMN email_error TEXT NULL" }
     ];
 
-    for (const column of columns) {
-        if (!(await tableExists(column.table)) || await columnExists(column.table, column.name)) {
-            continue;
-        }
+    for (const table of ["profiles", "imported_alumni_records"]) {
+        if (!(await tableExists(table))) continue;
 
-        await db.execute(column.sql);
+        const existingColumns = new Set(
+            parseRows(await db.query(`SHOW COLUMNS FROM ${table}`))
+                .map((row) => String(row.Field || ""))
+                .filter(Boolean)
+        );
+
+        for (const column of columns.filter((item) => item.table === table)) {
+            if (existingColumns.has(column.name)) continue;
+            await db.execute(column.sql);
+            existingColumns.add(column.name);
+        }
     }
+    })().catch((error) => {
+        alumniProfileColumnsPromise = null;
+        throw error;
+    });
+
+    return alumniProfileColumnsPromise;
 };
+let cachedAnnouncementTableName: string | null = null;
+let cachedTracerTableName: string | null = null;
+
 const getAnnouncementTableName = async () => {
+    if (cachedAnnouncementTableName) {
+        return cachedAnnouncementTableName;
+    }
+
     try {
         if (await tableExists("announcements")) {
+            cachedAnnouncementTableName = "announcements";
             return "announcements";
         }
 
         if (await tableExists("events")) {
+            cachedAnnouncementTableName = "events";
             return "events";
         }
 
+        cachedAnnouncementTableName = "announcements";
         return "announcements";
     } catch {
         return "announcements";
     }
 };
 
+// CORS must run before rate limits and routes so browser preflights and error
+// responses receive the correct access-control headers.
+app.disable("x-powered-by");
+app.use(cors(corsOptions));
+app.use(securityHeaders);
+app.use("/api", apiRateLimiter);
+app.use(requestSizeLimiter("20mb"));
+app.use(auditLogger);
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 const getTracerTableName = async () => {
+    if (cachedTracerTableName) {
+        return cachedTracerTableName;
+    }
+
     try {
         if (await tableExists("tracer_form")) {
+            cachedTracerTableName = "tracer_form";
             return "tracer_form";
         }
 
         if (await tableExists("graduate_tracer")) {
+            cachedTracerTableName = "graduate_tracer";
             return "graduate_tracer";
         }
 
         if (await tableExists("tracer_responses")) {
+            cachedTracerTableName = "tracer_responses";
             return "tracer_responses";
         }
 
+        cachedTracerTableName = "tracer_form";
         return "tracer_form";
     } catch {
         return "tracer_form";
@@ -1265,7 +1334,7 @@ const startDurationAutoArchiveJob = () => {
     if (autoArchiveTimer) return;
     const run = () => {
         autoArchiveExpiredContent().catch((error) => {
-            console.error("AUTO ARCHIVE JOB ERROR:", error);
+            logger.error("AUTO ARCHIVE JOB ERROR:", error);
         });
     };
     run();
@@ -1332,7 +1401,7 @@ const ensureEventRsvpTables = async () => {
             await db.execute(column.sql);
         } catch (error) {
             if (!getErrorMessage(error).toLowerCase().includes("duplicate column")) {
-                console.error(`SCHEMA UPDATE ERROR: ${column.name}`, error);
+                logger.error(`SCHEMA UPDATE ERROR: ${column.name}`, error);
             }
         }
     }
@@ -1422,7 +1491,7 @@ const ensureDashboardSlideTable = async () => {
         await db.execute("ALTER TABLE dashboard_slides ADD COLUMN media_type VARCHAR(30) NOT NULL DEFAULT 'image' AFTER caption");
     } catch (error) {
         if (!getErrorMessage(error).toLowerCase().includes("duplicate column")) {
-            console.error("DASHBOARD SLIDES MEDIA TYPE MIGRATION ERROR:", error);
+            logger.error("DASHBOARD SLIDES MEDIA TYPE MIGRATION ERROR:", error);
         }
     }
 
@@ -1478,7 +1547,7 @@ const recordAlumniLoginActivity = async (userId: string) => {
             [userId, formatSqlDateTime(new Date())]
         );
     } catch (error) {
-        console.error("ALUMNI LOGIN ACTIVITY ERROR:", error);
+        logger.error("ALUMNI LOGIN ACTIVITY ERROR:", error);
     }
 };
 
@@ -1656,7 +1725,7 @@ const recordActivityLog = async ({
             ]
         );
     } catch (error) {
-        console.error("ACTIVITY LOG ERROR:", error);
+        logger.error("ACTIVITY LOG ERROR:", error);
     }
 };
 
@@ -2519,7 +2588,7 @@ const normalizeAnnouncementApprovalStatus = (value: unknown, fallback = "approve
 };
 
 const canModerateAnnouncementContent = (role: string | null | undefined) => {
-    return normalizeStatus(role, "alumni") !== "alumni";
+    return ["admin", "president"].includes(normalizeStatus(role, "alumni"));
 };
 
 const normalizeAchievementReactionType = (value: unknown): AchievementReactionType | null => {
@@ -2561,7 +2630,7 @@ const DEFAULT_SYSTEM_SETTINGS = {
     login_background_path: "",
     login_backgrounds_json: "[]",
     login_slideshow_enabled: 0,
-    programs_json: JSON.stringify(normalizeCourseOptions(COURSE_OPTIONS)),
+    programs_json: JSON.stringify(COURSE_OPTIONS.map(({ code, label }) => ({ code, label }))),
     primary_color: "#550000",
     secondary_color: "#3f3f46",
     sidebar_color: "#383838",
@@ -2574,6 +2643,12 @@ const DEFAULT_SYSTEM_SETTINGS = {
     mission: "Provide a reliable alumni platform that supports communication, graduate tracking, engagement, and institutional decision-making.",
     vision: "A connected alumni community that helps the institution improve programs, services, and graduate outcomes.",
     history: "",
+    philosophy: "",
+    institutional_goal: "",
+    alumni_portal_description: "The Salay Community College Alumni Management System serves as a centralized digital platform for maintaining alumni records, conducting graduate tracer studies, strengthening alumni engagement, sharing institutional announcements and events, facilitating donations, and providing data-driven reports for the college administration.",
+    about_cover_image_path: "",
+    map_url: "",
+    office_hours: "",
     facebook_link: "",
     twitter_link: "",
     instagram_link: "",
@@ -2608,6 +2683,12 @@ const SYSTEM_SETTING_COLUMNS = [
     "mission",
     "vision",
     "history",
+    "philosophy",
+    "institutional_goal",
+    "alumni_portal_description",
+    "about_cover_image_path",
+    "map_url",
+    "office_hours",
     "facebook_link",
     "twitter_link",
     "instagram_link",
@@ -2623,7 +2704,11 @@ const SYSTEM_TEXTAREA_FIELDS = new Set<SystemSettingColumn>([
     "about_content",
     "mission",
     "vision",
-    "history"
+    "history",
+    "philosophy",
+    "institutional_goal",
+    "alumni_portal_description",
+    "office_hours"
 ]);
 
 const COLOR_FIELDS = new Set<SystemSettingColumn>([
@@ -2663,6 +2748,19 @@ const safeParseProgramOptions = (value: unknown): CourseOption[] => {
         return normalizeCourseOptions(COURSE_OPTIONS);
     }
 };
+
+const serializePublicProgramOptions = (value: unknown) => JSON.stringify(
+    normalizeCourseOptions(value).map((program) => ({
+        code: program.code,
+        label: program.label,
+        description: program.description || "",
+        department: program.department || "",
+        imageUrl: normalizeStoredMedia(program.imageUrl || "") || "",
+        displayOrder: Number(program.displayOrder || 0),
+        isActive: program.isActive !== false
+    }))
+);
+
 const mapSystemSettingsRow = (row: Partial<SystemSettingsRow> | null | undefined) => {
     const source: Partial<SystemSettingsRow> = row || {};
     const loginBackgrounds = safeParseJsonArray(source.login_backgrounds_json);
@@ -2697,6 +2795,12 @@ const mapSystemSettingsRow = (row: Partial<SystemSettingsRow> | null | undefined
         mission: String(source.mission || DEFAULT_SYSTEM_SETTINGS.mission),
         vision: String(source.vision || DEFAULT_SYSTEM_SETTINGS.vision),
         history: String(source.history || DEFAULT_SYSTEM_SETTINGS.history),
+        philosophy: String(source.philosophy || DEFAULT_SYSTEM_SETTINGS.philosophy),
+        institutionalGoal: String(source.institutional_goal || DEFAULT_SYSTEM_SETTINGS.institutional_goal),
+        alumniPortalDescription: String(source.alumni_portal_description || DEFAULT_SYSTEM_SETTINGS.alumni_portal_description),
+        aboutCoverImagePath: normalizeStoredMedia(source.about_cover_image_path || "") || "",
+        mapUrl: String(source.map_url || DEFAULT_SYSTEM_SETTINGS.map_url),
+        officeHours: String(source.office_hours || DEFAULT_SYSTEM_SETTINGS.office_hours),
         facebookLink: String(source.facebook_link || DEFAULT_SYSTEM_SETTINGS.facebook_link),
         twitterLink: String(source.twitter_link || DEFAULT_SYSTEM_SETTINGS.twitter_link),
         instagramLink: String(source.instagram_link || DEFAULT_SYSTEM_SETTINGS.instagram_link),
@@ -2735,6 +2839,12 @@ const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
         mission: "mission",
         vision: "vision",
         history: "history",
+        philosophy: "philosophy",
+        institutional_goal: "institutionalGoal",
+        alumni_portal_description: "alumniPortalDescription",
+        about_cover_image_path: "aboutCoverImagePath",
+        map_url: "mapUrl",
+        office_hours: "officeHours",
         facebook_link: "facebookLink",
         twitter_link: "twitterLink",
         instagram_link: "instagramLink",
@@ -2748,7 +2858,7 @@ const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
         if (column === "login_backgrounds_json") {
             mapped[column] = JSON.stringify(safeParseJsonArray(rawValue));
         } else if (column === "programs_json") {
-            mapped[column] = JSON.stringify(normalizeCourseOptions(rawValue));
+            mapped[column] = serializePublicProgramOptions(rawValue);
         } else if (column === "login_slideshow_enabled") {
             mapped[column] = normalizeBoolean(rawValue) ? 1 : 0;
         } else if (column === "theme_mode") {
@@ -2798,6 +2908,12 @@ const ensureSystemSettingsTable = async () => {
             mission TEXT,
             vision TEXT,
             history TEXT,
+            philosophy TEXT,
+            institutional_goal TEXT,
+            alumni_portal_description TEXT,
+            about_cover_image_path LONGTEXT,
+            map_url TEXT,
+            office_hours VARCHAR(255),
             facebook_link TEXT,
             twitter_link TEXT,
             instagram_link TEXT,
@@ -2810,7 +2926,13 @@ const ensureSystemSettingsTable = async () => {
         { name: "footer_copyright_text", sql: "ALTER TABLE system_settings ADD COLUMN footer_copyright_text TEXT AFTER website_url" },
         { name: "login_backgrounds_json", sql: "ALTER TABLE system_settings ADD COLUMN login_backgrounds_json LONGTEXT AFTER login_background_path" },
         { name: "login_slideshow_enabled", sql: "ALTER TABLE system_settings ADD COLUMN login_slideshow_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER login_backgrounds_json" },
-        { name: "programs_json", sql: "ALTER TABLE system_settings ADD COLUMN programs_json LONGTEXT AFTER login_slideshow_enabled" }
+        { name: "programs_json", sql: "ALTER TABLE system_settings ADD COLUMN programs_json LONGTEXT AFTER login_slideshow_enabled" },
+        { name: "philosophy", sql: "ALTER TABLE system_settings ADD COLUMN philosophy TEXT AFTER history" },
+        { name: "institutional_goal", sql: "ALTER TABLE system_settings ADD COLUMN institutional_goal TEXT AFTER philosophy" },
+        { name: "alumni_portal_description", sql: "ALTER TABLE system_settings ADD COLUMN alumni_portal_description TEXT AFTER institutional_goal" },
+        { name: "about_cover_image_path", sql: "ALTER TABLE system_settings ADD COLUMN about_cover_image_path LONGTEXT AFTER alumni_portal_description" },
+        { name: "map_url", sql: "ALTER TABLE system_settings ADD COLUMN map_url TEXT AFTER about_cover_image_path" },
+        { name: "office_hours", sql: "ALTER TABLE system_settings ADD COLUMN office_hours VARCHAR(255) AFTER map_url" }
     ];
 
     for (const column of columnsToAdd) {
@@ -2819,7 +2941,7 @@ const ensureSystemSettingsTable = async () => {
                 await db.execute(column.sql);
             }
         } catch (error) {
-            console.error(`SYSTEM SETTINGS COLUMN MIGRATION ERROR: ${column.name}`, error);
+            logger.error(`SYSTEM SETTINGS COLUMN MIGRATION ERROR: ${column.name}`, error);
         }
     }
 
@@ -2922,34 +3044,161 @@ const getSystemSettings = async () => {
     return mapSystemSettingsRow(row);
 };
 
+const getPublicSystemSettings = async () => {
+    const settings = await getSystemSettings();
+    return {
+        ...settings,
+        programs: settings.programs.map((program) => ({
+            code: program.code,
+            label: program.label,
+            description: program.description || "",
+            department: program.department || "",
+            imageUrl: normalizeStoredMedia(program.imageUrl || "") || "",
+            displayOrder: Number(program.displayOrder || 0),
+            isActive: program.isActive !== false
+        }))
+    };
+};
+
+const ABOUT_CONTENT_TYPES = new Set<AboutContentType>(["history", "milestone", "leadership", "service"]);
+
+const getAboutContentType = (value: unknown): AboutContentType | null => {
+    const normalized = String(value || "").trim().toLowerCase() as AboutContentType;
+    return ABOUT_CONTENT_TYPES.has(normalized) ? normalized : null;
+};
+
+const ensureInstitutionContentTable = async () => {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS institution_content_items (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            content_type VARCHAR(30) NOT NULL,
+            year_label VARCHAR(30) NULL,
+            title VARCHAR(255) NOT NULL,
+            subtitle VARCHAR(255) NULL,
+            description TEXT NULL,
+            organization VARCHAR(255) NULL,
+            department VARCHAR(255) NULL,
+            credentials VARCHAR(255) NULL,
+            category VARCHAR(100) NULL,
+            image_url LONGTEXT NULL,
+            icon VARCHAR(100) NULL,
+            display_order INT NOT NULL DEFAULT 0,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_institution_content_public (content_type, is_active, display_order)
+        )
+    `);
+
+    if (!(await columnExists("institution_content_items", "category"))) {
+        await db.execute("ALTER TABLE institution_content_items ADD COLUMN category VARCHAR(100) NULL AFTER credentials");
+    }
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS institution_service_items (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            service_id BIGINT NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            description TEXT NULL,
+            display_order INT NOT NULL DEFAULT 0,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_institution_service_items_public (service_id, is_active, display_order),
+            FOREIGN KEY (service_id) REFERENCES institution_content_items(id) ON DELETE CASCADE
+        )
+    `);
+};
+
+const mapInstitutionContentRow = (row: InstitutionContentRow) => ({
+    id: Number(row.id),
+    type: row.content_type,
+    year: String(row.year_label || ""),
+    title: String(row.title || ""),
+    subtitle: String(row.subtitle || ""),
+    description: String(row.description || ""),
+    organization: String(row.organization || ""),
+    department: String(row.department || ""),
+    credentials: String(row.credentials || ""),
+    category: String(row.category || ""),
+    imageUrl: normalizeStoredMedia(row.image_url || "") || "",
+    icon: String(row.icon || ""),
+    displayOrder: Number(row.display_order || 0),
+    isActive: normalizeBoolean(row.is_active),
+    createdAt: String(row.created_at || ""),
+    updatedAt: String(row.updated_at || "")
+});
+
+const normalizeInstitutionContentInput = (body: Record<string, unknown>) => {
+    const title = normalizeText(body.title ?? body.name ?? body.fullName);
+    if (!title) throw new Error("A title or name is required.");
+
+    return {
+        year: normalizeText(body.year),
+        title,
+        subtitle: normalizeText(body.subtitle ?? body.position ?? body.acronym),
+        description: String(body.description || "").trim(),
+        organization: normalizeText(body.organization),
+        department: normalizeText(body.department),
+        credentials: normalizeText(body.credentials),
+        category: normalizeText(body.category),
+        imageUrl: normalizeStoredMedia(String(body.imageUrl ?? body.photoUrl ?? "")) || "",
+        icon: normalizeText(body.icon),
+        displayOrder: Math.max(0, Math.floor(Number(body.displayOrder) || 0)),
+        isActive: body.isActive === undefined ? true : normalizeBoolean(body.isActive)
+    };
+};
+
+const listInstitutionContent = async (type: AboutContentType, includeInactive = false) => {
+    await ensureInstitutionContentTable();
+    const rows = parseRows<InstitutionContentRow>(await db.query<InstitutionContentRow>(
+        `SELECT * FROM institution_content_items
+         WHERE content_type = ?${includeInactive ? "" : " AND is_active = 1"}
+         ORDER BY display_order ASC, year_label ASC, id ASC`,
+        [type]
+    ));
+    return rows.map(mapInstitutionContentRow);
+};
+
+const mapInstitutionServiceItemRow = (row: InstitutionServiceItemRow) => ({
+    id: Number(row.id),
+    serviceId: Number(row.service_id),
+    title: String(row.title || ""),
+    description: String(row.description || ""),
+    displayOrder: Number(row.display_order || 0),
+    isActive: normalizeBoolean(row.is_active),
+    createdAt: String(row.created_at || ""),
+    updatedAt: String(row.updated_at || "")
+});
+
+const normalizeInstitutionServiceItemInput = (body: Record<string, unknown>) => {
+    const title = normalizeText(body.title);
+    if (!title) throw new Error("Service item title is required.");
+    return {
+        title,
+        description: String(body.description || "").trim(),
+        displayOrder: Math.max(0, Math.floor(Number(body.displayOrder) || 0)),
+        isActive: body.isActive === undefined ? true : normalizeBoolean(body.isActive)
+    };
+};
+
+const listInstitutionServiceItems = async (includeInactive = false, serviceId?: number) => {
+    await ensureInstitutionContentTable();
+    const serviceFilter = serviceId ? " AND si.service_id = ?" : "";
+    const rows = parseRows<InstitutionServiceItemRow>(await db.query<InstitutionServiceItemRow>(
+        `SELECT si.* FROM institution_service_items si
+         INNER JOIN institution_content_items service ON service.id = si.service_id
+         WHERE service.content_type = 'service'${includeInactive ? "" : " AND service.is_active = 1 AND si.is_active = 1"}${serviceFilter}
+         ORDER BY si.service_id ASC, si.display_order ASC, si.id ASC`,
+        serviceId ? [serviceId] : []
+    ));
+    return rows.map(mapInstitutionServiceItemRow);
+};
+
 const brandingUploadDir = () => path.join(process.cwd(), "../public/uploads/branding");
 
 const saveBrandingUpload = async (fileName: string, dataUrl: string) => {
-    const match = String(dataUrl || "").match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-    if (!match) {
-        throw new Error("Upload must be an image file.");
-    }
-
-    const mimeType = match[1].toLowerCase();
-    const extensionMap: Record<string, string> = {
-        "image/png": "png",
-        "image/jpeg": "jpg",
-        "image/jpg": "jpg",
-        "image/gif": "gif",
-        "image/webp": "webp",
-        "image/svg+xml": "svg",
-        "image/x-icon": "ico",
-        "image/vnd.microsoft.icon": "ico"
-    };
-    const extension = extensionMap[mimeType];
-    if (!extension) {
-        throw new Error("Only PNG, JPG, GIF, WebP, SVG, and ICO images are allowed.");
-    }
-
-    const buffer = Buffer.from(match[2], "base64");
-    if (buffer.length > 5 * 1024 * 1024) {
-        throw new Error("Image uploads must be 5MB or smaller.");
-    }
+    const { buffer, extension } = parseImageDataUrl(dataUrl);
 
     const safeBaseName = normalizeText(fileName)
         .toLowerCase()
@@ -3007,7 +3256,7 @@ const normalizeAdvancedStudiesStatus = (value: unknown) => {
 
 const normalizeOptionalYear = (value: unknown) => {
     const year = normalizeBatch(value);
-    return /^d{4}$/.test(year) ? year : null;
+    return /^\d{4}$/.test(year) ? year : null;
 };
 
 const getTracerAdvancedStudies = (value: unknown) => {
@@ -3823,10 +4072,10 @@ const startEmailQueueJob = () => {
             await enqueueDueTracerReminders();
             await processEmailQueue();
         } catch (error) {
-            console.error("EMAIL QUEUE JOB ERROR:", error);
+            logger.error("EMAIL QUEUE JOB ERROR:", error);
         }
     };
-    run().catch((error) => console.error("EMAIL QUEUE START ERROR:", error));
+    run().catch((error) => logger.error("EMAIL QUEUE START ERROR:", error));
     emailQueueTimer = setInterval(run, 5 * 60 * 1000);
 };
 
@@ -4266,6 +4515,30 @@ const ensureDatabaseColumns = async () => {
             sql: "ALTER TABLE donations ADD COLUMN review_notes TEXT NULL"
         },
         {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN is_anonymous TINYINT(1) NOT NULL DEFAULT 0"
+        },
+        {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN donor_name VARCHAR(255) NULL"
+        },
+        {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN donor_email VARCHAR(255) NULL"
+        },
+        {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN donor_student_id VARCHAR(100) NULL"
+        },
+        {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN donor_batch VARCHAR(100) NULL"
+        },
+        {
+            table: "donations",
+            sql: "ALTER TABLE donations ADD COLUMN donor_course VARCHAR(255) NULL"
+        },
+        {
             table: "user_roles",
             sql: "ALTER TABLE user_roles ADD COLUMN archived TINYINT(1) NOT NULL DEFAULT 0"
         },
@@ -4356,9 +4629,20 @@ const ensureDatabaseColumns = async () => {
                 typeof error === "object" && error !== null && "code" in error && error.code === "ER_NO_SUCH_TABLE";
 
             if (!alreadyExists && !missingTable) {
-                console.error("SCHEMA UPDATE ERROR:", sql, error);
+                logger.error(`[Database] Runtime schema update failed for ${table}`, error);
             }
         }
+    }
+
+    try {
+        if (await tableExists("donations")) {
+            const userIdColumn = await getSingleRow("SHOW COLUMNS FROM donations LIKE ?", ["user_id"]);
+            if (String(userIdColumn?.Null || "").toUpperCase() !== "YES") {
+                await db.execute("ALTER TABLE donations MODIFY COLUMN user_id VARCHAR(36) NULL");
+            }
+        }
+    } catch (error) {
+        logger.error("SCHEMA UPDATE ERROR: donations.user_id nullable", error);
     }
 
     try {
@@ -4377,7 +4661,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE notifications", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE notifications", error);
     }
 
     try {
@@ -4402,7 +4686,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE email_logs", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE email_logs", error);
     }
 
     try {
@@ -4423,7 +4707,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE user_notifications", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE user_notifications", error);
     }
 
     try {
@@ -4448,7 +4732,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE concerns", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE concerns", error);
     }
 
     try {
@@ -4474,7 +4758,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE user_settings", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE user_settings", error);
     }
 
     try {
@@ -4495,7 +4779,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE officer_school_year", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE officer_school_year", error);
     }
 
     try {
@@ -4524,7 +4808,7 @@ const ensureDatabaseColumns = async () => {
         `);
         await db.execute("ALTER TABLE officers MODIFY COLUMN alumni_id VARCHAR(36) NULL");
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE officers", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE officers", error);
     }
 
     try {
@@ -4622,7 +4906,7 @@ const ensureDatabaseColumns = async () => {
               AND position IN ('president', 'vice_president', 'secretary', 'assistant_secretary', 'treasurer', 'assistant_treasurer', 'auditor', 'pio', 'pro', 'board_member')
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE alumni_officers", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE alumni_officers", error);
     }
     try {
         await db.execute(`
@@ -4655,7 +4939,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE imported_alumni_records", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE imported_alumni_records", error);
     }
 
     try {
@@ -4674,7 +4958,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE achievement_comments", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE achievement_comments", error);
     }
 
     try {
@@ -4694,7 +4978,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE achievement_reactions", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE achievement_reactions", error);
     }
 
     try {
@@ -4722,7 +5006,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE freedom_wall_posts", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE freedom_wall_posts", error);
     }
 
     try {
@@ -4746,7 +5030,7 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE freedom_wall_comments", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE freedom_wall_comments", error);
     }
 
     try {
@@ -4765,15 +5049,17 @@ const ensureDatabaseColumns = async () => {
             )
         `);
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: CREATE TABLE reactions", error);
+        logger.error("SCHEMA UPDATE ERROR: CREATE TABLE reactions", error);
     }
 };
 
 const buildAuthPayload = async (user: { id: string; email: string }, selectedRole?: string | null) => {
-    const currentUser = await getUserForAuth(user.id);
-    const role = await getRoleForUser(user.id, selectedRole);
-    const profile = await getProfileForUser(user.id);
-    const roles = await getRolesForUser(user.id);
+    const [currentUser, role, profile, roles] = await Promise.all([
+        getUserForAuth(user.id),
+        getRoleForUser(user.id, selectedRole),
+        getProfileForUser(user.id),
+        getRolesForUser(user.id)
+    ]);
     const isTracerCompleted = role === "alumni"
         ? await getTracerCompletionStatus(user.id)
         : true;
@@ -4880,6 +5166,17 @@ const getAdminUserIds = async () => {
         `SELECT user_id
          FROM user_roles
          WHERE role <> 'alumni'`
+    ));
+
+    return rows.map((row) => String(row.user_id));
+};
+
+const getContentModeratorUserIds = async () => {
+    const rows = parseRows(await db.query(
+        `SELECT DISTINCT user_id
+         FROM user_roles
+         WHERE role IN ('president', 'admin')
+           AND COALESCE(archived, 0) = 0`
     ));
 
     return rows.map((row) => String(row.user_id));
@@ -5174,8 +5471,8 @@ const getAchievementAccess = async (achievementId: number, userId: string) => {
     }
 
     const role = await getRoleForUser(userId);
-    const canModerate = role !== "alumni";
-    const canAccess = canModerate || normalizeStatus(achievement.status, "pending") === "approved" || String(achievement.alumni_id) === userId;
+    const canModerate = canModerateAnnouncementContent(role);
+    const canAccess = canModerate || normalizeStatus(achievement.status, "pending") === "approved";
 
     return { achievement, canAccess, canModerate };
 };
@@ -5186,15 +5483,16 @@ const ensureDefaultAdmin = async () => {
         [ADMIN_EMAIL]
     );
 
-    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
     const adminId = existingUser?.id || uuidv4();
 
     if (!existingUser) {
+        const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
         await db.execute(
             "INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
             [adminId, ADMIN_EMAIL, passwordHash]
         );
-    } else {
+    } else if (config.resetAdminPasswordOnStartup) {
+        const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
         await db.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             [passwordHash, adminId]
@@ -5230,7 +5528,7 @@ const ensureDefaultAdmin = async () => {
         );
     }
 
-    console.log(`âœ… Default admin ensured for ${ADMIN_EMAIL}`);
+    logger.debug("Default administrator account verified");
 };
 
 const ensureChairmanAccounts = async () => {
@@ -5252,6 +5550,10 @@ const ensureChairmanAccounts = async () => {
             "SELECT id FROM users WHERE email = ?",
             [courseOption.chairmanEmail]
         );
+
+        if (!courseOption.chairmanPassword) {
+            throw new Error(`Missing chairman bootstrap password for ${courseOption.code}. Set the matching CHAIRMAN_*_PASSWORD environment variable.`);
+        }
 
         const chairmanId = existingUser?.id ? String(existingUser.id) : uuidv4();
         const passwordHash = await bcrypt.hash(courseOption.chairmanPassword, 10);
@@ -5299,91 +5601,45 @@ const ensureChairmanAccounts = async () => {
     }
 };
 
-/* =========================
-   MIDDLEWARE
-========================= */
-app.use(cors(corsOptions));
+// Middleware
 app.use(express.json({ limit: "20mb" }));
-app.use(express.static(path.join(process.cwd(), "../public")));
+app.use("/uploads/branding", express.static(brandingUploadDir(), {
+    dotfiles: "deny",
+    fallthrough: false,
+    immutable: true,
+    maxAge: "1d"
+}));
 
-const requireAdmin = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
-    try {
-        if (!req.user?.id) {
-            return res.sendStatus(401);
-        }
+const {
+    requireAdmin,
+    requireProjectWriteAccess,
+    requireProjectDirectoryAccess,
+    requireChairman
+} = createRbacMiddleware({
+    getRequestRole,
+    getChairmanCourseForUser,
+    getPublicErrorMessage
+});
 
-        const role = await getRequestRole(req);
-
-        if (!["president", "admin", "chairman", "vice_president", "secretary",
-            "assistant_secretary", "treasurer", "assistant_treasurer", "auditor", "pio", "appointed"].includes(role)) {
-            return res.status(403).json({ error: "Admin access required" });
-        }
-
-        next();
-    } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
-    }
-};
-
-const requireProjectWriteAccess = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
-    const role = await getRequestRole(req);
-    if (role === "chairman") {
-        return res.status(403).json({ error: "Chairman accounts have read-only access to alumni project summaries and reports." });
-    }
-    next();
-};
-const requireProjectDirectoryAccess = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
-    const role = await getRequestRole(req);
-    if (role === "chairman") {
-        return res.status(403).json({ error: "Chairman accounts can view project summaries and reports only." });
-    }
-    next();
-};
-const requireChairman = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
-    try {
-        if (!req.user?.id) {
-            return res.sendStatus(401);
-        }
-
-        const role = await getRequestRole(req);
-
-        if (role !== "chairman") {
-            return res.status(403).json({ error: "Chairman access required" });
-        }
-
-        const course = await getChairmanCourseForUser(req.user.id);
-
-        if (!course) {
-            return res.status(400).json({ error: "Chairman account must be assigned to a supported course." });
-        }
-
-        next();
-    } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
-    }
-};
-
-/* =========================
-   SYSTEM BRANDING SETTINGS
-========================= */
+// System branding settings
 app.get("/api/system-settings", async (_req, res) => {
     try {
-        const settings = await getSystemSettings();
+        const settings = await getPublicSystemSettings();
         res.json(settings);
     } catch (err: unknown) {
-        console.error("GET SYSTEM SETTINGS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET SYSTEM SETTINGS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-app.post("/api/admin/system-settings/upload", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/system-settings/upload", authenticateToken, requireAdmin, importRateLimiter, async (req: AuthenticatedRequest, res) => {
     try {
         const fileName = normalizeText(req.body?.fileName) || "branding";
         const dataUrl = String(req.body?.dataUrl || "");
         const path = await saveBrandingUpload(fileName, dataUrl);
         res.status(201).json({ path });
     } catch (err: unknown) {
-        console.error("SYSTEM BRANDING UPLOAD ERROR:", err);
+        logger.error("SYSTEM BRANDING UPLOAD ERROR:", err);
         res.status(400).json({ error: getErrorMessage(err) });
     }
 });
@@ -5411,11 +5667,192 @@ app.post("/api/admin/system-settings", authenticateToken, requireAdmin, async (r
             );
         }
 
-        const updated = await getSystemSettings();
+        const updated = await getPublicSystemSettings();
         res.json({ success: true, message: "System branding settings saved.", settings: updated });
     } catch (err: unknown) {
-        console.error("SAVE SYSTEM SETTINGS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SAVE SYSTEM SETTINGS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
+    }
+});
+
+// About Us content
+app.get("/api/about", async (_req, res) => {
+    try {
+        const settings = await getPublicSystemSettings();
+        const [history, milestones, leadership, services, serviceItems] = await Promise.all([
+            listInstitutionContent("history"),
+            listInstitutionContent("milestone"),
+            listInstitutionContent("leadership"),
+            listInstitutionContent("service"),
+            listInstitutionServiceItems()
+        ]);
+
+        const serviceItemsByService = new Map<number, ReturnType<typeof mapInstitutionServiceItemRow>[]>();
+        for (const item of serviceItems) {
+            const currentItems = serviceItemsByService.get(item.serviceId) || [];
+            currentItems.push(item);
+            serviceItemsByService.set(item.serviceId, currentItems);
+        }
+
+        res.json({
+            institution: settings,
+            programs: settings.programs
+                .filter((program) => program.isActive !== false)
+                .sort((left, right) => Number(left.displayOrder || 0) - Number(right.displayOrder || 0)),
+            history,
+            milestones,
+            leadership,
+            services: services.map((service) => ({
+                ...service,
+                items: serviceItemsByService.get(service.id) || []
+            }))
+        });
+    } catch (error: unknown) {
+        logger.error("GET ABOUT CONTENT ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
+    }
+});
+
+app.get("/api/admin/about/:contentType", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const contentType = getAboutContentType(req.params.contentType);
+        if (!contentType) return res.status(400).json({ error: "Invalid About Us content type." });
+        res.json(await listInstitutionContent(contentType, true));
+    } catch (error: unknown) {
+        res.status(500).json({ error: getPublicErrorMessage(error) });
+    }
+});
+
+app.post("/api/admin/about/:contentType", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const contentType = getAboutContentType(req.params.contentType);
+        if (!contentType) return res.status(400).json({ error: "Invalid About Us content type." });
+        const item = normalizeInstitutionContentInput(req.body || {});
+        await ensureInstitutionContentTable();
+        const result = await db.execute(
+            `INSERT INTO institution_content_items
+             (content_type, year_label, title, subtitle, description, organization, department, credentials, category, image_url, icon, display_order, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [contentType, item.year || null, item.title, item.subtitle || null, item.description || null, item.organization || null, item.department || null, item.credentials || null, item.category || null, item.imageUrl || null, item.icon || null, item.displayOrder, item.isActive ? 1 : 0]
+        ) as ResultSetHeader;
+        const created = await getSingleRow<InstitutionContentRow>("SELECT * FROM institution_content_items WHERE id = ?", [result.insertId]);
+        res.status(201).json(created ? mapInstitutionContentRow(created) : { id: result.insertId });
+    } catch (error: unknown) {
+        res.status(400).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.put("/api/admin/about/:contentType/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const contentType = getAboutContentType(req.params.contentType);
+        const id = Number(req.params.id);
+        if (!contentType || !Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid About Us content item." });
+        const item = normalizeInstitutionContentInput(req.body || {});
+        await ensureInstitutionContentTable();
+        const result = await db.execute(
+            `UPDATE institution_content_items SET
+             year_label = ?, title = ?, subtitle = ?, description = ?, organization = ?, department = ?, credentials = ?, category = ?, image_url = ?, icon = ?, display_order = ?, is_active = ?
+             WHERE id = ? AND content_type = ?`,
+            [item.year || null, item.title, item.subtitle || null, item.description || null, item.organization || null, item.department || null, item.credentials || null, item.category || null, item.imageUrl || null, item.icon || null, item.displayOrder, item.isActive ? 1 : 0, id, contentType]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "About Us content item not found." });
+        const updated = await getSingleRow<InstitutionContentRow>("SELECT * FROM institution_content_items WHERE id = ?", [id]);
+        res.json(updated ? mapInstitutionContentRow(updated) : { success: true });
+    } catch (error: unknown) {
+        res.status(400).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.delete("/api/admin/about/:contentType/:id", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const contentType = getAboutContentType(req.params.contentType);
+        const id = Number(req.params.id);
+        if (!contentType || !Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid About Us content item." });
+        await ensureInstitutionContentTable();
+        const result = await db.execute(
+            "UPDATE institution_content_items SET is_active = 0 WHERE id = ? AND content_type = ?",
+            [id, contentType]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "About Us content item not found." });
+        res.json({ success: true });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getPublicErrorMessage(error) });
+    }
+});
+
+app.get("/api/admin/about/services/:serviceId/items", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const serviceId = Number(req.params.serviceId);
+        if (!Number.isInteger(serviceId) || serviceId <= 0) return res.status(400).json({ error: "Invalid service." });
+        res.json(await listInstitutionServiceItems(true, serviceId));
+    } catch (error: unknown) {
+        res.status(500).json({ error: getPublicErrorMessage(error) });
+    }
+});
+
+app.post("/api/admin/about/services/:serviceId/items", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const serviceId = Number(req.params.serviceId);
+        if (!Number.isInteger(serviceId) || serviceId <= 0) return res.status(400).json({ error: "Invalid service." });
+        await ensureInstitutionContentTable();
+        const service = await getSingleRow<InstitutionContentRow>(
+            "SELECT * FROM institution_content_items WHERE id = ? AND content_type = 'service'",
+            [serviceId]
+        );
+        if (!service) return res.status(404).json({ error: "Service not found." });
+
+        const item = normalizeInstitutionServiceItemInput(req.body || {});
+        const result = await db.execute(
+            `INSERT INTO institution_service_items (service_id, title, description, display_order, is_active)
+             VALUES (?, ?, ?, ?, ?)`,
+            [serviceId, item.title, item.description || null, item.displayOrder, item.isActive ? 1 : 0]
+        ) as ResultSetHeader;
+        const created = await getSingleRow<InstitutionServiceItemRow>("SELECT * FROM institution_service_items WHERE id = ?", [result.insertId]);
+        res.status(201).json(created ? mapInstitutionServiceItemRow(created) : { id: result.insertId });
+    } catch (error: unknown) {
+        res.status(400).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.put("/api/admin/about/services/:serviceId/items/:itemId", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const serviceId = Number(req.params.serviceId);
+        const itemId = Number(req.params.itemId);
+        if (!Number.isInteger(serviceId) || serviceId <= 0 || !Number.isInteger(itemId) || itemId <= 0) {
+            return res.status(400).json({ error: "Invalid service item." });
+        }
+        const item = normalizeInstitutionServiceItemInput(req.body || {});
+        await ensureInstitutionContentTable();
+        const result = await db.execute(
+            `UPDATE institution_service_items
+             SET title = ?, description = ?, display_order = ?, is_active = ?
+             WHERE id = ? AND service_id = ?`,
+            [item.title, item.description || null, item.displayOrder, item.isActive ? 1 : 0, itemId, serviceId]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Service item not found." });
+        const updated = await getSingleRow<InstitutionServiceItemRow>("SELECT * FROM institution_service_items WHERE id = ?", [itemId]);
+        res.json(updated ? mapInstitutionServiceItemRow(updated) : { success: true });
+    } catch (error: unknown) {
+        res.status(400).json({ error: getErrorMessage(error) });
+    }
+});
+
+app.delete("/api/admin/about/services/:serviceId/items/:itemId", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const serviceId = Number(req.params.serviceId);
+        const itemId = Number(req.params.itemId);
+        if (!Number.isInteger(serviceId) || serviceId <= 0 || !Number.isInteger(itemId) || itemId <= 0) {
+            return res.status(400).json({ error: "Invalid service item." });
+        }
+        await ensureInstitutionContentTable();
+        const result = await db.execute(
+            "UPDATE institution_service_items SET is_active = 0 WHERE id = ? AND service_id = ?",
+            [itemId, serviceId]
+        ) as ResultSetHeader;
+        if (!result.affectedRows) return res.status(404).json({ error: "Service item not found." });
+        res.json({ success: true });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -5517,7 +5954,7 @@ const ensureAnnouncementEventSurveyEngagementTables = async () => {
                 await db.execute(column.sql);
             }
         } catch (error) {
-            console.error(`SCHEMA UPDATE ERROR: ${column.table}.${column.name}`, error);
+            logger.error(`SCHEMA UPDATE ERROR: ${column.table}.${column.name}`, error);
         }
     }
 };
@@ -5539,12 +5976,10 @@ const ensureConcernGuestReportSupport = async () => {
 
         await db.execute("ALTER TABLE concerns MODIFY COLUMN alumni_id VARCHAR(36) NULL");
     } catch (error) {
-        console.error("SCHEMA UPDATE ERROR: concerns guest reporting", error);
+        logger.error("SCHEMA UPDATE ERROR: concerns guest reporting", error);
     }
 };
-/* =========================
-   STARTUP INIT
-========================= */
+// Startup initialization
 const getDatabaseTarget = () => {
     const host = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
     const port = process.env.DB_PORT || process.env.MYSQL_PORT || "3306";
@@ -5580,7 +6015,7 @@ const initializeDatabaseBackedStartup = async () => {
     try {
         await db.query<QueryRow>("SELECT 1 AS ok");
     } catch (error) {
-        console.error("DATABASE STARTUP ERROR:", {
+        logger.error("DATABASE STARTUP ERROR:", {
             target: getDatabaseTarget(),
             code: getErrorCode(error) || undefined,
             message: getErrorMessage(error),
@@ -5589,40 +6024,46 @@ const initializeDatabaseBackedStartup = async () => {
         return;
     }
 
-    await ensureUserRolesSupportMultipleRoles();
+    logger.startup("[Database] Connection established");
+
+    if (config.runtimeSchemaSyncEnabled) {
+        await ensureUserRolesSupportMultipleRoles();
+        await ensureDatabaseColumns();
+        await ensureAlumniProfileColumns();
+        await ensureConcernGuestReportSupport();
+        await ensureEmailQueueTables();
+        await ensureAnnouncementEventSurveyEngagementTables();
+        await ensureAnnouncementInterestTable();
+        await ensureEventRsvpTables();
+        await ensureDashboardSlideTable();
+        await ensureSystemSettingsTable();
+        await ensureAlumniFeeRecordsTable();
+        await ensureAlumniProjectTables();
+        await ensureAlumniLoginActivityTable();
+        await ensureUserSessionTables();
+    } else {
+        logger.info("Runtime schema sync disabled. Run server/run-migration.mjs before deployment.");
+    }
+
     await ensureDefaultAdmin();
     await ensureChairmanAccounts();
-    await ensureDatabaseColumns();
-    await ensureAlumniProfileColumns();
-    await ensureConcernGuestReportSupport();
-    await ensureEmailQueueTables();
-    await ensureAnnouncementEventSurveyEngagementTables();
-    await ensureEventRsvpTables();
-    await ensureDashboardSlideTable();
-    await ensureSystemSettingsTable();
-    await ensureAlumniFeeRecordsTable();
-    await ensureAlumniProjectTables();
-    await ensureAlumniLoginActivityTable();
-    await ensureUserSessionTables();
     await endExpiredSessions();
-    await ensureAnnouncementInterestTable();
     startDurationAutoArchiveJob();
     startEmailQueueJob();
 };
 
 initializeDatabaseBackedStartup().catch((error) => {
-    console.error("DATABASE STARTUP INIT ERROR:", error);
+    logger.error("DATABASE STARTUP INIT ERROR:", error);
 });
 
-/* =========================
-   HEALTH CHECK
-========================= */
+// Health check
 app.get("/api/health", async (_req, res) => {
     try {
         await db.query<QueryRow>("SELECT 1 AS ok");
         res.json({ status: "ok", database: "connected" });
     } catch (err: unknown) {
-        res.status(500).json({ status: "error", database: "unavailable", error: getErrorMessage(err) });
+        logger.error("[Health] Database check failed", err);
+        res.status(500).json({ status: "error", database: "unavailable" });
     }
 });
 
@@ -5632,7 +6073,7 @@ if (process.env.ENABLE_TEST_ROUTE === "true") {
             const rows = await db.query<QueryRow>("SELECT 1 + 1 AS result");
             res.json(parseRows(rows));
         } catch (err: unknown) {
-            res.status(500).json({ error: getErrorMessage(err) });
+            res.status(500).json({ error: getPublicErrorMessage(err) });
         }
     });
 }
@@ -5642,10 +6083,8 @@ app.get("/", (_req, res) => {
     res.send("Alumni Management System API is running.");
 });
 
-/* =========================
-   REGISTER ADMIN
-========================= */
-app.post("/api/auth/setup-admin", async (req, res) => {
+// Admin setup
+app.post("/api/auth/setup-admin", authRateLimiter, async (req, res) => {
     if (process.env.ENABLE_SETUP_ADMIN !== "true") {
         return res.status(404).json({ error: "Setup route is disabled." });
     }
@@ -5686,15 +6125,13 @@ app.post("/api/auth/setup-admin", async (req, res) => {
 
         res.json({ success: true, userId: id });
     } catch (err: unknown) {
-        console.error("SETUP ADMIN ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SETUP ADMIN ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   LOGIN
-========================= */
-app.post("/api/auth/login", async (req, res) => {
+// Authentication
+app.post("/api/auth/login", authRateLimiter, async (req, res) => {
     try {
         const { email, password } = req.body || {};
         const identifier = String(email || "").trim();
@@ -5759,12 +6196,12 @@ app.post("/api/auth/login", async (req, res) => {
 
         res.json(payload);
     } catch (err: unknown) {
-        console.error("LOGIN ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("LOGIN ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-app.post("/api/auth/select-role", async (req, res) => {
+app.post("/api/auth/select-role", authRateLimiter, async (req, res) => {
     try {
         const { loginToken, role } = req.body || {};
         const selectedRole = normalizeRoleValue(role);
@@ -5795,7 +6232,7 @@ app.post("/api/auth/select-role", async (req, res) => {
 
         res.json(payload);
     } catch (err: unknown) {
-        console.error("SELECT ROLE ERROR:", err);
+        logger.error("SELECT ROLE ERROR:", err);
         res.status(401).json({ error: err instanceof Error ? err.message : "Role selection expired." });
     }
 });
@@ -5837,14 +6274,12 @@ app.post("/api/auth/logout", authenticateToken, async (req: AuthenticatedRequest
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("LOGOUT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("LOGOUT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   SESSION (restore auth state)
-========================= */
+// Session restoration
 app.get("/api/auth/session", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user) {
@@ -5858,8 +6293,8 @@ app.get("/api/auth/session", authenticateToken, async (req: AuthenticatedRequest
 
         res.json(authPayload);
     } catch (err: unknown) {
-        console.error("SESSION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SESSION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -5876,8 +6311,8 @@ app.get("/api/auth/tracer-status", authenticateToken, async (req: AuthenticatedR
 
         res.json({ isTracerCompleted });
     } catch (err: unknown) {
-        console.error("TRACER STATUS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("TRACER STATUS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -5890,8 +6325,8 @@ app.get("/api/account/settings", authenticateToken, async (req: AuthenticatedReq
         const settings = await getUserSettings(req.user.id);
         res.json({ settings });
     } catch (err: unknown) {
-        console.error("GET ACCOUNT SETTINGS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ACCOUNT SETTINGS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -5981,8 +6416,8 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
             ...authPayload
         });
     } catch (err: unknown) {
-        console.error("UPDATE ACCOUNT PROFILE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE ACCOUNT PROFILE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -6031,8 +6466,8 @@ app.patch("/api/account/password", authenticateToken, async (req: AuthenticatedR
             message: "Password updated successfully."
         });
     } catch (err: unknown) {
-        console.error("UPDATE ACCOUNT PASSWORD ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE ACCOUNT PASSWORD ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -6074,8 +6509,8 @@ app.patch("/api/account/notifications", authenticateToken, async (req: Authentic
             settings
         });
     } catch (err: unknown) {
-        console.error("UPDATE ACCOUNT NOTIFICATIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE ACCOUNT NOTIFICATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -6125,7 +6560,7 @@ app.post("/api/concerns/public", async (req, res) => {
             concern
         });
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 app.get("/api/concerns/me", authenticateToken, async (req: AuthenticatedRequest, res) => {
@@ -6147,7 +6582,7 @@ app.get("/api/concerns/me", authenticateToken, async (req: AuthenticatedRequest,
 
         res.json(concerns);
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6196,7 +6631,7 @@ app.post("/api/concerns", authenticateToken, async (req: AuthenticatedRequest, r
             concern
         });
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 app.delete("/api/concerns/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
@@ -6224,7 +6659,7 @@ app.delete("/api/concerns/:id", authenticateToken, async (req: AuthenticatedRequ
 
         res.json({ message: "Problem report removed successfully." });
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6254,7 +6689,29 @@ app.get("/api/admin/concerns", authenticateToken, requireAdmin, async (_req: Aut
 
         res.json(concerns);
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
+    }
+});
+
+app.delete("/api/admin/concerns/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        const concernId = Number(req.params.id);
+        if (!Number.isInteger(concernId) || concernId <= 0) {
+            return res.status(400).json({ error: "Invalid concern ID." });
+        }
+
+        const result = await db.execute(
+            "DELETE FROM concerns WHERE id = ?",
+            [concernId]
+        ) as ResultSetHeader;
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Concern not found or already removed." });
+        }
+
+        res.json({ message: "Concern removed successfully." });
+    } catch (error: unknown) {
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6312,7 +6769,7 @@ app.patch("/api/admin/concerns/:id/reply", authenticateToken, requireAdmin, asyn
             concern
         });
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6366,7 +6823,7 @@ app.patch("/api/admin/concerns/:id/status", authenticateToken, requireAdmin, asy
             concern
         });
     } catch (error: unknown) {
-        res.status(500).json({ error: getErrorMessage(error) });
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6403,6 +6860,7 @@ app.get("/api/account/my-posts", authenticateToken, async (req: AuthenticatedReq
                  FROM ${announcementTable}
                  WHERE created_by = ?
                    AND LOWER(COALESCE(type, 'announcement')) = 'announcement'
+                   ${hasApprovalStatus ? "AND LOWER(COALESCE(approval_status, 'approved')) = 'approved'" : ""}
                    AND LOWER(COALESCE(status, '')) <> 'archived'
                    ${hasArchivedAt ? "AND archived_at IS NULL" : ""}
                  ORDER BY created_at DESC`,
@@ -6413,7 +6871,7 @@ app.get("/api/account/my-posts", authenticateToken, async (req: AuthenticatedReq
         const achievementRows = parseRows<QueryRow>(await db.query<QueryRow>(
             `SELECT id, title, description, achievement_date, category, organization, image_url, status, created_at, updated_at
              FROM achievements
-             WHERE alumni_id = ? AND LOWER(COALESCE(status, '')) <> 'archived'
+             WHERE alumni_id = ? AND LOWER(COALESCE(status, '')) = 'approved'
              ORDER BY created_at DESC`,
             [req.user.id]
         ));
@@ -6490,8 +6948,8 @@ app.get("/api/account/my-posts", authenticateToken, async (req: AuthenticatedReq
 
         res.json(posts);
     } catch (error: unknown) {
-        console.error("GET MY POSTS ERROR:", error);
-        res.status(500).json({ error: getErrorMessage(error) });
+        logger.error("GET MY POSTS ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6547,8 +7005,8 @@ app.patch("/api/account/my-posts/announcements/:id", authenticateToken, async (r
 
         res.json({ success: true, message: "Announcement updated and sent for admin review." });
     } catch (error: unknown) {
-        console.error("UPDATE OWN ANNOUNCEMENT ERROR:", error);
-        res.status(500).json({ error: getErrorMessage(error) });
+        logger.error("UPDATE OWN ANNOUNCEMENT ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6599,8 +7057,8 @@ app.patch("/api/account/my-posts/achievements/:id", authenticateToken, async (re
 
         res.json({ success: true, message: "Achievement updated and sent for admin review." });
     } catch (error: unknown) {
-        console.error("UPDATE OWN ACHIEVEMENT ERROR:", error);
-        res.status(500).json({ error: getErrorMessage(error) });
+        logger.error("UPDATE OWN ACHIEVEMENT ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6639,8 +7097,8 @@ app.patch("/api/account/my-posts/freedom-wall/:id", authenticateToken, async (re
 
         res.json({ success: true, message: "Freedom Wall post updated successfully." });
     } catch (error: unknown) {
-        console.error("UPDATE OWN FREEDOM WALL POST ERROR:", error);
-        res.status(500).json({ error: getErrorMessage(error) });
+        logger.error("UPDATE OWN FREEDOM WALL POST ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
@@ -6691,19 +7149,17 @@ app.delete("/api/account/my-posts/:type/:id", authenticateToken, async (req: Aut
 
         res.json({ success: true, message: "Post removed successfully." });
     } catch (error: unknown) {
-        console.error("DELETE OWN POST ERROR:", error);
-        res.status(500).json({ error: getErrorMessage(error) });
+        logger.error("DELETE OWN POST ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error) });
     }
 });
 
-/* =========================
-   PROFILES / ALUMNI
-========================= */
-app.get("/api/profiles", authenticateToken, async (_req, res) => {
+// Profiles and alumni
+app.get("/api/profiles", authenticateToken, async (req, res) => {
     try {
         await ensureAlumniProfileColumns();
-        const rows = parseRows(await db.query(
-            `SELECT 
+
+        const selectColumns = `
                 p.id,
                 p.name,
                 p.email,
@@ -6720,7 +7176,112 @@ app.get("/api/profiles", authenticateToken, async (_req, res) => {
                 tf.ched_payload AS tracer_ched_payload,
                 p.contact_number,
                 p.photo,
-                p.created_at,
+                p.created_at`;
+
+        const mapProfileRow = (row: QueryRow) => {
+            const tracerAdvancedStudies = getTracerAdvancedStudies(row.tracer_ched_payload);
+            const { tracer_ched_payload: _tracerPayload, ...profile } = row;
+
+            return tracerAdvancedStudies.advanced_studies_level
+                ? { ...profile, ...tracerAdvancedStudies }
+                : profile;
+        };
+
+        const wantsPagination = req.query.paginated === "true"
+            || req.query.page !== undefined
+            || req.query.pageSize !== undefined;
+
+        if (wantsPagination) {
+            const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>, {
+                defaultPageSize: 15,
+                maxPageSize: 100
+            });
+            const where: string[] = [];
+            const params: DbParam[] = [];
+            const role = normalizeRoleValue(req.query.role);
+            const search = normalizeText(req.query.search);
+            const course = normalizeText(req.query.course);
+            const batch = normalizeText(req.query.batch);
+            const borNumber = normalizeText(req.query.borNumber);
+            const advancedStudiesLevel = normalizeAdvancedStudiesLevel(req.query.advancedStudiesLevel);
+
+            if (role) {
+                where.push("EXISTS (SELECT 1 FROM user_roles role_filter WHERE role_filter.user_id = p.id AND role_filter.role = ?)");
+                params.push(role);
+            }
+
+            if (course && course !== "All Courses") {
+                where.push("p.course = ?");
+                params.push(course);
+            }
+
+            if (batch && batch !== "All Batches") {
+                where.push("p.batch = ?");
+                params.push(batch);
+            }
+
+            if (borNumber) {
+                where.push("p.bor_number LIKE ?");
+                params.push(`%${borNumber}%`);
+            }
+
+            if (advancedStudiesLevel) {
+                where.push("(p.advanced_studies_level = ? OR CAST(tf.ched_payload AS CHAR) LIKE ?)");
+                params.push(advancedStudiesLevel, `%${advancedStudiesLevel.split(" ")[0]}%`);
+            }
+
+            if (search) {
+                const value = `%${search}%`;
+                where.push(`(
+                    p.name LIKE ? OR p.student_id LIKE ? OR p.email LIKE ? OR
+                    p.course LIKE ? OR p.batch LIKE ? OR p.bor_number LIKE ? OR
+                    p.advanced_studies_program LIKE ? OR p.advanced_studies_school LIKE ? OR
+                    CAST(tf.ched_payload AS CHAR) LIKE ?
+                )`);
+                params.push(value, value, value, value, value, value, value, value, value);
+            }
+
+            const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+            const sortableColumns: Record<string, string> = {
+                id: "p.id",
+                name: "p.name",
+                email: "p.email",
+                student_id: "p.student_id",
+                course: "p.course",
+                batch: "p.batch",
+                bor_number: "p.bor_number",
+                advanced_studies_level: "p.advanced_studies_level",
+                created_at: "p.created_at"
+            };
+            const sortColumn = sortableColumns[String(req.query.sortBy || "name")] || sortableColumns.name;
+            const sortDirection = String(req.query.sortDirection || "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
+            const fromSql = `
+                FROM profiles p
+                LEFT JOIN tracer_form tf ON tf.user_id = p.id AND tf.submission_status = 'completed'`;
+            const countRows = parseRows(await db.query(
+                `SELECT COUNT(DISTINCT p.id) AS total ${fromSql} ${whereSql}`,
+                params
+            ));
+            const total = Number(countRows[0]?.total || 0);
+            const rows = parseRows(await db.query(
+                `SELECT ${selectColumns},
+                    COALESCE(?, (SELECT role FROM user_roles selected_role WHERE selected_role.user_id = p.id ORDER BY selected_role.role LIMIT 1)) AS role
+                 ${fromSql}
+                 ${whereSql}
+                 ORDER BY ${sortColumn} ${sortDirection}, p.id ASC
+                 LIMIT ${pageSize} OFFSET ${offset}`,
+                [role || null, ...params]
+            ));
+
+            return res.json({
+                rows: rows.map(mapProfileRow),
+                pagination: getPaginationMeta(page, pageSize, total)
+            });
+        }
+
+        const rows = parseRows(await db.query(
+            `SELECT
+                ${selectColumns},
                 ur.role
             FROM profiles p
             LEFT JOIN user_roles ur ON ur.user_id = p.id
@@ -6728,14 +7289,10 @@ app.get("/api/profiles", authenticateToken, async (_req, res) => {
             ORDER BY p.name ASC`
         ));
 
-        res.json(rows.map((row) => {
-            const advancedStudies = getTracerAdvancedStudies(row.tracer_ched_payload);
-            const { tracer_ched_payload: _tracerPayload, ...profile } = row;
-            return { ...profile, ...advancedStudies };
-        }));
+        res.json(rows.map(mapProfileRow));
     } catch (err: unknown) {
-        console.error("GET PROFILES ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET PROFILES ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -6874,11 +7431,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
                 await updateCredentialEmailStatus(userId, "sent");
             } catch (emailSendError: unknown) {
                 emailError = getSafeEmailError(emailSendError);
-                console.error("SEND ALUMNI CREDENTIALS ERROR:", {
-                    alumniId,
-                    email: normalizedEmail,
-                    error: emailError
-                });
+                logger.warn("[Email] Alumni credential delivery failed", { error: emailError });
                 await updateCredentialEmailStatus(userId, "failed", emailError);
             }
         }
@@ -6894,25 +7447,17 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
         });
     } catch (err: unknown) {
         await conn.rollback();
-        console.error("CREATE ALUMNI ERROR:", err);
+        logger.error("CREATE ALUMNI ERROR:", err);
         if (getErrorMessage(err).toLowerCase().includes("duplicate")) {
             return res.status(409).json({ error: "This alumni account already exists." });
         }
-        res.status(500).json({ error: getErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn.release();
     }
 });
 
-const alumniImportFileParser = express.raw({
-    type: [
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/octet-stream"
-    ],
-    limit: "15mb"
-});
-
-app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFileParser, async (req: AuthenticatedRequest, res) => {
+app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimiter, alumniImportFileParser, async (req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
@@ -7091,12 +7636,6 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
                 );
             } catch (emailSendError: unknown) {
                 const emailError = getSafeEmailError(emailSendError);
-                console.error("IMPORT ALUMNI BREVO ERROR:", {
-                    rowNumber: row.rowNumber,
-                    alumniId,
-                    email: row.email,
-                    error: emailError
-                });
                 await updateCredentialEmailStatus(userId, "failed", emailError);
                 await db.execute(
                     `UPDATE imported_alumni_records
@@ -7127,6 +7666,12 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
         const invalidRows = failedRows.filter((row) => row.category === "invalid").length;
         const failedEmailSends = failedEmailRows.length;
 
+        if (failedEmailSends > 0) {
+            logger.warn(`[Email] Alumni import batch completed: ${importedRows.length - failedEmailSends} sent, ${failedEmailSends} failed`);
+        } else {
+            logger.debug(`[Email] Alumni import batch completed: ${importedRows.length} sent, 0 failed`);
+        }
+
         res.json({
             success: true,
             summary: {
@@ -7145,16 +7690,14 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, alumniImportFi
         });
     } catch (err: unknown) {
         await conn.rollback();
-        console.error("IMPORT ALUMNI ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("IMPORT ALUMNI ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn.release();
     }
 });
 
-/* =========================
-   ADMIN SESSION MONITORING
-========================= */
+// Admin session monitoring
 app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
         await ensureUserSessionTables();
@@ -7325,8 +7868,8 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
             }
         });
     } catch (err: unknown) {
-        console.error("ADMIN SESSIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN SESSIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7367,8 +7910,8 @@ app.post("/api/admin/sessions/:id/terminate", authenticateToken, requireAdmin, a
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("TERMINATE SESSION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("TERMINATE SESSION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7402,13 +7945,11 @@ app.post("/api/admin/sessions/terminate-all", authenticateToken, requireAdmin, a
 
         res.json({ success: true, terminated: activeSessions.length });
     } catch (err: unknown) {
-        console.error("TERMINATE ALL SESSIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("TERMINATE ALL SESSIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
-/* =========================
-   ADMIN DASHBOARD
-========================= */
+// Admin dashboard
 app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         await autoArchiveExpiredContent();
@@ -7456,9 +7997,10 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
                 d.purpose,
                 d.ref_number,
                 d.message,
+                d.is_anonymous,
                 d.created_at,
                 d.user_id,
-                p.name
+                COALESCE(NULLIF(d.donor_name, ''), p.name) AS name
             FROM donations d
             LEFT JOIN profiles p ON p.id = d.user_id
             WHERE ${donationStatusSql("d.status")} IN ('pending', 'pending_review', 'pendingreview')
@@ -7473,7 +8015,10 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
                 d.purpose,
                 d.message,
                 d.created_at,
-                p.name
+                CASE
+                    WHEN COALESCE(d.is_anonymous, 0) = 1 THEN 'Anonymous Donor'
+                    ELSE COALESCE(NULLIF(d.donor_name, ''), p.name)
+                END AS name
             FROM donations d
             LEFT JOIN profiles p ON p.id = d.user_id
             WHERE ${donationStatusSql("d.status")} IN ('approved', 'approve')
@@ -7584,8 +8129,8 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
             insightSummaries: analytics.insightSummaries
         });
     } catch (err: unknown) {
-        console.error("ADMIN DASHBOARD ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN DASHBOARD ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7601,8 +8146,8 @@ app.get("/api/slideshow", authenticateToken, async (_req, res) => {
 
         res.json(rows.map(mapDashboardSlide));
     } catch (err: unknown) {
-        console.error("GET SLIDESHOW ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET SLIDESHOW ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7620,8 +8165,8 @@ app.get("/api/admin/slideshow", authenticateToken, requireAdmin, async (_req, re
 
         res.json(rows.map(mapDashboardSlide));
     } catch (err: unknown) {
-        console.error("GET ADMIN SLIDESHOW ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ADMIN SLIDESHOW ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7653,8 +8198,8 @@ app.post("/api/admin/slideshow", authenticateToken, requireAdmin, async (req: Au
         const slide = await getSingleRow("SELECT * FROM dashboard_slides WHERE id = ?", [result.insertId]);
         res.json({ success: true, slide: slide ? mapDashboardSlide(slide) : null });
     } catch (err: unknown) {
-        console.error("CREATE SLIDE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE SLIDE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7688,8 +8233,8 @@ app.put("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req:
         const slide = await getSingleRow("SELECT * FROM dashboard_slides WHERE id = ?", [slideId]);
         res.json({ success: true, slide: slide ? mapDashboardSlide(slide) : null });
     } catch (err: unknown) {
-        console.error("UPDATE SLIDE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE SLIDE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7705,8 +8250,8 @@ app.patch("/api/admin/slideshow/:id/highlight", authenticateToken, requireAdmin,
         );
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("HIGHLIGHT SLIDE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("HIGHLIGHT SLIDE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7740,8 +8285,8 @@ app.patch("/api/admin/slideshow/reorder", authenticateToken, requireAdmin, async
 
         res.json(rows.map(mapDashboardSlide));
     } catch (err: unknown) {
-        console.error("REORDER SLIDES ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("REORDER SLIDES ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7754,8 +8299,8 @@ app.delete("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (r
         await db.execute("DELETE FROM dashboard_slides WHERE id = ?", [slideId]);
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE SLIDE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE SLIDE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7790,8 +8335,8 @@ app.get("/api/chairman/dashboard", authenticateToken, requireChairman, async (re
                 .slice(0, 4),
         });
     } catch (err: unknown) {
-        console.error("GET CHAIRMAN DASHBOARD ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET CHAIRMAN DASHBOARD ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -7809,8 +8354,8 @@ app.get("/api/chairman/alumni", authenticateToken, requireChairman, async (req: 
             alumni: await getChairmanAlumniData(course),
         });
     } catch (err: unknown) {
-        console.error("GET CHAIRMAN ALUMNI ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET CHAIRMAN ALUMNI ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -8037,14 +8582,12 @@ app.get("/api/chairman/engagement", authenticateToken, requireChairman, async (r
             departmentMetrics,
         });
     } catch (err: unknown) {
-        console.error("GET CHAIRMAN ENGAGEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET CHAIRMAN ENGAGEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   ALUMNI DASHBOARD
-========================= */
+// Alumni dashboard
 app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
@@ -8092,7 +8635,11 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         );
 
         const donationUpdates = parseRows(await db.query(
-            `SELECT d.id, d.amount, d.method, d.status, d.purpose, d.message, d.created_at, p.name
+            `SELECT d.id, d.amount, d.method, d.status, d.purpose, d.message, d.created_at,
+                    CASE
+                        WHEN COALESCE(d.is_anonymous, 0) = 1 THEN 'Anonymous Donor'
+                        ELSE COALESCE(NULLIF(d.donor_name, ''), p.name)
+                    END AS name
              FROM donations d
              LEFT JOIN profiles p ON p.id = d.user_id
              WHERE ${donationStatusSql("d.status")} IN ('approved', 'approve')
@@ -8273,28 +8820,6 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             });
         }
 
-
-        await ensureAlumniProjectTables();
-        const alumniProjects = parseRows<AlumniProjectRow>(await db.query<AlumniProjectRow>(
-            `SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name,
-                (SELECT COUNT(*) FROM alumni_project_files pf WHERE pf.project_id = p.id) AS file_count
-             FROM alumni_projects p
-             LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id
-             LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id
-             WHERE p.status IN ('Planned', 'Ongoing', 'Completed')
-               AND (p.batch_year IS NULL OR p.batch_year = '' OR LOWER(p.batch_year) = ?)
-             ORDER BY
-                CASE p.status
-                    WHEN 'Ongoing' THEN 1
-                    WHEN 'Planned' THEN 2
-                    WHEN 'Completed' THEN 3
-                    ELSE 4
-                END,
-                COALESCE(p.start_date, p.created_at) DESC,
-                p.created_at DESC
-             LIMIT 8`,
-            [audienceBatch]
-        ));
         if (Number(activitySummary?.wallPosts || 0) + Number(activitySummary?.reactions || 0) < 2) {
             recommendationItems.push({
                 id: "community-group",
@@ -8309,7 +8834,6 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         res.json({
             events,
             surveys,
-            alumniProjects: alumniProjects.map(mapAlumniProject),
             recommendations: recommendationItems
                 .sort((a, b) => b.priority - a.priority)
                 .slice(0, 6),
@@ -8336,14 +8860,12 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             }))
         });
     } catch (err: unknown) {
-        console.error("ALUMNI DASHBOARD ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ALUMNI DASHBOARD ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   GRADUATE TRACER (Admin)
-========================= */
+// Graduate tracer administration
 app.get("/api/graduate-tracer", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         const tracerTable = await getTracerTableName();
@@ -8377,21 +8899,17 @@ app.get("/api/graduate-tracer", authenticateToken, requireAdmin, async (_req, re
 
         res.json(rows);
     } catch (err: unknown) {
-        console.error("GET GRADUATE TRACER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET GRADUATE TRACER ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
 app.get("/api/admin/tracer", authenticateToken, assertTracerAdminAccess, listTracerRecords);
 
-/* =========================
-   TRACER (Alumni - GET own / POST submit)
-========================= */
+// Alumni tracer submissions
 app.use("/api/tracer", tracerRoutes);
 
-/* =========================
-   ENGAGEMENT METRICS
-========================= */
+// Engagement metrics
 app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
@@ -8453,14 +8971,12 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
             donationBreakdown
         });
     } catch (err: unknown) {
-        console.error("GET ENGAGEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ENGAGEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   ENGAGEMENT METRICS (alternate endpoint used by frontend)
-========================= */
+// Engagement metrics endpoint used by the admin frontend
 app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
@@ -8533,8 +9049,8 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
             eventMetrics
         });
     } catch (err: unknown) {
-        console.error("GET ENGAGEMENT METRICS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ENGAGEMENT METRICS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -8639,20 +9155,50 @@ const sendAlumniProjectsPdf = (res: express.Response, rows: AlumniProjectRow[]) 
     pdf += offsets.slice(1).map((offset) => String(offset).padStart(10, "0") + " 00000 n \n").join("");
     pdf += "trailer\n<< /Size " + String(objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + String(xref) + "\n%%EOF";
     res.setHeader("Content-Type", "application/pdf"); res.attachment("alumni-projects-report.pdf"); res.send(Buffer.from(pdf, "utf8"));
-};app.get("/api/admin/alumni-projects/reports/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/pdf", authenticateToken, requireAdmin, async (req, res) => { try { sendAlumniProjectsPdf(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/excel", authenticateToken, requireAdmin, async (req, res) => { try { await sendAlumniProjectsExcel(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/:format", authenticateToken, requireAdmin, async (req, res) => { try { res.json({ format: req.params.format, projects: (await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject) }); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { res.json((await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject)); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); await ensureAlumniProjectTables(); const row = await getSingleRow<AlumniProjectRow>(`SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name, 0 AS file_count FROM alumni_projects p LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id WHERE p.id = ?`, [id]); if (!row) return res.status(404).json({ error: "Project not found." }); const files = parseRows<AlumniProjectFileRow>(await db.query<AlumniProjectFileRow>("SELECT * FROM alumni_project_files WHERE project_id = ? ORDER BY uploaded_at DESC, created_at DESC", [id])); res.json({ ...mapAlumniProject(row), files: files.map((file) => ({ id: Number(file.id), name: file.file_name, type: file.file_type || "", path: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", url: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", category: file.file_category || "File", uploadedAt: file.uploaded_at || file.created_at, createdAt: file.created_at })) }); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
+};
+app.use("/api/admin/alumni-projects", authenticateToken, requireAdmin, (_req, res) => {
+    res.status(410).json({ error: "Alumni Projects has been removed." });
+});
+
+app.get("/api/admin/alumni-projects/reports/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/pdf", authenticateToken, requireAdmin, async (req, res) => { try { sendAlumniProjectsPdf(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/excel", authenticateToken, requireAdmin, async (req, res) => { try { await sendAlumniProjectsExcel(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/:format", authenticateToken, requireAdmin, async (req, res) => { try { res.json({ format: req.params.format, projects: (await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { res.json((await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); await ensureAlumniProjectTables(); const row = await getSingleRow<AlumniProjectRow>(`SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name, 0 AS file_count FROM alumni_projects p LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id WHERE p.id = ?`, [id]); if (!row) return res.status(404).json({ error: "Project not found." }); const files = parseRows<AlumniProjectFileRow>(await db.query<AlumniProjectFileRow>("SELECT * FROM alumni_project_files WHERE project_id = ? ORDER BY uploaded_at DESC, created_at DESC", [id])); res.json({ ...mapAlumniProject(row), files: files.map((file) => ({ id: Number(file.id), name: file.file_name, type: file.file_type || "", path: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", url: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", category: file.file_category || "File", uploadedAt: file.uploaded_at || file.created_at, createdAt: file.created_at })) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
 app.post("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req: AuthenticatedRequest, res) => { try { const project = normalizeProjectInput(req.body || {}); const result = await db.execute("INSERT INTO alumni_projects (title, description, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, start_date, end_date, status, estimated_value, funding_source, beneficiaries, related_contribution_id, accomplishments, remarks, contribution_record_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
 app.put("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id), project = normalizeProjectInput(req.body || {}); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET title=?, description=?, category=?, batch_year=?, lead_officer_id=?, lead_alumni_id=?, organization_name=?, alumni_group=?, start_date=?, end_date=?, status=?, estimated_value=?, funding_source=?, beneficiaries=?, related_contribution_id=?, accomplishments=?, remarks=?, contribution_record_id=? WHERE id=?", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Project not found." }); res.json({ success: true }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
-app.delete("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET status = 'Archived' WHERE id = ? AND status <> 'Archived'", [id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Active project not found." }); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } });
-const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.Response) => { try { const id = Number(req.params.id), name = normalizeText(req.body?.fileName ?? req.body?.name) || "Project attachment", path = normalizeStoredMedia(String(req.body?.filePath || req.body?.path || req.body?.url || req.body?.dataUrl || "")), category = normalizeText(req.body?.category) || "Project File"; if (!Number.isInteger(id) || id <= 0 || !path) return res.status(400).json({ error: "A valid project and attachment are required." }); const project = await getSingleRow("SELECT id FROM alumni_projects WHERE id = ?", [id]); if (!project) return res.status(404).json({ error: "Project not found." }); const result = await db.execute("INSERT INTO alumni_project_files (project_id, file_name, file_path, file_type, file_url, file_category, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())", [id, name, path, normalizeText(req.body?.fileType ?? req.body?.type) || null, path, category, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } };
-app.post("/api/admin/alumni-projects/:id/upload-file", authenticateToken, requireAdmin, requireProjectWriteAccess, uploadAlumniProjectFile);
-app.post("/api/admin/alumni-projects/:id/files", authenticateToken, requireAdmin, requireProjectWriteAccess, uploadAlumniProjectFile);
-app.delete("/api/admin/alumni-projects/:projectId/files/:fileId", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { await db.execute("DELETE FROM alumni_project_files WHERE id = ? AND project_id = ?", [Number(req.params.fileId), Number(req.params.projectId)]); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getErrorMessage(e) }); } })
+app.delete("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET status = 'Archived' WHERE id = ? AND status <> 'Archived'", [id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Active project not found." }); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+        const id = Number(req.params.id);
+        const name = normalizeText(req.body?.fileName ?? req.body?.name) || "Project attachment";
+        const category = normalizeText(req.body?.category) || "Project File";
+        const dataUrl = String(req.body?.dataUrl || "");
+        const { mimeType } = parseDataUrlUpload(dataUrl, 8 * 1024 * 1024);
+        const path = normalizeStoredMedia(dataUrl);
+
+        if (!Number.isInteger(id) || id <= 0 || !path) {
+            return res.status(400).json({ error: "A valid project attachment is required." });
+        }
+
+        const project = await getSingleRow("SELECT id FROM alumni_projects WHERE id = ?", [id]);
+        if (!project) return res.status(404).json({ error: "Project not found." });
+
+        const result = await db.execute(
+            "INSERT INTO alumni_project_files (project_id, file_name, file_path, file_type, file_url, file_category, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+            [id, name, path, mimeType, path, category, req.user?.id || null]
+        ) as ResultSetHeader;
+
+        res.status(201).json({ id: result.insertId });
+    } catch (e: unknown) {
+        res.status(400).json({ error: getErrorMessage(e) });
+    }
+};
+app.post("/api/admin/alumni-projects/:id/upload-file", authenticateToken, requireAdmin, requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
+app.post("/api/admin/alumni-projects/:id/files", authenticateToken, requireAdmin, requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
+app.delete("/api/admin/alumni-projects/:projectId/files/:fileId", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { await db.execute("DELETE FROM alumni_project_files WHERE id = ? AND project_id = ?", [Number(req.params.fileId), Number(req.params.projectId)]); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } })
 const ALUMNI_FEE_TYPE_STATUSES = ["Active", "Archived"] as const;
 const ALUMNI_PAYMENT_STATUSES = ["Paid", "Unpaid"] as const;
 const ALUMNI_COMPLETION_STATUSES = ["Complete", "Incomplete"] as const;
@@ -8837,9 +9383,16 @@ const summarizeAlumniFeeRecords = (records: AlumniFeeCompletionRecord[]) => ({
     byStatus: ALUMNI_COMPLETION_STATUSES.map((label) => ({ label, value: records.filter((record) => record.status === label).length }))
 });
 
+app.use("/api/admin/donations/fee-records", authenticateToken, requireAdmin, (_req, res) => {
+    res.status(410).json({ error: "Alumni Fee Records has been removed." });
+});
+app.use("/api/alumni/fee-records", authenticateToken, (_req, res) => {
+    res.status(410).json({ error: "Alumni Fee Records has been removed." });
+});
+
 app.get("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req, res) => {
     try { res.json((await getAlumniFeeTypeRows(req.query as Record<string, unknown>)).map(mapAlumniFeeType)); }
-    catch (err: unknown) { console.error("GET FEE TYPES ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+    catch (err: unknown) { logger.error("GET FEE TYPES ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
 app.post("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
@@ -8871,19 +9424,19 @@ app.delete("/api/admin/donations/fee-records/types/:id", authenticateToken, requ
         const result = await db.execute("UPDATE alumni_fee_types SET status = 'Archived' WHERE id = ? AND LOWER(status) <> 'archived'", [id]) as ResultSetHeader;
         if (!result.affectedRows) return res.status(404).json({ error: "Active fee type not found." });
         res.status(204).send();
-    } catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
 app.get("/api/admin/donations/fee-records/reports/summary", authenticateToken, requireAdmin, async (req, res) => {
     try { res.json(summarizeAlumniFeeRecords(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>))); }
-    catch (err: unknown) { console.error("GET FEE RECORD SUMMARY ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+    catch (err: unknown) { logger.error("GET FEE RECORD SUMMARY ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
 app.get("/api/admin/donations/fee-records/export/:format", authenticateToken, requireAdmin, async (req, res) => {
     try { res.json({ format: req.params.format, records: await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>) }); }
-    catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+    catch (err: unknown) { res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
 app.get("/api/admin/donations/fee-records", authenticateToken, requireAdmin, async (req, res) => {
     try { res.json(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>)); }
-    catch (err: unknown) { console.error("GET FEE RECORDS ERROR:", err); res.status(500).json({ error: getErrorMessage(err) }); }
+    catch (err: unknown) { logger.error("GET FEE RECORDS ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
 app.post("/api/admin/donations/fee-records/payments/mark-paid", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
@@ -8925,7 +9478,7 @@ app.get("/api/alumni/fee-records/me", authenticateToken, async (req: Authenticat
         const [feeTypes, payments] = await Promise.all([getActiveRequiredFeeTypes(), getAlumniFeePaymentRows()]);
         const paymentMap = new Map(payments.map((payment) => [`${payment.alumni_id}:${payment.fee_type_id}`, payment]));
         res.json(buildFeeRecordForAlumni(alumni, feeTypes, paymentMap));
-    } catch (err: unknown) { res.status(500).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });/* =========================
    DONATIONS
 ========================= */
@@ -8947,6 +9500,12 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
                 d.ref_number,
                 d.receipt_url,
                 d.message,
+                d.is_anonymous,
+                d.donor_name,
+                d.donor_email,
+                d.donor_student_id,
+                d.donor_batch,
+                d.donor_course,
                 d.created_at,
                 d.reviewed_at,
                 d.reviewed_by,
@@ -8967,23 +9526,24 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
             ref_number: r.ref_number,
             receipt_url: normalizeStoredMedia(r.receipt_url),
             message: r.message,
+            is_anonymous: Boolean(r.is_anonymous),
             created_at: r.created_at,
             reviewed_at: r.reviewed_at,
             reviewed_by: r.reviewed_by,
             review_notes: r.review_notes,
             profile: {
-                name: r.name || "Unknown",
-                email: (r as QueryRow).email || null,
-                student_id: r.student_id || null,
-                batch: r.batch || null,
-                course: r.course || null
+                name: r.donor_name || r.name || "Walk-in Donor",
+                email: r.donor_email || (r as QueryRow).email || null,
+                student_id: r.donor_student_id || r.student_id || null,
+                batch: r.donor_batch || r.batch || null,
+                course: r.donor_course || r.course || null
             }
         }));
 
         res.json(shaped);
     } catch (err: unknown) {
-        console.error("GET DONATIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET DONATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -8996,7 +9556,10 @@ app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, 
                 COUNT(CASE WHEN ${statusSql} IN ('approved', 'approve') THEN 1 END) AS approvedCount,
                 COUNT(CASE WHEN ${statusSql} IN ('pending', 'pending_review', 'pendingreview') THEN 1 END) AS pendingCount,
                 COUNT(CASE WHEN ${statusSql} IN ('rejected', 'reject') THEN 1 END) AS rejectedCount,
-                COUNT(DISTINCT user_id) AS donorCount,
+                COUNT(DISTINCT CASE
+                    WHEN user_id IS NOT NULL THEN CONCAT('user:', user_id)
+                    ELSE CONCAT('walkin:', LOWER(COALESCE(donor_email, donor_student_id, donor_name, id)))
+                END) AS donorCount,
                 COUNT(*) AS totalDonations
              FROM donations`
         );
@@ -9010,8 +9573,8 @@ app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, 
             totalDonations: Number(summary?.totalDonations || 0)
         });
     } catch (err: unknown) {
-        console.error("GET DONATION SUMMARY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET DONATION SUMMARY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9033,6 +9596,12 @@ app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) 
                 d.ref_number,
                 d.receipt_url,
                 d.message,
+                d.is_anonymous,
+                d.donor_name,
+                d.donor_email,
+                d.donor_student_id,
+                d.donor_batch,
+                d.donor_course,
                 d.created_at,
                 d.reviewed_at,
                 d.reviewed_by,
@@ -9062,21 +9631,22 @@ app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) 
             ref_number: donation.ref_number,
             receipt_url: normalizeStoredMedia(donation.receipt_url ? String(donation.receipt_url) : null),
             message: donation.message,
+            is_anonymous: Boolean(donation.is_anonymous),
             created_at: donation.created_at,
             reviewed_at: donation.reviewed_at,
             reviewed_by: donation.reviewed_by,
             review_notes: donation.review_notes,
             profile: {
-                name: donation.name || "Unknown",
-                email: donation.email || null,
-                student_id: donation.student_id || null,
-                batch: donation.batch || null,
-                course: donation.course || null
+                name: donation.donor_name || donation.name || "Walk-in Donor",
+                email: donation.donor_email || donation.email || null,
+                student_id: donation.donor_student_id || donation.student_id || null,
+                batch: donation.donor_batch || donation.batch || null,
+                course: donation.donor_course || donation.course || null
             }
         });
     } catch (err: unknown) {
-        console.error("GET DONATION DETAIL ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET DONATION DETAIL ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9097,8 +9667,8 @@ app.post("/api/donations/:id/review", authenticateToken, requireAdmin, async (re
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("REVIEW DONATION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("REVIEW DONATION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9149,8 +9719,8 @@ app.post("/api/donations/:id/request-info", authenticateToken, requireAdmin, asy
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("REQUEST DONATION INFO ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("REQUEST DONATION INFO ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9232,24 +9802,109 @@ const updateDonationStatus = async (req: express.Request, res: express.Response)
             });
         }
     } catch (err: unknown) {
-        console.error("UPDATE DONATION STATUS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE DONATION STATUS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 };
 
 app.patch("/api/donations/:id/status", authenticateToken, requireAdmin, updateDonationStatus);
 app.put("/api/donations/:id/status", authenticateToken, requireAdmin, updateDonationStatus);
 
-/* =========================
-   DONATION SETTINGS
-========================= */
+app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+
+        const donorName = normalizeText(req.body?.donorName);
+        const donorEmail = normalizeText(req.body?.donorEmail).toLowerCase();
+        const donorStudentId = normalizeText(req.body?.donorStudentId);
+        const donorBatch = normalizeText(req.body?.donorBatch);
+        const donorCourse = normalizeText(req.body?.donorCourse);
+        const purpose = normalizeText(req.body?.purpose);
+        const message = normalizeText(req.body?.message);
+        const amount = Number(req.body?.amount);
+        const isAnonymous = normalizeBoolean(req.body?.isAnonymous ?? req.body?.is_anonymous);
+
+        if (!donorName) {
+            return res.status(400).json({ error: "Enter the walk-in donor's name." });
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({ error: "Enter a valid donation amount." });
+        }
+        if (!purpose) {
+            return res.status(400).json({ error: "Enter a donation purpose." });
+        }
+        if (donorName.length > 255 || donorEmail.length > 255 || donorStudentId.length > 100 || donorBatch.length > 100 || donorCourse.length > 255 || purpose.length > 255) {
+            return res.status(400).json({ error: "One or more donor fields are too long." });
+        }
+
+        let matchedUserId: string | null = null;
+        if (donorStudentId) {
+            const matchedProfile = await getSingleRow(
+                "SELECT id FROM profiles WHERE LOWER(student_id) = LOWER(?) LIMIT 1",
+                [donorStudentId]
+            );
+            matchedUserId = matchedProfile?.id ? String(matchedProfile.id) : null;
+        }
+        if (!matchedUserId && donorEmail) {
+            const matchedProfile = await getSingleRow(
+                `SELECT p.id
+                 FROM profiles p
+                 LEFT JOIN users u ON u.id = p.id
+                 WHERE LOWER(COALESCE(p.email, u.email, '')) = LOWER(?)
+                 LIMIT 1`,
+                [donorEmail]
+            );
+            matchedUserId = matchedProfile?.id ? String(matchedProfile.id) : null;
+        }
+
+        const result = await db.execute(
+            `INSERT INTO donations (
+                user_id, amount, method, status, purpose, ref_number, message, receipt_url,
+                is_anonymous, donor_name, donor_email, donor_student_id, donor_batch, donor_course,
+                reviewed_at, reviewed_by, review_notes
+             ) VALUES (?, ?, 'Personal', 'approved', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+            [
+                matchedUserId,
+                amount,
+                purpose,
+                message || null,
+                isAnonymous ? 1 : 0,
+                donorName,
+                donorEmail || null,
+                donorStudentId || null,
+                donorBatch || null,
+                donorCourse || null,
+                req.user.id,
+                "Walk-in donation recorded and approved by an administrator."
+            ]
+        ) as ResultSetHeader;
+
+        if (matchedUserId) {
+            await createUserNotification({
+                userId: matchedUserId,
+                title: "Walk-in donation recorded",
+                message: `Your PHP ${amount.toLocaleString()} walk-in donation was recorded and approved.`,
+                category: "donation",
+                linkUrl: "/alumni/donate",
+                actorId: req.user.id
+            });
+        }
+
+        res.status(201).json({ success: true, id: Number(result.insertId), linkedUser: Boolean(matchedUserId) });
+    } catch (err: unknown) {
+        logger.error("POST ADMIN WALK-IN DONATION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
+    }
+});
+
+// Donation settings
 app.get("/api/settings/donation", authenticateToken, async (_req, res) => {
     try {
         const row = await getSingleRow("SELECT * FROM donation_settings ORDER BY id DESC LIMIT 1");
         res.json(row || {});
     } catch (err: unknown) {
-        console.error("GET DONATION SETTINGS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET DONATION SETTINGS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9284,8 +9939,8 @@ app.post("/api/settings/donation/verify-password", authenticateToken, requireAdm
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("VERIFY DONATION SETTINGS PASSWORD ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("VERIFY DONATION SETTINGS PASSWORD ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9320,14 +9975,12 @@ app.post("/api/settings/donation", authenticateToken, requireAdmin, async (req, 
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("SAVE DONATION SETTINGS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SAVE DONATION SETTINGS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   ALUMNI DONATIONS (submit)
-========================= */
+// Alumni donations
 app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
@@ -9336,9 +9989,15 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
         const donationAmount = Number(amount);
         const normalizedMethod = normalizeText(method);
         const normalizedReceipt = normalizeStoredMedia(receipt_url);
+        const normalizedPurpose = normalizeText(purpose);
+        const isAnonymous = normalizeBoolean(req.body?.isAnonymous ?? req.body?.is_anonymous);
 
         if (!Number.isFinite(donationAmount) || donationAmount <= 0) {
             return res.status(400).json({ error: "Enter a valid donation amount." });
+        }
+
+        if (!normalizedPurpose) {
+            return res.status(400).json({ error: "Enter a donation purpose." });
         }
 
         if (!["GCash", "Personal"].includes(normalizedMethod)) {
@@ -9349,14 +10008,21 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
             return res.status(400).json({ error: "GCash reference number is required." });
         }
 
-        if (!normalizedReceipt) {
+        if (normalizedMethod === "GCash" && !normalizedReceipt) {
             return res.status(400).json({ error: "Receipt image is required." });
         }
 
-        await db.execute(
-            `INSERT INTO donations (user_id, amount, method, status, purpose, ref_number, message, receipt_url)
-             VALUES (?, ?, ?, 'pending_review', ?, ?, ?, ?)`,
-            [req.user.id, donationAmount, normalizedMethod, normalizeText(purpose) || null, normalizeText(ref_number) || null, normalizeText(message) || null, normalizedReceipt]
+        const result = await db.execute(
+            `INSERT INTO donations (user_id, amount, method, status, purpose, ref_number, message, receipt_url, is_anonymous)
+             VALUES (?, ?, ?, 'pending_review', ?, ?, ?, ?, ?)`,
+            [req.user.id, donationAmount, normalizedMethod, normalizedPurpose, normalizeText(ref_number) || null, normalizeText(message) || null, normalizedReceipt, isAnonymous ? 1 : 0]
+        ) as ResultSetHeader;
+
+        const savedDonation = await getSingleRow(
+            `SELECT id, amount, method, status, purpose, ref_number, message, is_anonymous, created_at
+             FROM donations
+             WHERE id = ? AND user_id = ?`,
+            [result.insertId, req.user.id]
         );
 
         const adminUserIds = await getAdminUserIds();
@@ -9369,16 +10035,29 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
             actorId: req.user.id
         });
 
-        res.json({ success: true });
+        res.status(201).json({
+            success: true,
+            donation: savedDonation
+                ? {
+                    id: Number(savedDonation.id),
+                    amount: Number(savedDonation.amount || 0),
+                    method: savedDonation.method,
+                    status: formatStatusLabel(normalizeDonationStatus(savedDonation.status), "pending_review"),
+                    purpose: savedDonation.purpose,
+                    refNumber: savedDonation.ref_number || null,
+                    message: savedDonation.message || null,
+                    isAnonymous: Boolean(savedDonation.is_anonymous),
+                    createdAt: savedDonation.created_at
+                }
+                : null
+        });
     } catch (err: unknown) {
-        console.error("POST DONATION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("POST DONATION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   ANNOUNCEMENTS
-========================= */
+// Announcements
 app.get("/api/announcements", authenticateToken, async (_req, res) => {
     try {
         const req = _req as AuthenticatedRequest;
@@ -9414,19 +10093,13 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
             : "1 = 1";
 
         const visibilityClause = !canModerate
-            ? hasApprovalStatus && hasCreatedBy
-                ? `WHERE ((LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause}) OR e.created_by = ?) AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
-                : hasApprovalStatus
-                    ? `WHERE LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
-                    : `WHERE ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
+            ? hasApprovalStatus
+                ? `WHERE LOWER(COALESCE(e.approval_status, 'approved')) = 'approved' AND ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
+                : `WHERE ${audienceClause} AND LOWER(COALESCE(e.status, '')) <> 'archived' ${hasArchivedAt ? "AND e.archived_at IS NULL" : ""}`
             : "";
 
         if (!canModerate && hasAudienceScope) {
             params.push(audienceCourse, audienceBatch);
-        }
-
-        if (!canModerate && hasApprovalStatus && hasCreatedBy && req.user?.id) {
-            params.push(req.user.id);
         }
 
         const rows = parseRows<EventListRow>(await db.query<EventListRow>(
@@ -9505,8 +10178,8 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
 
         res.json(canModerate ? mappedAnnouncements : mappedAnnouncements.filter((item) => item.computed_status !== "Archived"));
     } catch (err: unknown) {
-        console.error("GET ANNOUNCEMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ANNOUNCEMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9645,7 +10318,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
                 actorId: req.user.id
             });
         } else {
-            const adminUserIds = await getAdminUserIds();
+            const adminUserIds = await getContentModeratorUserIds();
             await createUserNotifications({
                 userIds: adminUserIds,
                 title: "Announcement approval required",
@@ -9656,8 +10329,8 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             });
         }
     } catch (err: unknown) {
-        console.error("CREATE ANNOUNCEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE ANNOUNCEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9743,15 +10416,15 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
             audienceScope === "all" ||
             (audienceScope === "course" && audienceCourse && audienceCourse === normalizeText(audienceValue).toLowerCase()) ||
             (audienceScope === "batch" && audienceBatch && audienceBatch === normalizeBatch(audienceValue).toLowerCase());
-        if (!canModerate && approvalStatus !== "approved" && String(event.created_by || "") !== req.user.id) {
+        if (!canModerate && approvalStatus !== "approved") {
             return res.status(404).json({ error: "Announcement not found" });
         }
-        if (!canModerate && approvalStatus === "approved" && String(event.created_by || "") !== req.user.id && !canViewByAudience) {
+        if (!canModerate && !canViewByAudience) {
             return res.status(404).json({ error: "Announcement not found" });
         }
         const eventType = normalizeAnnouncementType(String(event.type || ""));
         const eventDuration = withDurationFields(event, { ignoreDuration: eventType === "announcement" });
-        if (!canModerate && eventDuration.computed_status === "Archived" && String(event.created_by || "") !== req.user.id) {
+        if (!canModerate && eventDuration.computed_status === "Archived") {
             return res.status(404).json({ error: "Announcement not found" });
         }
 
@@ -9774,8 +10447,8 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
             registration_count: Number(event.interest_count || 0)
         });
     } catch (err: unknown) {
-        console.error("GET ANNOUNCEMENT DETAIL ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ANNOUNCEMENT DETAIL ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9795,6 +10468,10 @@ app.get("/api/announcements/:id/interest-status", authenticateToken, async (req:
             [announcementId]
         );
         if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+        const role = await getRequestRole(req);
+        if (!canModerateAnnouncementContent(role) && normalizeAnnouncementApprovalStatus(announcement.approval_status, "approved") !== "approved") {
+            return res.status(404).json({ error: "Announcement not found" });
+        }
         if (!canTrackInterest(announcement)) {
             return res.status(400).json({ error: "Interest tracking is not enabled for this announcement." });
         }
@@ -9813,8 +10490,8 @@ app.get("/api/announcements/:id/interest-status", authenticateToken, async (req:
                 : null
         });
     } catch (err: unknown) {
-        console.error("GET ANNOUNCEMENT INTEREST STATUS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ANNOUNCEMENT INTEREST STATUS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9879,8 +10556,8 @@ app.post("/api/announcements/:id/interest", authenticateToken, async (req: Authe
             }
         });
     } catch (err: unknown) {
-        console.error("SAVE ANNOUNCEMENT INTEREST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SAVE ANNOUNCEMENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9909,8 +10586,8 @@ app.get("/api/admin/announcements/:id/interests", authenticateToken, requireAdmi
             }
         });
     } catch (err: unknown) {
-        console.error("ADMIN ANNOUNCEMENT INTERESTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN ANNOUNCEMENT INTERESTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9941,8 +10618,8 @@ app.get("/api/admin/events/:eventId/interests", authenticateToken, requireAdmin,
             }
         });
     } catch (err: unknown) {
-        console.error("ADMIN EVENT INTERESTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN EVENT INTERESTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -9954,11 +10631,14 @@ app.get("/api/announcements/:id/comments", authenticateToken, async (req: Authen
         if (!announcementId) return res.status(400).json({ error: "Invalid announcement id" });
 
         const announcementTable = await getAnnouncementTableName();
-        const announcement = await getSingleRow(`SELECT id FROM ${announcementTable} WHERE id = ?`, [announcementId]);
+        const announcement = await getSingleRow(`SELECT id, approval_status FROM ${announcementTable} WHERE id = ?`, [announcementId]);
         if (!announcement) return res.status(404).json({ error: "Announcement not found" });
 
         const role = await getRequestRole(req);
         const canModerate = canModerateAnnouncementContent(role);
+        if (!canModerate && normalizeAnnouncementApprovalStatus(announcement.approval_status, "approved") !== "approved") {
+            return res.status(404).json({ error: "Announcement not found" });
+        }
         const statusClause = canModerate ? "" : "AND ac.status = 'visible'";
 
         const commentRows = parseRows(await db.query(
@@ -10033,8 +10713,8 @@ app.get("/api/announcements/:id/comments", authenticateToken, async (req: Authen
             }))
         })));
     } catch (err: unknown) {
-        console.error("GET ANNOUNCEMENT COMMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ANNOUNCEMENT COMMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10048,8 +10728,12 @@ app.post("/api/announcements/:id/comments", authenticateToken, async (req: Authe
         if (!content) return res.status(400).json({ error: "Comment is required." });
 
         const announcementTable = await getAnnouncementTableName();
-        const announcement = await getSingleRow(`SELECT id, title FROM ${announcementTable} WHERE id = ?`, [announcementId]);
+        const announcement = await getSingleRow(`SELECT id, title, approval_status FROM ${announcementTable} WHERE id = ?`, [announcementId]);
         if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+        const role = await getRequestRole(req);
+        if (!canModerateAnnouncementContent(role) && normalizeAnnouncementApprovalStatus(announcement.approval_status, "approved") !== "approved") {
+            return res.status(404).json({ error: "Announcement not found" });
+        }
 
         const result = await db.execute(
             "INSERT INTO announcement_comments (announcement_id, user_id, content) VALUES (?, ?, ?)",
@@ -10068,8 +10752,8 @@ app.post("/api/announcements/:id/comments", authenticateToken, async (req: Authe
 
         res.json({ success: true, commentId: result.insertId });
     } catch (err: unknown) {
-        console.error("CREATE ANNOUNCEMENT COMMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE ANNOUNCEMENT COMMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10084,10 +10768,17 @@ app.post("/api/announcements/:id/comments/:commentId/replies", authenticateToken
         if (!content) return res.status(400).json({ error: "Reply is required." });
 
         const comment = await getSingleRow(
-            "SELECT id, announcement_id, user_id FROM announcement_comments WHERE id = ? AND announcement_id = ?",
+            `SELECT ac.id, ac.announcement_id, ac.user_id, e.approval_status
+             FROM announcement_comments ac
+             INNER JOIN ${await getAnnouncementTableName()} e ON e.id = ac.announcement_id
+             WHERE ac.id = ? AND ac.announcement_id = ?`,
             [commentId, announcementId]
         );
         if (!comment) return res.status(404).json({ error: "Comment not found" });
+        const role = await getRequestRole(req);
+        if (!canModerateAnnouncementContent(role) && normalizeAnnouncementApprovalStatus(comment.approval_status, "approved") !== "approved") {
+            return res.status(404).json({ error: "Comment not found" });
+        }
 
         const result = await db.execute(
             "INSERT INTO announcement_comment_replies (comment_id, user_id, content) VALUES (?, ?, ?)",
@@ -10106,8 +10797,8 @@ app.post("/api/announcements/:id/comments/:commentId/replies", authenticateToken
 
         res.json({ success: true, replyId: result.insertId });
     } catch (err: unknown) {
-        console.error("CREATE ANNOUNCEMENT REPLY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE ANNOUNCEMENT REPLY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10124,8 +10815,8 @@ app.patch("/api/admin/announcement-comments/:commentId", authenticateToken, requ
         if (result.affectedRows === 0) return res.status(404).json({ error: "Comment not found" });
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("MODERATE ANNOUNCEMENT COMMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("MODERATE ANNOUNCEMENT COMMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10142,8 +10833,8 @@ app.patch("/api/admin/announcement-comment-replies/:replyId", authenticateToken,
         if (result.affectedRows === 0) return res.status(404).json({ error: "Reply not found" });
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("MODERATE ANNOUNCEMENT REPLY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("MODERATE ANNOUNCEMENT REPLY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10257,8 +10948,8 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                 : null
         });
     } catch (err: unknown) {
-        console.error("UPDATE EVENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE EVENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10347,8 +11038,8 @@ app.patch("/api/announcements/:id/approval", authenticateToken, requireAdmin, as
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("ANNOUNCEMENT APPROVAL ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ANNOUNCEMENT APPROVAL ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10375,8 +11066,8 @@ app.patch("/api/announcements/:id/archive", authenticateToken, requireAdmin, asy
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("ARCHIVE ANNOUNCEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ARCHIVE ANNOUNCEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10413,8 +11104,8 @@ app.patch("/api/announcements/:id/restore", authenticateToken, requireAdmin, asy
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("RESTORE ANNOUNCEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("RESTORE ANNOUNCEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10427,14 +11118,12 @@ app.delete("/api/announcements/:id", authenticateToken, requireAdmin, async (req
         await db.execute(`DELETE FROM ${announcementTable} WHERE id = ?`, [eventId]);
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE EVENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE EVENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   EVENT RSVP
-========================= */
+// Event RSVP
 app.get("/api/events/:eventId/rsvps", authenticateToken, async (req, res) => {
     try {
         const eventId = Number(req.params.eventId);
@@ -10442,8 +11131,8 @@ app.get("/api/events/:eventId/rsvps", authenticateToken, async (req, res) => {
         const summary = await getEventRsvpSummary(eventId);
         res.json(summary);
     } catch (err: unknown) {
-        console.error("GET RSVPS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET RSVPS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10472,8 +11161,8 @@ app.get("/api/events/:eventId/rsvp-status", authenticateToken, async (req: Authe
             event: withDurationFields(eventRow)
         });
     } catch (err: unknown) {
-        console.error("GET RSVP STATUS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET RSVP STATUS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10537,8 +11226,8 @@ app.post("/api/events/:eventId/rsvp", authenticateToken, async (req: Authenticat
 
         res.json({ success: true, rsvp: { event_id: eventId, alumni_id: req.user.id, response_status: responseStatus, attendance_status: "Pending", verification_status: "Pending" } });
     } catch (err: unknown) {
-        console.error("RSVP ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("RSVP ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10584,8 +11273,8 @@ app.post("/api/events/:eventId/interested", authenticateToken, async (req: Authe
             }
         });
     } catch (err: unknown) {
-        console.error("EVENT INTEREST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10652,8 +11341,8 @@ app.put("/api/events/:eventId/rsvp", authenticateToken, async (req: Authenticate
 
         res.json({ success: true, rsvp });
     } catch (err: unknown) {
-        console.error("UPDATE RSVP ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE RSVP ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10688,8 +11377,8 @@ app.delete("/api/events/:eventId/rsvp", authenticateToken, async (req: Authentic
         await db.execute("DELETE FROM event_registrations WHERE event_id = ? AND alumni_id = ?", [eventId, req.user.id]);
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("CANCEL RSVP ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CANCEL RSVP ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10752,11 +11441,11 @@ app.post("/api/events/:eventId/check-in", authenticateToken, async (req: Authent
             try {
                 await conn.rollback();
             } catch (rollbackError) {
-                console.error("CHECK-IN ROLLBACK ERROR:", rollbackError);
+                logger.error("CHECK-IN ROLLBACK ERROR:", rollbackError);
             }
         }
-        console.error("CHECK-IN ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CHECK-IN ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn?.release();
     }
@@ -10773,8 +11462,8 @@ app.get("/api/admin/events/:eventId/rsvps", authenticateToken, requireAdmin, asy
         const summary = await getEventRsvpSummary(eventId);
         res.json({ ...summary, event: withDurationFields(eventRow) });
     } catch (err: unknown) {
-        console.error("ADMIN EVENT RSVPS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN EVENT RSVPS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10841,11 +11530,11 @@ app.post("/api/admin/events/:eventId/mark-attendance", authenticateToken, requir
             try {
                 await conn.rollback();
             } catch (rollbackError) {
-                console.error("MARK ATTENDANCE ROLLBACK ERROR:", rollbackError);
+                logger.error("MARK ATTENDANCE ROLLBACK ERROR:", rollbackError);
             }
         }
-        console.error("MARK ATTENDANCE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("MARK ATTENDANCE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn?.release();
     }
@@ -10890,8 +11579,8 @@ app.post("/api/admin/events/:eventId/verify-interest", authenticateToken, requir
         const summary = await getEventRsvpSummary(eventId);
         res.json({ success: true, ...summary });
     } catch (err: unknown) {
-        console.error("VERIFY EVENT INTEREST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("VERIFY EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10917,8 +11606,8 @@ app.delete("/api/admin/events/:eventId/interests/:alumniId", authenticateToken, 
         const summary = await getEventRsvpSummary(eventId);
         res.json({ success: true, ...summary });
     } catch (err: unknown) {
-        console.error("REMOVE EVENT INTEREST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("REMOVE EVENT INTEREST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10937,8 +11626,8 @@ app.post("/api/admin/events/:eventId/archive", authenticateToken, requireAdmin, 
         );
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("ADMIN ARCHIVE EVENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN ARCHIVE EVENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -10973,14 +11662,12 @@ app.post("/api/admin/events/:eventId/reopen", authenticateToken, requireAdmin, a
         );
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("ADMIN REOPEN EVENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ADMIN REOPEN EVENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   EVENT COMMENTS
-========================= */
+// Event comments
 app.get("/api/events/:id/comments", authenticateToken, async (req, res) => {
     try {
         const eventId = Number(req.params.id);
@@ -10994,8 +11681,8 @@ app.get("/api/events/:id/comments", authenticateToken, async (req, res) => {
         ));
         res.json(comments);
     } catch (err: unknown) {
-        console.error("GET COMMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET COMMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11024,20 +11711,18 @@ app.post("/api/events/:id/comments", authenticateToken, async (req: Authenticate
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("POST COMMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("POST COMMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   ACHIEVEMENTS
-========================= */
+// Achievements
 app.get("/api/achievements", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
         const role = await getRequestRole(req);
-        const canModerate = role !== "alumni";
+        const canModerate = canModerateAnnouncementContent(role);
 
         const rows = parseRows(await db.query(
             `SELECT
@@ -11047,9 +11732,9 @@ app.get("/api/achievements", authenticateToken, async (req: AuthenticatedRequest
                 p.course
              FROM achievements a
              LEFT JOIN profiles p ON p.id = a.alumni_id
-             ${canModerate ? "" : "WHERE a.status = 'approved' OR a.alumni_id = ?"}
+             ${canModerate ? "" : "WHERE a.status = 'approved'"}
              ORDER BY a.featured DESC, a.achievement_date DESC, a.created_at DESC`,
-            canModerate ? [] : [req.user.id]
+            []
         ));
 
         const achievementIds = rows.map((row) => Number(row.id)).filter((value) => Number.isFinite(value));
@@ -11079,8 +11764,8 @@ app.get("/api/achievements", authenticateToken, async (req: AuthenticatedRequest
             commentCount: commentCounts.get(Number(row.id)) || 0
         })));
     } catch (err: unknown) {
-        console.error("GET ACHIEVEMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ACHIEVEMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11112,7 +11797,7 @@ app.post("/api/achievements", authenticateToken, async (req: AuthenticatedReques
         const achievement = await getSingleRow("SELECT * FROM achievements WHERE id = ?", [result.insertId]);
         res.json({ success: true, achievement });
 
-        const adminUserIds = await getAdminUserIds();
+        const adminUserIds = await getContentModeratorUserIds();
         await createUserNotifications({
             userIds: adminUserIds,
             title: "New achievement submitted",
@@ -11122,8 +11807,8 @@ app.post("/api/achievements", authenticateToken, async (req: AuthenticatedReques
             actorId: req.user.id
         });
     } catch (err: unknown) {
-        console.error("CREATE ACHIEVEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE ACHIEVEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11190,8 +11875,8 @@ app.patch("/api/achievements/:id", authenticateToken, requireAdmin, async (req: 
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("UPDATE ACHIEVEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE ACHIEVEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11205,8 +11890,8 @@ app.delete("/api/achievements/:id", authenticateToken, requireAdmin, async (req,
         await db.execute("DELETE FROM achievements WHERE id = ?", [achievementId]);
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE ACHIEVEMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE ACHIEVEMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11256,8 +11941,8 @@ app.get("/api/achievements/:id/comments", authenticateToken, async (req: Authent
             authorPhoto: normalizeStoredMedia(comment.author_photo ? String(comment.author_photo) : null)
         })));
     } catch (err: unknown) {
-        console.error("GET ACHIEVEMENT COMMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ACHIEVEMENT COMMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11299,8 +11984,8 @@ app.post("/api/achievements/:id/comments", authenticateToken, async (req: Authen
 
         res.status(201).json({ success: true, commentId: result.insertId });
     } catch (err: unknown) {
-        console.error("CREATE ACHIEVEMENT COMMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE ACHIEVEMENT COMMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11364,14 +12049,12 @@ app.post("/api/achievements/:id/reaction", authenticateToken, async (req: Authen
             }
         });
     } catch (err: unknown) {
-        console.error("ACHIEVEMENT REACTION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ACHIEVEMENT REACTION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   FREEDOM WALL
-========================= */
+// Freedom Wall
 app.get("/api/admin/freedom-wall/posts", authenticateToken, requireAdmin, async (_req, res) => {
     try {
         const rows = parseRows(await db.query(
@@ -11426,8 +12109,8 @@ app.get("/api/admin/freedom-wall/posts", authenticateToken, requireAdmin, async 
             status: row.status || "published"
         })));
     } catch (err: unknown) {
-        console.error("GET ADMIN FREEDOM WALL POSTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ADMIN FREEDOM WALL POSTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11476,8 +12159,8 @@ app.patch("/api/admin/freedom-wall/posts/:id", authenticateToken, requireAdmin, 
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("UPDATE ADMIN FREEDOM WALL POST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE ADMIN FREEDOM WALL POST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11497,8 +12180,8 @@ app.delete("/api/admin/freedom-wall/posts/:id", authenticateToken, requireAdmin,
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE ADMIN FREEDOM WALL POST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE ADMIN FREEDOM WALL POST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11549,8 +12232,8 @@ app.get("/api/freedom-wall/posts", authenticateToken, async (req: AuthenticatedR
             commentCount: commentCounts.get(Number(row.id)) || 0
         })));
     } catch (err: unknown) {
-        console.error("GET FREEDOM WALL POSTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET FREEDOM WALL POSTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11577,8 +12260,8 @@ app.post("/api/freedom-wall/posts", authenticateToken, async (req: Authenticated
 
         res.status(201).json({ success: true, postId: result.insertId });
     } catch (err: unknown) {
-        console.error("CREATE FREEDOM WALL POST ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE FREEDOM WALL POST ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11636,8 +12319,8 @@ app.get("/api/freedom-wall/posts/:id/comments", authenticateToken, async (req: A
             authorPhoto: normalizeStoredMedia(row.author_photo ? String(row.author_photo) : null)
         })));
     } catch (err: unknown) {
-        console.error("GET FREEDOM WALL COMMENTS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET FREEDOM WALL COMMENTS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11687,8 +12370,8 @@ app.post("/api/freedom-wall/posts/:id/comments", authenticateToken, async (req: 
 
         res.status(201).json({ success: true, commentId: result.insertId });
     } catch (err: unknown) {
-        console.error("CREATE FREEDOM WALL COMMENT ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE FREEDOM WALL COMMENT ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11770,14 +12453,12 @@ app.post("/api/freedom-wall/posts/:id/reaction", authenticateToken, async (req: 
             }
         });
     } catch (err: unknown) {
-        console.error("FREEDOM WALL REACTION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("FREEDOM WALL REACTION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
-/* =========================
-   SURVEYS
-========================= */
+// Surveys
 app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
@@ -11877,8 +12558,8 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
 
         res.json(canManageSurveys ? surveys : surveys.filter((survey) => survey.questions.length > 0));
     } catch (err: unknown) {
-        console.error("GET SURVEYS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET SURVEYS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -11975,8 +12656,8 @@ app.post("/api/surveys", authenticateToken, requireAdmin, async (req: Authentica
         }
     } catch (err: unknown) {
         await conn.rollback();
-        console.error("CREATE SURVEY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("CREATE SURVEY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn.release();
     }
@@ -12078,8 +12759,8 @@ app.put("/api/surveys/:id", authenticateToken, requireAdmin, async (req: Authent
         res.json({ success: true, surveyId });
     } catch (err: unknown) {
         await conn.rollback();
-        console.error("UPDATE SURVEY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE SURVEY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn.release();
     }
@@ -12136,8 +12817,8 @@ app.patch("/api/surveys/:id/status", authenticateToken, requireAdmin, async (req
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("UPDATE SURVEY STATUS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("UPDATE SURVEY STATUS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12151,8 +12832,8 @@ app.delete("/api/surveys/:id", authenticateToken, requireAdmin, async (req, res)
         await db.execute("DELETE FROM surveys WHERE id = ?", [surveyId]);
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE SURVEY ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE SURVEY ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12228,8 +12909,8 @@ app.post("/api/surveys/:id/responses", authenticateToken, async (req: Authentica
         res.json({ success: true });
     } catch (err: unknown) {
         await conn.rollback();
-        console.error("SUBMIT SURVEY RESPONSE ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("SUBMIT SURVEY RESPONSE ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     } finally {
         conn.release();
     }
@@ -12283,8 +12964,8 @@ app.get("/api/surveys/:id/responses", authenticateToken, requireAdmin, async (re
             submittedAt: row.submitted_at
         })));
     } catch (err: unknown) {
-        console.error("GET SURVEY RESPONSES ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET SURVEY RESPONSES ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12386,8 +13067,8 @@ app.get("/api/alumni-officers", authenticateToken, requireAdmin, async (req, res
 
         res.json(rows.map(mapAlumniOfficer));
     } catch (err: unknown) {
-        console.error("GET ALUMNI OFFICERS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ALUMNI OFFICERS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12400,8 +13081,8 @@ app.get("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (req,
         if (!officer) return res.status(404).json({ error: "Officer not found" });
         res.json(mapAlumniOfficer(officer));
     } catch (err: unknown) {
-        console.error("GET ALUMNI OFFICER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12467,8 +13148,8 @@ app.post("/api/alumni-officers/:id/archive", authenticateToken, requireAdmin, as
         const saved = await getAlumniOfficerById(id);
         res.json(saved ? mapAlumniOfficer(saved) : { id });
     } catch (err: unknown) {
-        console.error("ARCHIVE ALUMNI OFFICER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("ARCHIVE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12484,8 +13165,8 @@ app.post("/api/alumni-officers/:id/restore", authenticateToken, requireAdmin, as
         const saved = await getAlumniOfficerById(id);
         res.json(saved ? mapAlumniOfficer(saved) : { id });
     } catch (err: unknown) {
-        console.error("RESTORE ALUMNI OFFICER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("RESTORE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12497,13 +13178,11 @@ app.delete("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (r
         if (!result.affectedRows) return res.status(404).json({ error: "Officer not found" });
         res.status(204).send();
     } catch (err: unknown) {
-        console.error("DELETE ALUMNI OFFICER ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("DELETE ALUMNI OFFICER ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
-/* =========================
-   OFFICERS
-========================= */
+// Officers
 app.get("/api/officers", authenticateToken, async (_req, res) => {
     try {
         const rows = parseRows<OfficerSchoolYearRow>(await db.query<OfficerSchoolYearRow>(
@@ -12539,8 +13218,8 @@ app.get("/api/officers", authenticateToken, async (_req, res) => {
             schoolYears
         });
     } catch (err: unknown) {
-        console.error("GET OFFICERS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET OFFICERS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12624,8 +13303,8 @@ app.get("/api/officers/:schoolYearId", authenticateToken, async (req, res) => {
             }))
         });
     } catch (err: unknown) {
-        console.error("GET OFFICER SCHOOL YEAR ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET OFFICER SCHOOL YEAR ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12812,21 +13491,19 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
             try {
                 await conn.rollback();
             } catch (rollbackError) {
-                console.error("SAVE OFFICER BUNDLE ROLLBACK ERROR:", rollbackError);
+                logger.error("SAVE OFFICER BUNDLE ROLLBACK ERROR:", rollbackError);
             }
         }
-        console.error("SAVE OFFICER BUNDLE ERROR:", err);
+        logger.error("SAVE OFFICER BUNDLE ERROR:", err);
         if (!res.headersSent) {
-            res.status(500).json({ error: getErrorMessage(err) });
+            res.status(500).json({ error: getPublicErrorMessage(err) });
         }
     } finally {
         conn?.release();
     }
 });
 
-/* =========================
-   NOTIFICATIONS
-========================= */
+// Notifications
 app.get("/api/user-notifications", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
@@ -12872,8 +13549,8 @@ app.get("/api/user-notifications", authenticateToken, async (req: AuthenticatedR
             unreadCount: Number(unreadRow?.unreadCount || 0)
         });
     } catch (err: unknown) {
-        console.error("GET USER NOTIFICATIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET USER NOTIFICATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12890,8 +13567,8 @@ app.patch("/api/user-notifications/:id/read", authenticateToken, async (req: Aut
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("READ USER NOTIFICATION ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("READ USER NOTIFICATION ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12908,8 +13585,8 @@ app.post("/api/user-notifications/read-all", authenticateToken, async (req: Auth
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("READ ALL USER NOTIFICATIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("READ ALL USER NOTIFICATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12920,8 +13597,8 @@ app.get("/api/notifications", authenticateToken, requireAdmin, async (_req, res)
         ));
         res.json(rows);
     } catch (err: unknown) {
-        console.error("GET NOTIFICATIONS ERROR:", err);
-        res.status(500).json({ error: getErrorMessage(err) });
+        logger.error("GET NOTIFICATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err) });
     }
 });
 
@@ -12935,13 +13612,15 @@ app.get("/api/admin/mailing/alumni", authenticateToken, requireAdmin, async (req
 
         res.json(rows);
     } catch (err: unknown) {
-        console.error("GET MAILING ALUMNI ERROR:", err);
+        logger.error("GET MAILING ALUMNI ERROR:", err);
         res.status(500).json({ error: "Unable to load alumni recipients." });
     }
 });
 
-app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (req, res) => {
     try {
+        const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>);
+        const countRows = parseRows(await db.query("SELECT COUNT(*) AS total FROM email_logs"));
         const rows = parseRows(await db.query(
             `SELECT
                 el.id,
@@ -12959,12 +13638,13 @@ app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (_req,
              FROM email_logs el
              LEFT JOIN profiles p ON p.id = el.alumni_id
              ORDER BY el.created_at DESC
-             LIMIT 100`
+             LIMIT ? OFFSET ?`,
+            [pageSize, offset]
         ));
 
-        res.json(rows);
+        res.json({ rows, pagination: getPaginationMeta(page, pageSize, Number(countRows[0]?.total || 0)) });
     } catch (err: unknown) {
-        console.error("GET EMAIL LOGS ERROR:", err);
+        logger.error("GET EMAIL LOGS ERROR:", err);
         res.status(500).json({ error: "Unable to load email logs." });
     }
 });
@@ -12988,7 +13668,7 @@ app.delete("/api/admin/mailing/logs/:id", authenticateToken, requireAdmin, async
 
         res.json({ success: true });
     } catch (err: unknown) {
-        console.error("DELETE EMAIL LOG ERROR:", err);
+        logger.error("DELETE EMAIL LOG ERROR:", err);
         res.status(500).json({ error: "Unable to delete email log." });
     }
 });
@@ -13005,7 +13685,7 @@ app.get("/api/admin/mailing/filters", authenticateToken, requireAdmin, async (_r
             reasons: Object.entries(MAILING_REMINDER_REASONS).map(([value, label]) => ({ value, label }))
         });
     } catch (err: unknown) {
-        console.error("GET MAILING FILTERS ERROR:", err);
+        logger.error("GET MAILING FILTERS ERROR:", err);
         res.status(500).json({ error: "Unable to load mailing filters." });
     }
 });
@@ -13140,11 +13820,18 @@ app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req:
         }
 
         if (sentRecipients.length === 0) {
+            logger.warn(`[Email] Targeted batch completed: 0 sent, ${failedRecipients.length} failed`);
             return res.status(502).json({
                 error: "Email was not sent to any selected alumnus. Check the email logs for safe error messages.",
                 failedCount: failedRecipients.length,
                 failures: failedRecipients.map(({ id, name, email, error, logId }) => ({ id, name, email, error, logId }))
             });
+        }
+
+        if (failedRecipients.length > 0) {
+            logger.warn(`[Email] Targeted batch completed: ${sentRecipients.length} sent, ${failedRecipients.length} failed`);
+        } else {
+            logger.debug(`[Email] Targeted batch completed: ${sentRecipients.length} sent, 0 failed`);
         }
 
         return res.status(failedRecipients.length > 0 ? 207 : 200).json({
@@ -13159,7 +13846,7 @@ app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req:
             failures: failedRecipients.map(({ id, name, email, logId }) => ({ id, name, email, logId }))
         });
     } catch (err: unknown) {
-        console.error("SEND TARGETED MAIL ERROR:", {
+        logger.error("SEND TARGETED MAIL ERROR:", {
             message: getErrorMessage(err)
         });
         res.status(500).json({ error: "Unable to send email right now." });
@@ -13172,7 +13859,7 @@ app.get("/api/admin/email-queue/settings", authenticateToken, requireAdmin, asyn
         const stats = await getEmailQueueStats();
         res.json({ settings, stats });
     } catch (err: unknown) {
-        console.error("GET EMAIL QUEUE SETTINGS ERROR:", err);
+        logger.error("GET EMAIL QUEUE SETTINGS ERROR:", err);
         res.status(500).json({ error: "Unable to load email queue settings." });
     }
 });
@@ -13183,23 +13870,26 @@ app.put("/api/admin/email-queue/settings", authenticateToken, requireAdmin, asyn
         const stats = await getEmailQueueStats();
         res.json({ success: true, message: "Email queue settings saved.", settings, stats });
     } catch (err: unknown) {
-        console.error("SAVE EMAIL QUEUE SETTINGS ERROR:", err);
+        logger.error("SAVE EMAIL QUEUE SETTINGS ERROR:", err);
         res.status(500).json({ error: "Unable to save email queue settings." });
     }
 });
 
-app.get("/api/admin/email-queue", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/email-queue", authenticateToken, requireAdmin, async (req, res) => {
     try {
         await ensureEmailQueueTables();
+        const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>);
+        const countRows = parseRows(await db.query("SELECT COUNT(*) AS total FROM email_queue"));
         const rows = parseRows(await db.query(
             `SELECT id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, status, scheduled_for, attempts, last_attempt_at, sent_at, error_message, created_at
              FROM email_queue
              ORDER BY created_at DESC
-             LIMIT 100`
+             LIMIT ? OFFSET ?`,
+            [pageSize, offset]
         ));
-        res.json({ rows, stats: await getEmailQueueStats() });
+        res.json({ rows, pagination: getPaginationMeta(page, pageSize, Number(countRows[0]?.total || 0)), stats: await getEmailQueueStats() });
     } catch (err: unknown) {
-        console.error("GET EMAIL QUEUE ERROR:", err);
+        logger.error("GET EMAIL QUEUE ERROR:", err);
         res.status(500).json({ error: "Unable to load email queue." });
     }
 });
@@ -13209,7 +13899,7 @@ app.post("/api/admin/email-queue/enqueue-tracer-reminders", authenticateToken, r
         const result = await enqueueDueTracerReminders({ force: true, createdBy: req.user?.id || null });
         res.json({ success: true, message: `${result.queued} tracer reminder${result.queued === 1 ? "" : "s"} queued.`, ...result, stats: await getEmailQueueStats() });
     } catch (err: unknown) {
-        console.error("ENQUEUE TRACER REMINDERS ERROR:", err);
+        logger.error("ENQUEUE TRACER REMINDERS ERROR:", err);
         res.status(500).json({ error: "Unable to queue tracer reminders." });
     }
 });
@@ -13219,7 +13909,7 @@ app.post("/api/admin/email-queue/process", authenticateToken, requireAdmin, asyn
         const result = await processEmailQueue({ force: true });
         res.json({ success: true, message: `${result.sent} queued email${result.sent === 1 ? "" : "s"} sent.`, ...result, stats: await getEmailQueueStats() });
     } catch (err: unknown) {
-        console.error("PROCESS EMAIL QUEUE ERROR:", err);
+        logger.error("PROCESS EMAIL QUEUE ERROR:", err);
         res.status(500).json({ error: "Unable to process email queue." });
     }
 });
@@ -13229,7 +13919,7 @@ app.post("/api/notifications/send", authenticateToken, requireAdmin, async (req:
             error: "Bulk mailing is disabled. Use the targeted mailing endpoint and select up to 10 alumni."
         });
     } catch (err: unknown) {
-        console.error("SEND NOTIFICATION ERROR:", err);
+        logger.error("SEND NOTIFICATION ERROR:", err);
         res.status(500).json({ error: "Unable to send notification." });
     }
 });
@@ -13240,6 +13930,12 @@ app.get("/api/admin/tracer/:alumniId/pdf/download", authenticateToken, assertTra
 app.get("/api/admin/tracer/:alumniId/pdf", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
 app.get("/api/admin/tracer/:alumniId", authenticateToken, assertTracerAdminAccess, getAdminTracerRecord);
 app.use("/api/email", authenticateToken, requireAdmin, emailRoutes);
+
+// 404 handler for unmatched routes
+app.use(notFoundHandler);
+
+// Global error handler
+app.use(errorHandler);
 
 export default app;
 

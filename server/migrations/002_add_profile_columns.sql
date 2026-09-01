@@ -1,0 +1,25 @@
+﻿ALTER TABLE profiles ADD COLUMN bor_number VARCHAR(100) NULL;
+ALTER TABLE profiles ADD COLUMN bor_date DATE NULL;
+ALTER TABLE profiles ADD COLUMN graduation_batch VARCHAR(100) NULL;
+ALTER TABLE profiles ADD COLUMN academic_year VARCHAR(30) NULL;
+ALTER TABLE profiles ADD COLUMN graduation_semester VARCHAR(50) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_level VARCHAR(50) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_status VARCHAR(50) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_program VARCHAR(255) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_school VARCHAR(255) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL;
+ALTER TABLE profiles ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL;
+
+ALTER TABLE imported_alumni_records ADD COLUMN bor_number VARCHAR(100) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN bor_date DATE NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN graduation_batch VARCHAR(100) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN academic_year VARCHAR(30) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN graduation_semester VARCHAR(50) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_level VARCHAR(50) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_status VARCHAR(50) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_program VARCHAR(255) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_school VARCHAR(255) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_start_year VARCHAR(10) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN advanced_studies_expected_completion_year VARCHAR(10) NULL;
+ALTER TABLE imported_alumni_records ADD COLUMN email_status VARCHAR(30) NOT NULL DEFAULT 'pending';
+ALTER TABLE imported_alumni_records ADD COLUMN email_error TEXT NULL;

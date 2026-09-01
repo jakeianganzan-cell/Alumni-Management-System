@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BarChart2, FileText, FileSpreadsheet, Inbox, Loader2, MessageSquare, Printer, Reply, Users } from "lucide-react";
+import { BarChart2, ChevronDown, FileText, FileSpreadsheet, Inbox, Loader2, MessageSquare, Printer, Reply, Trash2, Users } from "lucide-react";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadBrandedExcel, openPrintableReport, type ReportColumn } from "@/lib/reportExport";
@@ -83,6 +83,7 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
   const [concernMessage, setConcernMessage] = useState("");
   const [loadingConcerns, setLoadingConcerns] = useState(true);
   const [savingConcernId, setSavingConcernId] = useState<number | null>(null);
+  const [deletingConcernId, setDeletingConcernId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const preparedBy = profile?.name || user?.email || "System Administrator";
 
@@ -158,6 +159,32 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
       setConcernMessage(error instanceof Error ? error.message : "Failed to save admin reply.");
     } finally {
       setSavingConcernId(null);
+    }
+  };
+
+  const deleteConcern = async (concern: AdminConcern) => {
+    const confirmed = window.confirm(`Remove the concern "${concern.subject}"? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingConcernId(concern.id);
+    setConcernMessage("");
+    try {
+      const res = await fetchApi(`${API_URL}/admin/concerns/${concern.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      const data = await readApiResponse<{ message: string }>(res);
+      setConcerns((current) => current.filter((item) => item.id !== concern.id));
+      setReplyDrafts((current) => {
+        const next = { ...current };
+        delete next[concern.id];
+        return next;
+      });
+      setConcernMessage(data.message || "Concern removed successfully.");
+    } catch (error) {
+      setConcernMessage(error instanceof Error ? error.message : "Failed to remove concern.");
+    } finally {
+      setDeletingConcernId(null);
     }
   };
 
@@ -388,19 +415,17 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
       </div>
       )}
 
-      <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
-        <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="font-display text-2xl font-bold text-navy-dark">Concern Inbox</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Review alumni concerns, send admin replies, and update their handling status.
-            </p>
+      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+          <div className="min-w-0">
+            <h3 className="font-display text-lg font-bold text-navy-dark">Concern Inbox</h3>
+            <p className="text-xs text-muted-foreground">{concerns.length} concern{concerns.length === 1 ? "" : "s"}</p>
           </div>
           <button
             type="button"
             onClick={() => void loadConcerns()}
             disabled={loadingConcerns}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-semibold text-navy transition hover:border-navy hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold text-navy transition hover:border-navy hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingConcerns ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquare className="h-4 w-4" />}
             Refresh
@@ -408,54 +433,61 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
         </div>
 
         {concernMessage && (
-          <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
             {concernMessage}
           </div>
         )}
 
-        <div className="mt-6 space-y-4">
+        <div className="mt-4 space-y-2">
           {loadingConcerns ? (
-            <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+            <div className="rounded-xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
               Loading alumni concerns...
             </div>
           ) : concerns.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-8 text-center">
+            <div className="rounded-xl border border-dashed border-border p-5 text-center">
               <Inbox className="mx-auto h-7 w-7 text-muted-foreground" />
               <p className="mt-2 text-sm font-bold text-navy-dark">No alumni concerns yet</p>
               <p className="mt-1 text-xs text-muted-foreground">Submitted concerns from the Alumni About Us page will appear here.</p>
             </div>
           ) : (
             concerns.map((concern) => (
-              <div key={concern.id} className="rounded-2xl border border-border bg-background p-4">
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
-                  <div>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-navy-dark">{concern.subject}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {concern.alumni_name || "Alumni"} - {concern.alumni_email || "No email"} - {formatConcernDate(concern.created_at)}
-                        </p>
-                      </div>
-                      <span className="w-fit rounded-full bg-navy/10 px-3 py-1 text-[11px] font-semibold uppercase text-navy">
-                        {concern.category}
-                      </span>
-                    </div>
+              <details key={concern.id} className="group overflow-hidden rounded-xl border border-border bg-background">
+                <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 marker:content-none">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-navy-dark">{concern.subject}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {concern.alumni_name || "Alumni"} - {formatConcernDate(concern.created_at)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="hidden rounded-full bg-navy/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-navy sm:inline-flex">
+                      {concern.category}
+                    </span>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {concern.status}
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                  </div>
+                </summary>
 
-                    <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-foreground">{concern.message}</p>
+                <div className="grid gap-3 border-t border-border p-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">{concern.alumni_email || "No email"} - {concern.category}</p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-foreground">{concern.message}</p>
 
                     {concern.admin_reply && (
-                      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                      <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                           <Reply className="h-3.5 w-3.5" />
-                          Current Admin Reply
+                          Current Reply
                         </div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-emerald-950">{concern.admin_reply}</p>
-                        <p className="mt-2 text-xs text-emerald-700">{formatConcernDate(concern.replied_at)}</p>
+                        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-emerald-950">{concern.admin_reply}</p>
+                        <p className="mt-1.5 text-[11px] text-emerald-700">{formatConcernDate(concern.replied_at)}</p>
                       </div>
                     )}
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     <div>
                       <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" htmlFor={`concern-status-${concern.id}`}>
                         Status
@@ -483,24 +515,36 @@ export default function ReportExportsPanel({ showExports = false }: { showExport
                         id={`concern-reply-${concern.id}`}
                         value={replyDrafts[concern.id] || ""}
                         onChange={(event) => setReplyDrafts((current) => ({ ...current, [concern.id]: event.target.value }))}
-                        rows={4}
+                        rows={3}
                         className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-navy focus:ring-2 focus:ring-ring"
                         placeholder="Write admin reply"
                       />
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void saveConcernReply(concern.id)}
-                      disabled={savingConcernId === concern.id}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2 text-sm font-semibold text-white transition hover:bg-navy/90 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {savingConcernId === concern.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Reply className="h-4 w-4" />}
-                      Save Reply
-                    </button>
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void saveConcernReply(concern.id)}
+                        disabled={savingConcernId === concern.id || deletingConcernId === concern.id}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-navy/90 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingConcernId === concern.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Reply className="h-4 w-4" />}
+                        Save Reply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteConcern(concern)}
+                        disabled={savingConcernId === concern.id || deletingConcernId === concern.id}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        title="Delete concern"
+                        aria-label={`Delete concern: ${concern.subject}`}
+                      >
+                        {deletingConcernId === concern.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </details>
             ))
           )}
         </div>

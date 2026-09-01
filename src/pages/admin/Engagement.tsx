@@ -1,6 +1,7 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { Star, Users, Calendar, MessageSquare, TrendingUp } from "lucide-react";
+import { Star } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 
 interface BatchEngagement {
@@ -85,10 +86,6 @@ interface DashboardAnalyticsResponse {
 }
 
 export default function AdminEngagement() {
-  const [eventCount, setEventCount] = useState(0);
-  const [regCount, setRegCount] = useState(0);
-  const [commentCount, setCommentCount] = useState(0);
-  const [donationCount, setDonationCount] = useState(0);
   const [topBatches, setTopBatches] = useState<BatchEngagement[]>([]);
   const [courseComparisons, setCourseComparisons] = useState<CourseComparisonPoint[]>([]);
   const [heatmap, setHeatmap] = useState<HeatmapPoint[]>([]);
@@ -105,11 +102,6 @@ export default function AdminEngagement() {
       });
       const data = await readApiResponse<EngagementMetricsResponse>(res);
       
-      setEventCount(data.eventCount ?? 0);
-      setRegCount(data.regCount ?? 0);
-      setCommentCount(data.commentCount ?? 0);
-      setDonationCount(data.donationCount ?? 0);
-
       const userBatchMap = new Map<string, string>();
       data.profiles?.forEach((profile) => {
         if (profile.batch) userBatchMap.set(profile.id, profile.batch);
@@ -154,18 +146,11 @@ export default function AdminEngagement() {
       setTopAlumni(analyticsData.topAlumni || []);
       setPredictionCounts(analyticsData.predictionCounts || []);
     } catch (err) {
-      console.error(err);
+      clientLogger.error(err);
     } finally {
       setLoading(false);
     }
   };
-
-  const STATS = [
-    { label: "Total Events", value: eventCount, icon: Calendar, color: "bg-navy text-white" },
-    { label: "Attended Events", value: regCount, icon: Users, color: "bg-blue-500 text-white" },
-    { label: "Comments", value: commentCount, icon: MessageSquare, color: "bg-gold text-navy-dark" },
-    { label: "Approved Donations", value: donationCount, icon: Star, color: "bg-emerald-500 text-white" },
-  ];
 
   const maxScore = topBatches.length > 0 ? topBatches[0].score : 100;
   const heatmapMax = Math.max(...heatmap.map((item) => item.activityCount), 1);
@@ -180,21 +165,6 @@ export default function AdminEngagement() {
 
   return (
     <AdminLayout title="Engagement Metrics">
-      <div className="grid grid-cols-1 gap-3 mb-5 sm:grid-cols-2 lg:grid-cols-4">
-        {STATS.map((s, i) => (
-          <div key={i} className="bg-card rounded-xl border border-border shadow-card p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${s.color}`}><s.icon className="w-4 h-4" /></div>
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-            </div>
-            <div>
-              <p className="text-xl font-display font-bold text-navy-dark leading-none">{loading ? "…" : s.value}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
       <div className="grid grid-cols-1 gap-4 mb-4 xl:grid-cols-2">
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">

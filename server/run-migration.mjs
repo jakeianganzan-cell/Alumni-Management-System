@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -31,12 +32,7 @@ const readSslCa = () => {
     }
 
     const caPath = path.isAbsolute(caValue) ? caValue : path.resolve(currentDirPath, caValue);
-
-    if (fs.existsSync(caPath)) {
-      return fs.readFileSync(caPath, "utf8");
-    }
-
-    return caValue.replace(/\\n/g, "\n");
+    return fs.existsSync(caPath) ? fs.readFileSync(caPath, "utf8") : caValue.replace(/\\n/g, "\n");
   }
 
   const caFilePath = DB_SSL_CA_FILE
@@ -47,7 +43,6 @@ const readSslCa = () => {
 };
 
 const ca = readSslCa();
-
 const ssl = DB_SSL_ENABLED
   ? {
       rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",
@@ -55,51 +50,32 @@ const ssl = DB_SSL_ENABLED
     }
   : undefined;
 
-const statements = [
-  "DROP TABLE IF EXISTS job_applications",
-  "DROP TABLE IF EXISTS jobs",
-  `CREATE TABLE IF NOT EXISTS officer_school_year (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      start_year SMALLINT NOT NULL,
-      end_year SMALLINT NOT NULL,
-      label VARCHAR(25) NOT NULL,
-      is_current TINYINT(1) DEFAULT 0,
-      created_by VARCHAR(36) DEFAULT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uq_officer_school_year_label (label),
-      UNIQUE KEY uq_officer_school_year_range (start_year, end_year)
-    )`,
-  `CREATE TABLE IF NOT EXISTS officers (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      school_year_id INT NOT NULL,
-      alumni_id VARCHAR(36) NOT NULL,
-      position VARCHAR(100) NOT NULL,
-      custom_position VARCHAR(255) DEFAULT NULL,
-      display_order INT DEFAULT 0,
-      snapshot_name VARCHAR(255) NOT NULL,
-      snapshot_email VARCHAR(255) DEFAULT NULL,
-      snapshot_course VARCHAR(255) DEFAULT NULL,
-      snapshot_batch VARCHAR(50) DEFAULT NULL,
-      snapshot_contact_number VARCHAR(50) DEFAULT NULL,
-      snapshot_photo LONGTEXT DEFAULT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )`,
-  `CREATE TABLE IF NOT EXISTS imported_alumni_records (
-      id BIGINT AUTO_INCREMENT PRIMARY KEY,
-      import_batch_id VARCHAR(36) NOT NULL,
-      imported_profile_id VARCHAR(36) DEFAULT NULL,
-      full_name VARCHAR(255) NOT NULL,
-      graduation_year VARCHAR(10) NOT NULL,
-      email_address VARCHAR(255) NOT NULL,
-      contact_number VARCHAR(50) DEFAULT NULL,
-      generated_alumni_id VARCHAR(50) DEFAULT NULL,
-      status VARCHAR(50) DEFAULT 'imported',
-      imported_by VARCHAR(36) DEFAULT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-];
+const splitSqlStatements = (sql) =>
+  sql
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((statement) => statement.trim())
+    .filter((statement) => statement && !statement.startsWith("--"));
+
+const getErrorCode = (error) =>
+  error && typeof error === "object" && "code" in error ? String(error.code || "") : "";
+
+const getErrorMessage = (error) => (error instanceof Error ? error.message : String(error || ""));
+
+const getChecksum = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+const isIgnorableIdempotencyError = (error) => {
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error).toLowerCase();
+
+  return (
+    code === "ER_DUP_FIELDNAME" ||
+    code === "ER_DUP_KEYNAME" ||
+    code === "ER_CANT_DROP_FIELD_OR_KEY" ||
+    message.includes("duplicate column") ||
+    message.includes("duplicate key name") ||
+    message.includes("check that column/key exists")
+  );
+};
 
 const pool = mysql.createPool({
   host: DB_HOST,
@@ -108,73 +84,80 @@ const pool = mysql.createPool({
   password: DB_PASSWORD,
   database: DB_NAME,
   ssl,
+  multipleStatements: false,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 5,
   queueLimit: 0,
 });
 
-async function runMigration() {
-  try {
-    console.log("Running migration...");
+const runMigration = async () => {
+  const migrationsDir = path.resolve(currentDirPath, "migrations");
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((file) => /^\d+_.+\.sql$/i.test(file))
+    .sort();
 
-    const [announcementTables] = await pool.query("SHOW TABLES LIKE 'announcements'");
-    const [eventTables] = await pool.query("SHOW TABLES LIKE 'events'");
+  if (files.length === 0) {
+    console.log("No migration files found.");
+    return;
+  }
 
-    if (!Array.isArray(announcementTables) || announcementTables.length === 0) {
-      if (Array.isArray(eventTables) && eventTables.length > 0) {
-        await pool.query("RENAME TABLE events TO announcements");
-        console.log("Renamed events table to announcements.");
-      } else {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS announcements (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            title VARCHAR(255) NOT NULL,
-            description TEXT,
-            date DATE,
-            time TIME,
-            venue VARCHAR(255),
-            type VARCHAR(100),
-            organizer VARCHAR(255),
-            image_url LONGTEXT,
-            status VARCHAR(50) DEFAULT 'upcoming',
-            capacity INT DEFAULT 0,
-            views INT DEFAULT 0,
-            success_score INT DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-          )
-        `);
-        console.log("Created announcements table.");
-      }
+  await pool.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
+  await pool.query(`USE \`${DB_NAME}\``);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      filename VARCHAR(255) NOT NULL UNIQUE,
+      checksum VARCHAR(64) NOT NULL,
+      executed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  for (const file of files) {
+    const filePath = path.join(migrationsDir, file);
+    const sql = fs.readFileSync(filePath, "utf8");
+    const statements = splitSqlStatements(sql);
+    const checksum = await getChecksum(sql);
+    const [existingRows] = await pool.query("SELECT checksum FROM schema_migrations WHERE filename = ? LIMIT 1", [file]);
+
+    if (Array.isArray(existingRows) && existingRows[0]?.checksum === checksum) {
+      console.log(`Skipping ${file}; already applied.`);
+      continue;
     }
 
-    const announcementAlterStatements = [
-      "ALTER TABLE announcements ADD COLUMN type VARCHAR(100) NULL",
-      "ALTER TABLE announcements ADD COLUMN google_form_link TEXT NULL",
-    ];
+    if (Array.isArray(existingRows) && existingRows.length > 0 && file === "001_initial_schema.sql") {
+      console.warn(`Skipping ${file}; legacy base migration checksum differs from the recorded database version.`);
+      continue;
+    }
 
-    for (const sql of announcementAlterStatements) {
+    if (Array.isArray(existingRows) && existingRows.length > 0) {
+      throw new Error(`Migration checksum changed after apply: ${file}`);
+    }
+
+    console.log(`Running ${file} (${statements.length} statements)...`);
+
+    for (const statement of statements) {
       try {
-        await pool.query(sql);
+        await pool.query(statement);
       } catch (error) {
-        if (!(error instanceof Error) || !error.message.includes("Duplicate column")) {
+        if (!isIgnorableIdempotencyError(error)) {
+          console.error(`Migration failed in ${file}.`);
           throw error;
         }
       }
     }
 
-    await pool.query("UPDATE announcements SET type = 'event' WHERE type IS NULL OR type = ''");
-
-    for (const sql of statements) {
-      await pool.query(sql);
-    }
-
-    console.log("Migration completed successfully!");
-  } catch (error) {
-    console.error("Migration failed:", error);
-  } finally {
-    await pool.end();
+    await pool.query("INSERT INTO schema_migrations (filename, checksum) VALUES (?, ?)", [file, checksum]);
   }
-}
 
-runMigration();
+  console.log("Migrations completed successfully.");
+};
+
+runMigration()
+  .catch((error) => {
+    console.error("Migration failed:", error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await pool.end();
+  });

@@ -74,6 +74,10 @@ export default function AlumniLayout({
     navigate("/");
   };
 
+  const preloadAccountPage = () => {
+    void import("@/pages/alumni/Account");
+  };
+
   const Sidebar = ({ mobile = false }: { mobile?: boolean }) => (
     <div className="portal-sidebar flex h-full flex-col border-r border-white/20">
       {mobile && (
@@ -153,7 +157,7 @@ export default function AlumniLayout({
               <button
                 type="button"
                 onClick={() => navigate("/alumni")}
-                className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 aria-label="Go to alumni dashboard"
               >
                 <img src={systemLogo} alt={settings.institutionName || settings.systemName} className="h-8 w-8 object-contain" />
@@ -179,7 +183,7 @@ export default function AlumniLayout({
               <button
                 type="button"
                 onClick={() => navigate("/alumni/donate")}
-                className="relative rounded-lg p-2 text-white transition-colors hover:bg-white/15"
+                className="portal-header-button relative"
                 aria-label="Make a donation"
               >
                 <Heart className="h-5 w-5 text-white" />
@@ -222,6 +226,8 @@ export default function AlumniLayout({
                     </div>
                     <div className="py-1">
                       <button
+                        onMouseEnter={preloadAccountPage}
+                        onFocus={preloadAccountPage}
                         onClick={() => {
                           navigate("/alumni/account");
                           setAccountMenuOpen(false);
@@ -264,6 +270,7 @@ export default function AlumniLayout({
           <nav
             className="alumni-mobile-nav fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
             style={{ borderColor: "hsl(220,20%,88%)", minHeight: "64px" }}
+            aria-label="Alumni mobile navigation"
           >
             {NAV_ITEMS.slice(0, 5).map((tab) => {
               const active = isActivePath(location.pathname, tab.path);

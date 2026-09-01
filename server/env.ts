@@ -5,5 +5,5 @@ import { fileURLToPath } from "url";
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 
-dotenv.config({ path: path.resolve(currentDirPath, "../.env") });
-dotenv.config({ path: path.resolve(currentDirPath, ".env"), override: true });
+dotenv.config({ path: path.resolve(currentDirPath, "../.env"), quiet: true });
+dotenv.config({ path: path.resolve(currentDirPath, ".env"), quiet: true });

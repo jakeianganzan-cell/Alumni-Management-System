@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
@@ -395,7 +396,7 @@ export default function TracerForm() {
         setTracerState(payload);
         setForm(normalizeFormSource(payload, defaultValues));
       } catch (error) {
-        console.error(error);
+        clientLogger.error(error);
         setForm(readDraft(defaultValues));
         setFeedback({ type: "error", message: error instanceof Error ? error.message : "Failed to load tracer response." });
       } finally {

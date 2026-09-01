@@ -3,7 +3,11 @@ import jwt, { JwtPayload } from "jsonwebtoken";
 import db from "../db.ts";
 import { AuthenticatedRequest } from "../types/auth";
 
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
+import { config } from "../config";
+import { logger } from "../utils/logger";
+import { getSessionAccessDecision, type SessionValidationResult } from "../utils/sessionPolicy";
+
+const JWT_SECRET = config.jwtSecret;
 
 const getToken = (req: AuthenticatedRequest) => req.headers["authorization"]?.split(" ")[1];
 
@@ -22,27 +26,40 @@ const endExpiredSession = async (token: string) => {
     }
 };
 
-const isSessionActive = async (sessionId: string) => {
+const isSessionActive = async (sessionId: string): Promise<SessionValidationResult> => {
     try {
         const rows = await db.query(
             "SELECT id FROM user_sessions WHERE session_token = ? AND status = 'Active' LIMIT 1",
             [sessionId]
         );
         const result = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
-        return Array.isArray(result) && result.length > 0;
-    } catch {
-        return true;
+        return Array.isArray(result) && result.length > 0 ? "active" : "inactive";
+    } catch (error) {
+        logger.warn("[Auth] Session validation unavailable", error);
+        return "unavailable";
     }
 };
 
+const configuredSessionTouchInterval = Number(process.env.SESSION_TOUCH_INTERVAL_MS);
+const SESSION_TOUCH_INTERVAL_MS = Number.isFinite(configuredSessionTouchInterval) && configuredSessionTouchInterval >= 10_000
+    ? configuredSessionTouchInterval
+    : 60_000;
+const lastSessionTouchAt = new Map<string, number>();
+
 const touchSession = async (sessionId: string) => {
+    const now = Date.now();
+    const lastTouchedAt = lastSessionTouchAt.get(sessionId) || 0;
+    if (now - lastTouchedAt < SESSION_TOUCH_INTERVAL_MS) return;
+    if (lastSessionTouchAt.size >= 10_000) lastSessionTouchAt.clear();
+    lastSessionTouchAt.set(sessionId, now);
+
     try {
         await db.execute(
             "UPDATE user_sessions SET last_activity = NOW() WHERE session_token = ? AND status = 'Active'",
             [sessionId]
         );
-    } catch {
-        // Keep request handling independent from activity timestamp writes.
+    } catch (error) {
+        logger.warn("[Auth] Session activity update failed", error);
     }
 };
 
@@ -66,8 +83,13 @@ export const authenticateToken = (
         const payload = user as JwtPayload;
         const sessionId = payload.sessionId || payload.sid;
 
-        if (sessionId && !(await isSessionActive(String(sessionId)))) {
-            return res.status(403).json({ error: "Session ended" });
+        if (sessionId) {
+            const decision = getSessionAccessDecision(await isSessionActive(String(sessionId)));
+            if (!decision.allowed) {
+                return decision.status === 403
+                    ? res.status(403).json({ error: "Session ended" })
+                    : res.status(503).json({ error: "Authentication service temporarily unavailable" });
+            }
         }
 
         req.user = {

@@ -107,7 +107,7 @@ const getSameOriginApiFallbackUrl = (input: string) => {
   }
 };
 
-const buildApiConnectionError = (error: unknown, input: string, fallbackUrl?: string | null) => {
+const buildApiConnectionError = (error: unknown, fallbackUrl?: string | null) => {
   const detail = error instanceof Error && error.message ? error.message : "network request failed";
   const retryDetail = fallbackUrl ? ` Tried direct API and ${fallbackUrl}.` : "";
   return new Error(`Cannot connect to the API server.${retryDetail} Make sure the backend is running locally on port 5000 or set VITE_API_URL to the deployed backend URL. (${detail})`);
@@ -123,11 +123,11 @@ export const fetchApi = async (input: string, init?: RequestInit) => {
       try {
         return await fetch(fallbackUrl, init);
       } catch (fallbackError) {
-        throw buildApiConnectionError(fallbackError, input, fallbackUrl);
+        throw buildApiConnectionError(fallbackError, fallbackUrl);
       }
     }
 
-    throw buildApiConnectionError(error, input);
+    throw buildApiConnectionError(error);
   }
 };
 

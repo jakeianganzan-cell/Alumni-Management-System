@@ -38,7 +38,7 @@ export default function ChairmanAchievements() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | AchievementStatus>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "approved">("all");
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
 
   const loadAchievements = async () => {
@@ -47,7 +47,7 @@ export default function ChairmanAchievements() {
       setError("");
       const response = await fetch(`${API_URL}/achievements`, { headers: getAuthHeaders() });
       const payload = await readApiResponse<AchievementRecord[]>(response);
-      setItems(payload);
+      setItems(payload.filter((item) => item.status === "approved"));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load achievements.");
     } finally {
@@ -96,10 +96,7 @@ export default function ChairmanAchievements() {
             </div>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-md border border-input px-3 py-2 text-sm">
               <option value="all">All Status</option>
-              <option value="pending">Pending</option>
               <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="archived">Archived</option>
             </select>
           </div>
 

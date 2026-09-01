@@ -486,12 +486,6 @@ export default function AdminAnnouncements() {
           <>
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <h2 className="mt-1 text-xl font-semibold text-navy-dark">
-                    {activeWorkspace === "event" ? "All events" : "All announcements"}
-                  </h2>
-                </div>
-
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -539,8 +533,7 @@ export default function AdminAnnouncements() {
             <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-navy-dark">{activeWorkspace === "event" ? "All events" : "All announcements"}</h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  <p className="text-xs leading-5 text-muted-foreground">
                     {activeWorkspace === "event"
                       ? "Review upcoming, active, ended, and archived event posts."
                       : "Review published, pending, rejected, and archived announcement posts."}

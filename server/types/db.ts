@@ -1,3 +1,8 @@
+import type { RowDataPacket } from "mysql2";
+
+export type QueryRow = RowDataPacket & Record<string, unknown>;
+export type DbParam = string | number | boolean | Date | Buffer | null;
+
 export interface Event {
   id: number;
   title: string;

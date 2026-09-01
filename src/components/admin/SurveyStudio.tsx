@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { BarChart2, ClipboardList, Loader2, Plus, Trash2 } from "lucide-react";
+import { BarChart2, ChevronLeft, ChevronRight, ClipboardList, Loader2, Plus, Trash2 } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import DurationBadge from "@/components/DurationBadge";
 import { Badge } from "@/components/ui/badge";
@@ -89,6 +89,8 @@ export default function SurveyStudio() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [surveyPage, setSurveyPage] = useState(1);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [questionDirection, setQuestionDirection] = useState<"forward" | "back">("forward");
 
   const loadSurveys = async () => {
     try {
@@ -172,6 +174,7 @@ export default function SurveyStudio() {
       await readApiResponse(response);
       setForm(BLANK_FORM);
       setEditingId(null);
+      setActiveQuestionIndex(0);
       await loadSurveys();
     } finally {
       setSaving(false);
@@ -180,6 +183,7 @@ export default function SurveyStudio() {
 
   const editSurvey = (survey: SurveyRecord) => {
     setEditingId(survey.id);
+    setActiveQuestionIndex(0);
     setForm({
       title: survey.title,
       description: survey.description || "",
@@ -196,6 +200,29 @@ export default function SurveyStudio() {
     });
   };
 
+  const showQuestion = (index: number) => {
+    const nextIndex = Math.max(0, Math.min(index, form.questions.length - 1));
+    setQuestionDirection(nextIndex < activeQuestionIndex ? "back" : "forward");
+    setActiveQuestionIndex(nextIndex);
+  };
+
+  const addQuestion = () => {
+    setQuestionDirection("forward");
+    setActiveQuestionIndex(form.questions.length);
+    setForm((current) => ({ ...current, questions: [...current.questions, blankQuestion()] }));
+  };
+
+  const removeQuestion = (index: number) => {
+    if (form.questions.length === 1) return;
+    const nextLength = form.questions.length - 1;
+    setForm((current) => ({
+      ...current,
+      questions: current.questions.filter((_, questionIndex) => questionIndex !== index),
+    }));
+    setActiveQuestionIndex(Math.min(index, nextLength - 1));
+    setQuestionDirection("back");
+  };
+
   const deleteSurvey = async (surveyId: number) => {
     if (!window.confirm("Delete this survey and its responses?")) return;
     const response = await fetch(`${API_URL}/surveys/${surveyId}`, { method: "DELETE", headers: getAuthHeaders() });
@@ -205,10 +232,7 @@ export default function SurveyStudio() {
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-navy-dark">All surveys and create survey</h2>
-        </div>
+      <div className="mb-5 flex justify-end">
         <Badge variant="outline">{surveys.length} surveys</Badge>
       </div>
 
@@ -266,19 +290,6 @@ export default function SurveyStudio() {
             <input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} placeholder="Survey title" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
             <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder="Survey description" rows={3} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
             <div className="grid gap-3 sm:grid-cols-2">
-              <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
-                <option value="closed">Closed</option>
-                <option value="archived">Archived</option>
-              </select>
-              <select value={form.surveyType} onChange={(event) => setForm((current) => ({ ...current, surveyType: event.target.value }))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-                <option value="general">General</option>
-                <option value="before_event">Before event</option>
-                <option value="after_event">After event</option>
-              </select>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
               <input type="date" value={form.start_date} onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
               <input type="time" value={form.start_time} onChange={(event) => setForm((current) => ({ ...current, start_time: event.target.value }))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
               <input type="date" value={form.end_date} onChange={(event) => setForm((current) => ({ ...current, end_date: event.target.value }))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
@@ -295,9 +306,23 @@ export default function SurveyStudio() {
               </label>
             </div>
 
-            <div className="space-y-3">
-              {form.questions.map((question, index) => (
-                <div key={index} className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">
+                <span className="text-xs font-semibold text-navy-dark">Question {activeQuestionIndex + 1} of {form.questions.length}</span>
+                <div className="flex items-center gap-1">
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => showQuestion(activeQuestionIndex - 1)} disabled={activeQuestionIndex === 0} aria-label="Previous question">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => showQuestion(activeQuestionIndex + 1)} disabled={activeQuestionIndex === form.questions.length - 1} aria-label="Next question">
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              {form.questions[activeQuestionIndex] && (() => {
+                const question = form.questions[activeQuestionIndex];
+                const index = activeQuestionIndex;
+                return (
+                <div key={`${index}-${questionDirection}`} className={`animate-in p-4 duration-200 ${questionDirection === "forward" ? "slide-in-from-right-4" : "slide-in-from-left-4"}`}>
                   <input value={question.questionText} onChange={(event) => updateQuestion(index, { questionText: event.target.value })} placeholder={`Question ${index + 1}`} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <select value={question.questionType} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateQuestion(index, { questionType: event.target.value as QuestionType })} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
@@ -313,16 +338,17 @@ export default function SurveyStudio() {
                   {["single_choice", "multiple_choice"].includes(question.questionType) && (
                     <textarea value={question.options.join("\n")} onChange={(event) => handleQuestionOptions(index, event.target.value)} rows={3} className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" placeholder="One choice per line" />
                   )}
-                  <Button type="button" size="sm" variant="outline" className="mt-2 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setForm((current) => ({ ...current, questions: current.questions.filter((_, questionIndex) => questionIndex !== index) }))} disabled={form.questions.length === 1}>
+                  <Button type="button" size="sm" variant="outline" className="mt-2 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => removeQuestion(index)} disabled={form.questions.length === 1}>
                     Remove
                   </Button>
                 </div>
-              ))}
+                );
+              })()}
             </div>
-            <Button type="button" variant="outline" onClick={() => setForm((current) => ({ ...current, questions: [...current.questions, blankQuestion()] }))}><Plus className="mr-2 h-4 w-4" />Add question</Button>
+            <Button type="button" variant="outline" onClick={addQuestion}><Plus className="mr-2 h-4 w-4" />Add question</Button>
             <div className="flex gap-2">
               <Button type="button" onClick={() => void saveSurvey()} disabled={saving || !form.title.trim()}>{saving ? "Saving..." : editingId ? "Save survey" : "Create survey"}</Button>
-              {editingId && <Button type="button" variant="outline" onClick={() => { setEditingId(null); setForm(BLANK_FORM); }}>Cancel</Button>}
+              {editingId && <Button type="button" variant="outline" onClick={() => { setEditingId(null); setForm(BLANK_FORM); setActiveQuestionIndex(0); }}>Cancel</Button>}
             </div>
           </div>
         </div>

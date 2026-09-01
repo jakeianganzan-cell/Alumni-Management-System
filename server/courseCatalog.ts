@@ -1,10 +1,17 @@
 export interface CourseOption {
   code: string;
   label: string;
-  chairmanEmail?: string;
-  chairmanName?: string;
-  chairmanPassword?: string;
+  description?: string;
+  department?: string;
+  imageUrl?: string;
+  displayOrder?: number;
+  isActive?: boolean;
+  chairmanEmail: string;
+  chairmanName: string;
+  chairmanPassword: string;
 }
+
+const getEnvValue = (name: string) => process.env[name]?.trim() || "";
 
 export const COURSE_OPTIONS: CourseOption[] = [
   {
@@ -12,28 +19,28 @@ export const COURSE_OPTIONS: CourseOption[] = [
     label: "Bachelor of Technology and Livelihood Education (BTLED)",
     chairmanEmail: "chairman.btled@salaycc.local",
     chairmanName: "BTLED Department Chairman",
-    chairmanPassword: "ChairmanBTLED2026!",
+    chairmanPassword: getEnvValue("CHAIRMAN_BTLED_PASSWORD"),
   },
   {
     code: "BECED",
     label: "Bachelor of Early Childhood Education (BECED)",
     chairmanEmail: "chairman.beced@salaycc.local",
     chairmanName: "BECED Department Chairman",
-    chairmanPassword: "ChairmanBECED2026!",
+    chairmanPassword: getEnvValue("CHAIRMAN_BECED_PASSWORD"),
   },
   {
     code: "BS ENTREP",
     label: "Bachelor of Science in Entrepreneurship (BS ENTREP)",
     chairmanEmail: "chairman.bsentrep@salaycc.local",
     chairmanName: "BS ENTREP Department Chairman",
-    chairmanPassword: "ChairmanBSENTREP2026!",
+    chairmanPassword: getEnvValue("CHAIRMAN_BSENTREP_PASSWORD"),
   },
   {
     code: "BSM",
     label: "Bachelor of Science in Midwifery (BSM)",
     chairmanEmail: "chairman.bsm@salaycc.local",
     chairmanName: "BSM Department Chairman",
-    chairmanPassword: "ChairmanBSM2026!",
+    chairmanPassword: getEnvValue("CHAIRMAN_BSM_PASSWORD"),
   },
 ];
 
@@ -58,7 +65,18 @@ export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
   const seen = new Set<string>();
   const normalized: CourseOption[] = [];
 
-  for (const item of source) {
+  const getChairmanFields = (code: string, item: unknown) => {
+    const partial = typeof item === "object" && item !== null ? item as Partial<CourseOption> : {};
+    const fallback = COURSE_OPTIONS.find((option) => normalizeCourseKey(option.code) === code);
+    return {
+      chairmanEmail: partial.chairmanEmail || fallback?.chairmanEmail || "",
+      chairmanName: partial.chairmanName || fallback?.chairmanName || "",
+      chairmanPassword: partial.chairmanPassword || fallback?.chairmanPassword || "",
+    };
+  };
+
+  for (const [index, item] of source.entries()) {
+    const partial = typeof item === "object" && item !== null ? item as Partial<CourseOption> : {};
     const rawCode = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.code || "");
     const code = normalizeCourseKey(rawCode);
     const rawLabel = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.label || "");
@@ -66,10 +84,19 @@ export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
 
     if (!code || seen.has(code)) continue;
     seen.add(code);
-    normalized.push({ code, label });
+    normalized.push({
+      code,
+      label,
+      description: String(partial.description || "").trim(),
+      department: String(partial.department || "").trim(),
+      imageUrl: String(partial.imageUrl || "").trim(),
+      displayOrder: Number.isFinite(Number(partial.displayOrder)) ? Number(partial.displayOrder) : index,
+      isActive: partial.isActive !== false,
+      ...getChairmanFields(code, item),
+    });
   }
 
-  return normalized.length > 0 ? normalized : COURSE_OPTIONS.map(({ code, label }) => ({ code, label }));
+  return normalized.length > 0 ? normalized : COURSE_OPTIONS.map(({ code, label, chairmanEmail, chairmanName, chairmanPassword }) => ({ code, label, chairmanEmail, chairmanName, chairmanPassword }));
 };
 
 export const getCourseLabels = (options: CourseOption[] = COURSE_OPTIONS): Record<string, string> =>

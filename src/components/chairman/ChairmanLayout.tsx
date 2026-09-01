@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DEPARTMENT_LABELS, Department } from "@/lib/rbac";
 import { resolveAssetUrl } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import {
   LayoutDashboard, Users, LogOut, Menu, X, LineChart,
@@ -31,6 +32,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
   const { settings } = useSystemSettings();
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
@@ -106,7 +108,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
   return (
     <div className="portal-shell chairman-portal flex h-screen overflow-hidden">
       {/* Desktop Sidebar */}
-      <div className="hidden lg:flex w-56 flex-shrink-0 flex-col relative z-[60] shadow-xl">
+      <div className="relative z-[60] hidden w-56 flex-shrink-0 flex-col shadow-xl lg:flex">
         <Sidebar />
       </div>
 
@@ -191,9 +193,33 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
         {/* Page Content */}
         <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />
 
-        <main className="portal-main">
+        <main className={`portal-main ${isMobile ? "pb-20" : ""}`}>
           {children}
         </main>
+
+        {isMobile && (
+          <nav
+            className="chairman-mobile-nav fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
+            style={{ borderColor: "hsl(220,20%,88%)", minHeight: "64px" }}
+            aria-label="Chairman mobile navigation"
+          >
+            {NAV_ITEMS.slice(0, 5).map((item) => {
+              const active = location.pathname === item.path || (item.path !== "/chairman" && location.pathname.startsWith(item.path));
+              return (
+                <button
+                  key={item.path}
+                  type="button"
+                  onClick={() => navigate(item.path)}
+                  className="flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 transition-colors"
+                  style={{ color: active ? "hsl(0,100%,17%)" : "hsl(0,0%,55%)" }}
+                >
+                  <item.icon className="h-5 w-5" />
+                  <span className="max-w-full truncate text-[10px] font-semibold">{item.label.split(" ")[0]}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </div>
     </div>
   );

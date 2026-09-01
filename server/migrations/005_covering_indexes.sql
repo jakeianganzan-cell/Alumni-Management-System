@@ -1,0 +1,12 @@
+CREATE INDEX idx_profiles_course_batch_name ON profiles (course, batch, name);
+CREATE INDEX idx_profiles_email_student ON profiles (email, student_id);
+CREATE INDEX idx_announcements_type_status_date ON announcements (type, status, date);
+CREATE INDEX idx_announcements_audience_status ON announcements (audience_scope, audience_value, approval_status);
+CREATE INDEX idx_donations_status_created ON donations (status, created_at);
+CREATE INDEX idx_donations_user_date ON donations (user_id, created_at);
+CREATE INDEX idx_achievements_status_date ON achievements (status, achievement_date);
+CREATE INDEX idx_freedom_wall_status_created ON freedom_wall_posts (status, created_at);
+CREATE INDEX idx_surveys_status_dates ON surveys (status, start_datetime, end_datetime);
+CREATE INDEX idx_alumni_projects_status_batch_category ON alumni_projects (status, batch_year, category);
+CREATE INDEX idx_alumni_fee_payments_alumni_fee_status ON alumni_fee_payments (alumni_id, fee_type_id, status);
+CREATE INDEX idx_user_notifications_user_read_created ON user_notifications (user_id, is_read, created_at);

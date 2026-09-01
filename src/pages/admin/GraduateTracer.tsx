@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Download, Eye, FileSpreadsheet, FileText, Filter, Loader2, Search } from "lucide-react";
@@ -126,7 +127,7 @@ export default function AdminGraduateTracer() {
       setSelectedIds(new Set());
       setPagination(payload.pagination ?? { page: 1, pageSize: 10, total: 0, totalPages: 1 });
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       setRows([]);
     } finally {
       setLoading(false);
@@ -140,7 +141,7 @@ export default function AdminGraduateTracer() {
       const payload = await readApiResponse<AnalyticsPayload>(response);
       setAnalytics(payload);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       setAnalytics(null);
     } finally {
       setLoadingAnalytics(false);
@@ -183,7 +184,7 @@ export default function AdminGraduateTracer() {
       const blob = await response.blob();
       blobDownload(blob, getFileNameFromDisposition(response.headers.get("content-disposition"), fileName));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
     } finally {
       setDownloading(null);
     }
@@ -203,7 +204,7 @@ export default function AdminGraduateTracer() {
       const fileName = getFileNameFromDisposition(response.headers.get("content-disposition"), "graduate-tracer-preview.pdf");
       showPdfPreview(previewWindow, blob, fileName, "Graduate Tracer PDF Preview");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       showPdfPreviewError(
         previewWindow,
         error instanceof Error ? error.message : "Failed to open tracer preview.",
@@ -240,7 +241,7 @@ export default function AdminGraduateTracer() {
       const blob = await response.blob();
       blobDownload(blob, getFileNameFromDisposition(response.headers.get("content-disposition"), "graduate-tracer-selected-pdfs.zip"));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
     } finally {
       setDownloading(null);
     }

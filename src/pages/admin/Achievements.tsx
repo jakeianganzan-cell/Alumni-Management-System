@@ -1,6 +1,6 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AdminPageIntro, AdminStatCard, AdminStatsGrid } from "@/components/admin/AdminPageIntro";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Award, CalendarClock, CheckCircle2, Eye, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -43,7 +43,7 @@ export default function AdminAchievements() {
 
       setItems(await readApiResponse<AchievementRecord[]>(res));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load achievements");
     } finally {
       setLoading(false);
@@ -67,13 +67,8 @@ export default function AdminAchievements() {
       });
   }, [items, searchQuery, tab]);
 
-  const counts = useMemo(
-    () => ({
-      pending: items.filter((item) => item.status === "pending").length,
-      approved: items.filter((item) => item.status === "approved").length,
-      rejected: items.filter((item) => item.status === "rejected").length,
-      featured: items.filter((item) => item.status === "approved" && item.featured).length,
-    }),
+  const pendingCount = useMemo(
+    () => items.filter((item) => item.status === "pending").length,
     [items],
   );
 
@@ -116,7 +111,7 @@ export default function AdminAchievements() {
 
       await loadAchievements();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not update achievement");
     }
   };
@@ -159,7 +154,7 @@ export default function AdminAchievements() {
       toast.success("Achievement deleted");
       await loadAchievements();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not delete achievement");
     }
   };
@@ -167,23 +162,11 @@ export default function AdminAchievements() {
   return (
     <AdminLayout title="Achievements" subtitle="Review, approve, reject, and curate alumni milestones">
       <div className="space-y-6">
-        <AdminPageIntro
-          title="Achievement submissions"
-        />
-
-        <AdminStatsGrid>
-          <AdminStatCard label="Pending" value={counts.pending} icon={<Trophy className="h-4 w-4" />} toneClassName="bg-amber-100 text-amber-700" />
-          <AdminStatCard label="Approved" value={counts.approved} icon={<CheckCircle2 className="h-4 w-4" />} toneClassName="bg-emerald-100 text-emerald-700" />
-          <AdminStatCard label="Rejected" value={counts.rejected} icon={<XCircle className="h-4 w-4" />} toneClassName="bg-rose-100 text-rose-700" />
-          <AdminStatCard label="Featured" value={counts.featured} icon={<Star className="h-4 w-4" />} toneClassName="bg-violet-100 text-violet-700" />
-        </AdminStatsGrid>
-
         <section className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
           <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Focus submission</p>
-                <h2 className="mt-1 text-base font-semibold text-navy-dark">
+                <h2 className="text-base font-semibold text-navy-dark">
                   {featuredItem ? featuredItem.title : "No submission selected"}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -251,11 +234,19 @@ export default function AdminAchievements() {
                   <button
                     key={item}
                     onClick={() => setTab(item)}
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
                       tab === item ? "bg-navy text-white" : "text-muted-foreground hover:text-navy-dark"
                     }`}
                   >
                     {item.charAt(0).toUpperCase() + item.slice(1)}
+                    {item === "pending" && pendingCount > 0 && (
+                      <span
+                        className="inline-flex min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                        aria-label={`${pendingCount} pending achievements`}
+                      >
+                        {pendingCount}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

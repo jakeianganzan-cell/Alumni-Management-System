@@ -27,7 +27,7 @@ export function AdminPageIntro({
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-navy-dark sm:text-xl">{title}</h2>
           {description && <p className="mt-1.5 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</p>}
         </div>
-        {action && <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:flex-shrink-0">{action}</div>}
+        {action && <div className="flex min-w-0 flex-col gap-2 [&>*]:w-full sm:flex-row sm:flex-wrap sm:items-center sm:[&>*]:w-auto lg:flex-shrink-0">{action}</div>}
       </CardContent>
     </Card>
   );

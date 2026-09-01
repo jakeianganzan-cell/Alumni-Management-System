@@ -5,7 +5,7 @@ services:
     plan: free
     rootDir: server
     buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
+    startCommand: npm run migrate && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -43,6 +43,10 @@ services:
       - key: ENABLE_SETUP_ADMIN
         value: false
       - key: ENABLE_TEST_ROUTE
+        value: false
+      - key: RUNTIME_SCHEMA_SYNC
+        value: false
+      - key: RESET_ADMIN_PASSWORD_ON_STARTUP
         value: false
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/.cache/puppeteer

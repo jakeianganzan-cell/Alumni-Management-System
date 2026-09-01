@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ustp_alumni_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+
+      - name: Ensure local env files are not tracked
+        run: |
+          if git ls-files --error-unmatch .env server/.env Accounts.md >/dev/null 2>&1; then
+            echo "Do not track real environment files or account notes."
+            exit 1
+          fi
+
+      - name: Run server hardening tests
+        run: npm test
+        working-directory: server
+
+      - name: Run frontend tests
+        run: npm test -- --run
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Typecheck root
+        run: npx tsc --noEmit --pretty false
+
+      - name: Build server
+        run: npm run build
+        working-directory: server
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run database migrations
+        run: npm run migrate
+        working-directory: server
+        env:
+          JWT_SECRET: ci-jwt-secret-with-more-than-enough-length-for-tests
+          ADMIN_EMAIL: admin@example.test
+          ADMIN_PASSWORD: AdminPassword123!
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: ustp_alumni_ci
+          RUNTIME_SCHEMA_SYNC: "false"
+
+      - name: Verify migration idempotency
+        run: npm run migrate
+        working-directory: server
+        env:
+          JWT_SECRET: ci-jwt-secret-with-more-than-enough-length-for-tests
+          ADMIN_EMAIL: admin@example.test
+          ADMIN_PASSWORD: AdminPassword123!
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: ustp_alumni_ci
+          RUNTIME_SCHEMA_SYNC: "false"
+
+      - name: Verify backup restoration into a disposable database
+        shell: bash
+        env:
+          MYSQL_PWD: root
+        run: |
+          set -euo pipefail
+          backup_file="$RUNNER_TEMP/ustp_alumni_ci.sql"
+          mysqldump --protocol=tcp -h 127.0.0.1 -P 3306 -u root --single-transaction --no-tablespaces ustp_alumni_ci > "$backup_file"
+          mysql --protocol=tcp -h 127.0.0.1 -P 3306 -u root -e "DROP DATABASE IF EXISTS ustp_alumni_restore_ci; CREATE DATABASE ustp_alumni_restore_ci;"
+          mysql --protocol=tcp -h 127.0.0.1 -P 3306 -u root ustp_alumni_restore_ci < "$backup_file"
+          source_count="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root ustp_alumni_ci -e 'SELECT COUNT(*) FROM schema_migrations;')"
+          restored_count="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root ustp_alumni_restore_ci -e 'SELECT COUNT(*) FROM schema_migrations;')"
+          test "$source_count" -ge 9
+          test "$restored_count" -eq "$source_count"
+
+      - name: Start API server
+        run: |
+          npm run start > ../server-smoke.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat ../server-smoke.log
+          exit 1
+        working-directory: server
+        env:
+          PORT: 5000
+          JWT_SECRET: ci-jwt-secret-with-more-than-enough-length-for-tests
+          ADMIN_EMAIL: admin@example.test
+          ADMIN_PASSWORD: AdminPassword123!
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: ustp_alumni_ci
+          RUNTIME_SCHEMA_SYNC: "false"
+
+      - name: Smoke test critical API endpoints
+        run: npm run smoke
+        working-directory: server
+        env:
+          API_BASE_URL: http://127.0.0.1:5000
+          SMOKE_ADMIN_EMAIL: admin@example.test
+          SMOKE_ADMIN_PASSWORD: AdminPassword123!
+          SMOKE_MUTATING: "true"
+
+      - name: Audit root dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Audit server dependencies
+        run: npm audit --audit-level=moderate
+        working-directory: server

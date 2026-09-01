@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, getAuthToken, readApiResponse } from "@/lib/api";
@@ -102,6 +103,23 @@ interface AnnouncementContextType {
 
 const AnnouncementContext = createContext<AnnouncementContextType | null>(null);
 
+let announcementListRequest: { token: string; promise: Promise<Announcement[]> } | null = null;
+
+const requestAnnouncements = (token: string) => {
+  if (!announcementListRequest || announcementListRequest.token !== token) {
+    const promise = fetch(`${API_URL}/announcements`, {
+      headers: getAuthHeaders(),
+    })
+      .then((response) => readApiResponse<Announcement[]>(response))
+      .finally(() => {
+        if (announcementListRequest?.promise === promise) announcementListRequest = null;
+      });
+    announcementListRequest = { token, promise };
+  }
+
+  return announcementListRequest.promise;
+};
+
 export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
   const { user, profile, loading: authLoading } = useAuth();
   const alumniId = user?.id || profile?.student_id || "demo-user";
@@ -115,23 +133,21 @@ export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
   const [recommendations, setRecommendations] = useState<Announcement[]>([]);
 
   const loadAnnouncements = useCallback(async (statusOrType?: string) => {
-    if (!getAuthToken()) {
+    const token = getAuthToken();
+    if (!token) {
       setAnnouncements([]);
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/announcements`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<Announcement[]>(res);
+      const data = await requestAnnouncements(token);
       const filtered = statusOrType
         ? data.filter((item) => item.type === statusOrType || item.status === statusOrType)
         : data;
       setAnnouncements(filtered);
     } catch (error) {
-      console.error("Failed to load announcements:", error);
+      clientLogger.error("Failed to load announcements:", error);
     } finally {
       setLoading(false);
     }
@@ -182,7 +198,7 @@ export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
           [id]: data.type === "event" ? Boolean(rsvps.find((rsvp) => rsvp.alumni_id === alumniId)) : false,
         }));
       } catch (error) {
-        console.error("Failed to load announcement:", error);
+        clientLogger.error("Failed to load announcement:", error);
       }
     },
     [alumniId]
@@ -235,23 +251,24 @@ export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
     });
     const newComments = await readApiResponse<Comment[]>(commentsRes);
     setComments((prev) => ({ ...prev, [announcementId]: newComments }));
-    await refreshMetrics(announcementId);
+    await refreshMetrics(announcementId, newComments);
   };
 
   const loadRecommendations = useCallback(async () => {
     setRecommendations([]);
   }, []);
 
-  const refreshMetrics = async (announcementId: number) => {
+  const refreshMetrics = async (announcementId: number, knownComments?: Comment[]) => {
     try {
-      const announcementRes = await fetch(`${API_URL}/announcements/${announcementId}`, {
+      const announcementRequest = fetch(`${API_URL}/announcements/${announcementId}`, {
         headers: getAuthHeaders(),
-      });
-      const announcement = await readApiResponse<Announcement>(announcementRes);
-      const commentsRes = await fetch(`${API_URL}/events/${announcementId}/comments`, {
-        headers: getAuthHeaders(),
-      });
-      const announcementComments = await readApiResponse<Comment[]>(commentsRes);
+      }).then((response) => readApiResponse<Announcement>(response));
+      const commentsRequest = knownComments
+        ? Promise.resolve(knownComments)
+        : fetch(`${API_URL}/events/${announcementId}/comments`, {
+            headers: getAuthHeaders(),
+          }).then((response) => readApiResponse<Comment[]>(response));
+      const [announcement, announcementComments] = await Promise.all([announcementRequest, commentsRequest]);
 
       let rsvps: AnnouncementRsvp[] = [];
       if (announcement?.type === "event") {
@@ -273,7 +290,7 @@ export const AnnouncementProvider = ({ children }: { children: ReactNode }) => {
         },
       }));
     } catch (error) {
-      console.error("Failed to refresh announcement metrics:", error);
+      clientLogger.error("Failed to refresh announcement metrics:", error);
     }
   };
 

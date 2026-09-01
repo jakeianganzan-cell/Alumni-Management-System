@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Calendar, Heart, MapPin, TrendingUp, Users, Briefcase, Clock3, MonitorSmartphone } from "lucide-react";
@@ -116,20 +117,26 @@ const formatDate = (value: string | null) => {
 
 
 const chartColors = {
-  blue: "#2563eb",
-  emerald: "#10b981",
-  amber: "#f59e0b",
-  rose: "#f43f5e",
-  slate: "#64748b",
-  grid: "#e2e8f0",
+  primary: "hsl(var(--navy))",
+  primarySoft: "hsl(var(--navy-light))",
+  accent: "hsl(var(--gold-dark))",
+  axis: "hsl(var(--muted-foreground))",
+  axisStrong: "hsl(var(--foreground))",
+  grid: "hsl(var(--border))",
+  cursor: "hsl(var(--navy) / 0.08)",
 };
 
 const tooltipStyle = {
-  border: "1px solid #e2e8f0",
-  borderRadius: "12px",
-  boxShadow: "0 14px 30px rgba(15, 23, 42, 0.12)",
+  backgroundColor: "hsl(var(--card))",
+  border: "1px solid hsl(var(--border))",
+  borderRadius: "8px",
+  boxShadow: "var(--shadow-md)",
+  color: "hsl(var(--foreground))",
   fontSize: "12px",
 };
+
+const chartAxisTick = { fontSize: 11, fill: chartColors.axis };
+const chartCategoryTick = { fontSize: 11, fill: chartColors.axisStrong };
 
 const emptySessionStats: SessionStats = {
   activeUsers: 0,
@@ -183,7 +190,7 @@ export default function AdminDashboard() {
       setRecentDonors((data.recentDonors || []).slice(0, 5));
       setSessionStats(data.sessionStats || emptySessionStats);
     } catch (err) {
-      console.error("Dashboard error:", err);
+      clientLogger.error("Dashboard error:", err);
     } finally {
       if (!silent) {
         setLoading(false);
@@ -365,15 +372,15 @@ export default function AdminDashboard() {
               <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthlyEngagement} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
-                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} />
+                    <XAxis dataKey="month" tick={chartAxisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={chartAxisTick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
                     <Tooltip
                       contentStyle={tooltipStyle}
-                      cursor={{ fill: "rgba(37, 99, 235, 0.08)" }}
+                      cursor={{ fill: chartColors.cursor }}
                       formatter={(value) => [formatCompactNumber(Number(value)), "Total activity"]}
                     />
-                    <Bar dataKey="total" name="Total activity" fill={chartColors.blue} radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="total" name="Total activity" fill={chartColors.primary} radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -395,11 +402,12 @@ export default function AdminDashboard() {
               <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={topCourseChartData} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <YAxis type="category" dataKey="shortCourse" width={120} interval={0} tick={{ fontSize: 11, fill: "hsl(0 0% 35%)" }} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} horizontal={false} />
+                    <XAxis type="number" tick={chartAxisTick} axisLine={false} tickLine={false} allowDecimals={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <YAxis type="category" dataKey="shortCourse" width={120} interval={0} tick={chartCategoryTick} axisLine={false} tickLine={false} />
                     <Tooltip
-                      cursor={{ fill: "rgba(37, 99, 235, 0.08)" }}
+                      contentStyle={tooltipStyle}
+                      cursor={{ fill: chartColors.cursor }}
                       formatter={(value, name, item) => {
                         const payload = item?.payload as CourseContributionPoint | undefined;
                         if (name === "contributionScore" && payload) {
@@ -415,7 +423,7 @@ export default function AdminDashboard() {
                         return match?.courseLabel || label;
                       }}
                     />
-                    <Bar dataKey="contributionScore" name="Contribution Score" fill={chartColors.emerald} radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="contributionScore" name="Contribution Score" fill={chartColors.accent} radius={[0, 6, 6, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -460,11 +468,11 @@ export default function AdminDashboard() {
               <div className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={donationTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
-                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(0 0% 45%)" }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} />
+                    <XAxis dataKey="month" tick={chartAxisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={chartAxisTick} axisLine={false} tickLine={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
                     <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCurrency(Number(value)), "Approved donations"]} />
-                    <Line type="monotone" dataKey="donatedAmount" stroke={chartColors.rose} strokeWidth={3} dot={{ r: 3, fill: chartColors.rose }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="donatedAmount" stroke={chartColors.primarySoft} strokeWidth={3} dot={{ r: 3, fill: chartColors.primarySoft, strokeWidth: 0 }} activeDot={{ r: 5, fill: chartColors.primary }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>

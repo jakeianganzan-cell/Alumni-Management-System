@@ -15,7 +15,6 @@ import {
   Calendar,
   ChevronDown,
   FileText,
-  FolderKanban,
   Heart,
   ImagePlus,
   LayoutDashboard,
@@ -37,7 +36,6 @@ const ALL_NAV_ITEMS = [
   { icon: Users, label: "Alumni Records", path: "/admin/alumni", module: "alumni" },
   { icon: FileText, label: "Graduate Tracer", path: "/admin/tracer", module: "tracer" },
   { icon: BarChart3, label: "Engagement", path: "/admin/engagement", module: "engagement" },
-  { icon: FolderKanban, label: "Alumni Projects", path: "/admin/projects", module: "engagement" },
   { icon: Trophy, label: "Achievements", path: "/admin/achievements", module: "achievements" },
   { icon: MessageSquareText, label: "Freedom Wall", path: "/admin/community", module: "community" },
   { icon: Calendar, label: "Announcements", path: "/admin/announcements", module: "events" },
@@ -258,7 +256,7 @@ export default function AdminLayout({
                     <div className="py-1">
                       <button
                         onClick={() => {
-                          navigate("/admin/account");
+                          navigate("/admin/account?section=profile");
                           setAccountMenuOpen(false);
                         }}
                         className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
@@ -308,8 +306,9 @@ export default function AdminLayout({
 
         {isMobile && (
           <nav
-            className="fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
+            className="admin-mobile-nav fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around border-t bg-card shadow-lg"
             style={{ borderColor: "hsl(220,20%,88%)", minHeight: "64px" }}
+            aria-label="Admin mobile navigation"
           >
             {mobileTabs.slice(0, 5).map((tab) => {
               const active = isActivePath(location.pathname, tab.path);

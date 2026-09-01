@@ -177,9 +177,12 @@ function YouTubeSlide({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const mutedRef = useRef(muted);
   const [loading, setLoading] = useState(true);
   const [hasStarted, setHasStarted] = useState(false);
   const videoId = useMemo(() => getYouTubeVideoId(slide.resolvedUrl), [slide.resolvedUrl]);
+
+  mutedRef.current = muted;
 
   useEffect(() => {
     const player = playerRef.current;
@@ -204,7 +207,8 @@ function YouTubeSlide({
   }, [active, muted]);
 
   useEffect(() => {
-    if (!active || !containerRef.current) return;
+    const container = containerRef.current;
+    if (!active || !container) return;
 
     if (!videoId) {
       setLoading(false);
@@ -217,7 +221,7 @@ function YouTubeSlide({
     setHasStarted(false);
     setLoading(true);
     const playerElement = document.createElement("div");
-    containerRef.current.replaceChildren(playerElement);
+    container.replaceChildren(playerElement);
 
     loadYouTubeApi().then(() => {
       if (destroyed || !window.YT?.Player) return;
@@ -228,7 +232,7 @@ function YouTubeSlide({
         height: "100%",
         playerVars: {
           autoplay: 0,
-          mute: muted ? 1 : 0,
+          mute: mutedRef.current ? 1 : 0,
           playsinline: 1,
           rel: 0,
           enablejsapi: 1,
@@ -256,7 +260,7 @@ function YouTubeSlide({
                 onDurationChange(slide.id, latestDuration);
               }
             }, 500);
-            if (muted) {
+            if (mutedRef.current) {
               event.target.mute();
             } else {
               event.target.unMute?.();
@@ -294,7 +298,7 @@ function YouTubeSlide({
         // The YouTube iframe may already be detached by the player itself.
       }
       playerRef.current = null;
-      containerRef.current?.replaceChildren();
+      container.replaceChildren();
     };
   }, [active, onDurationChange, onEnded, onPlayingChange, onProgressChange, slide.id, slide.resolvedUrl, videoId]);
 

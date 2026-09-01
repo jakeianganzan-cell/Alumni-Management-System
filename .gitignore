@@ -21,6 +21,8 @@ vite.config.ts.timestamp-*.mjs
 backup.sql
 backup-defaultdb.sql
 backup-aiven.sql
+server/private-uploads/
+Accounts.md
 
 # Editor directories and files
 .vscode/*

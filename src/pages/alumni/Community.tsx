@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Image, Loader2, MessageCircle, MessageSquare, Plus, Search, Send } from "lucide-react";
+import { Image, Loader2, MessageCircle, MessageSquare, Plus, Send } from "lucide-react";
 import { toast } from "sonner";
 
 type ReactionType = "heart";
@@ -61,8 +62,8 @@ const BLANK_POST_FORM: PostFormState = {
 export default function Community() {
   useAuth();
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [postOrder, setPostOrder] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [postDialogOpen, setPostDialogOpen] = useState(false);
   const [selectedPost, setSelectedPost] = useState<FeedPost | null>(null);
@@ -83,8 +84,23 @@ export default function Community() {
       });
       const data = await readApiResponse<FeedPost[]>(response);
       setPosts(data);
+      setPostOrder((currentOrder) => {
+        const availableIds = data.map((post) => post.id);
+        if (currentOrder.length === 0) {
+          return [
+            ...data.filter((post) => !post.currentUserReaction).map((post) => post.id),
+            ...data.filter((post) => Boolean(post.currentUserReaction)).map((post) => post.id),
+          ];
+        }
+
+        const availableIdSet = new Set(availableIds);
+        const retainedIds = currentOrder.filter((id) => availableIdSet.has(id));
+        const retainedIdSet = new Set(retainedIds);
+        const newIds = availableIds.filter((id) => !retainedIdSet.has(id));
+        return [...newIds, ...retainedIds];
+      });
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to load Freedom Wall posts.");
     } finally {
       setLoading(false);
@@ -96,17 +112,16 @@ export default function Community() {
   }, []);
 
   const filteredPosts = useMemo(() => {
-    return posts.filter((post) => {
-      const search = searchQuery.trim().toLowerCase();
-      const matchesSearch =
-        !search ||
-        post.content.toLowerCase().includes(search) ||
-        post.authorName.toLowerCase().includes(search) ||
-        (post.authorCourse || "").toLowerCase().includes(search);
-      const matchesCategory = selectedCategory === "All" || post.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    });
-  }, [posts, searchQuery, selectedCategory]);
+    const matchingPosts = posts.filter(
+      (post) => selectedCategory === "All" || post.category === selectedCategory,
+    );
+    const orderById = new Map(postOrder.map((id, index) => [id, index]));
+    return matchingPosts.sort(
+      (left, right) =>
+        (orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [postOrder, posts, selectedCategory]);
 
   const handlePostImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -145,7 +160,7 @@ export default function Community() {
       setPostDialogOpen(false);
       await loadPosts();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to publish your post.");
     } finally {
       setSubmittingPost(false);
@@ -161,7 +176,7 @@ export default function Community() {
       const data = await readApiResponse<FeedComment[]>(response);
       setCommentsByPost((current) => ({ ...current, [postId]: data }));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to load comments.");
     } finally {
       setLoadingComments((current) => ({ ...current, [postId]: false }));
@@ -195,7 +210,7 @@ export default function Community() {
       setCommentInputs((current) => ({ ...current, [postId]: "" }));
       await Promise.all([loadComments(postId), loadPosts()]);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to add comment.");
     } finally {
       setSubmittingComment((current) => ({ ...current, [postId]: false }));
@@ -227,7 +242,7 @@ export default function Community() {
         ),
       );
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to update reaction.");
     } finally {
       setReactingPostId(null);
@@ -239,38 +254,21 @@ export default function Community() {
       <div className="space-y-6">
         <div className="flex justify-center">
           <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-navy-dark">Freedom Wall posts</h2>
-              <p className="text-sm text-muted-foreground">Search, filter, react, and comment on alumni posts in real time.</p>
-            </div>
-
-            <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative w-full max-w-md">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Search posts"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-navy"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map((category) => (
-                  <button
-                    key={category}
-                    onClick={() => setSelectedCategory(category)}
-                    className={`rounded-full px-3 py-2 text-sm font-medium transition ${
-                      selectedCategory === category
-                        ? "bg-navy text-white"
-                        : "border border-slate-200 bg-white text-muted-foreground hover:border-navy"
-                    }`}
-                    type="button"
-                  >
-                    {category}
-                  </button>
-                ))}
-              </div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setSelectedCategory(category)}
+                  className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                    selectedCategory === category
+                      ? "bg-navy text-white"
+                      : "border border-slate-200 bg-white text-muted-foreground hover:border-navy"
+                  }`}
+                  type="button"
+                >
+                  {category}
+                </button>
+              ))}
             </div>
 
             <div className="space-y-4">

@@ -18,7 +18,7 @@ function Field({ label, error, required = false, children }: { label: string; er
   );
 }
 
-export default function SectionC({ form, errors, setField, toggleArrayValue, addTableRow, removeTableRow, updateTableRow, onBack, onNext }: TracerSectionProps) {
+export default function SectionC({ form, errors, setField, addTableRow, removeTableRow, updateTableRow, onBack, onNext }: TracerSectionProps) {
   return (
     <section className="space-y-6">
       <div>

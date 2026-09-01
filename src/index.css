@@ -218,6 +218,7 @@
   }
 
   .portal-shell {
+    height: 100dvh;
     background-image:
       radial-gradient(circle at top left, hsl(0 78% 91% / 0.52), transparent 24%),
       radial-gradient(circle at top right, hsl(0 0% 70% / 0.26), transparent 26%),
@@ -606,16 +607,22 @@
 
   @media (max-width: 767px) {
     html {
-      font-size: 15px;
+      font-size: 16px;
+    }
+
+    [role="dialog"] {
+      max-height: calc(100dvh - 1rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+      max-width: calc(100vw - 1rem);
     }
 
     .portal-main {
-      padding: 1rem 0.875rem 5.25rem;
-      padding-bottom: 5.25rem;
+      padding: 1rem 0.875rem calc(5.25rem + env(safe-area-inset-bottom));
+      font-size: 1rem;
+      line-height: 1.5;
     }
 
     .portal-header {
-      padding: 0.65rem 0.75rem;
+      padding: calc(0.65rem + env(safe-area-inset-top)) 0.75rem 0.65rem;
     }
 
     .portal-logo-frame {
@@ -691,6 +698,12 @@
       touch-action: manipulation;
     }
 
+    .portal-main :where(button:not([role="switch"]):not([role="checkbox"]):not([role="radio"])) {
+      min-height: 44px;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
     .portal-main :where(input:not([type="checkbox"]):not([type="radio"]), select) {
       min-height: 44px;
       font-size: 16px;
@@ -709,11 +722,19 @@
       max-height: 70dvh;
     }
 
-    .portal-main :where(.overflow-x-auto, .overflow-auto) {
-      overflow-x: hidden;
+    .portal-main :where(.overflow-x-auto, .overflow-auto, .responsive-table-shell) {
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      -webkit-overflow-scrolling: touch;
     }
 
-    .portal-main table {
+    .portal-main :where(.overflow-x-auto, .overflow-auto, .responsive-table-shell) > table:not(.mobile-card-table) {
+      min-width: 640px;
+    }
+
+    .portal-main table.mobile-card-table {
       display: block;
       width: 100% !important;
       min-width: 0 !important;
@@ -721,17 +742,17 @@
       border-spacing: 0;
     }
 
-    .portal-main thead {
+    .portal-main table.mobile-card-table thead {
       display: none;
     }
 
-    .portal-main tbody,
-    .portal-main tfoot {
+    .portal-main table.mobile-card-table tbody,
+    .portal-main table.mobile-card-table tfoot {
       display: block;
       width: 100%;
     }
 
-    .portal-main tr {
+    .portal-main table.mobile-card-table tr {
       display: block;
       width: 100%;
       border: 1px solid hsl(var(--border));
@@ -740,12 +761,12 @@
       overflow: hidden;
     }
 
-    .portal-main tr + tr {
+    .portal-main table.mobile-card-table tr + tr {
       margin-top: 0.75rem;
     }
 
-    .portal-main td,
-    .portal-main th {
+    .portal-main table.mobile-card-table td,
+    .portal-main table.mobile-card-table th {
       display: block;
       width: 100% !important;
       padding: 0.7rem 0.875rem !important;
@@ -753,11 +774,11 @@
       white-space: normal;
     }
 
-    .portal-main td + td {
+    .portal-main table.mobile-card-table td + td {
       border-top: 1px solid hsl(var(--border) / 0.65);
     }
 
-    .portal-main td[data-label]::before {
+    .portal-main table.mobile-card-table td[data-label]::before {
       content: attr(data-label);
       display: block;
       margin-bottom: 0.25rem;
@@ -772,8 +793,44 @@
       border-radius: 1.15rem;
     }
 
+    .portal-main :where(.fixed.inset-0) {
+      padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem max(0.5rem, env(safe-area-inset-bottom));
+    }
+
+    .portal-main :where(.fixed.inset-0) > :where(div, form, section) {
+      max-height: calc(100dvh - 1rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      max-width: calc(100vw - 1rem);
+    }
+
     .portal-main :where(.shadow-card) {
       box-shadow: var(--shadow-sm);
+    }
+
+    .portal-main :where(.text-\[8px\], .text-\[9px\], .text-\[10px\]) {
+      font-size: 0.75rem;
+      line-height: 1.35;
+    }
+
+    .portal-main :where(.mobile-action-group) {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+
+    .portal-main :where(.mobile-action-group > button, .mobile-action-group > a) {
+      width: 100%;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .portal-main :where(.mobile-action-group) {
+      flex-direction: row;
+      align-items: center;
+    }
+
+    .portal-main :where(.mobile-action-group > button, .mobile-action-group > a) {
+      width: auto;
     }
   }
 
@@ -887,26 +944,6 @@
       letter-spacing: 0.08em;
     }
 
-    .alumni-portal .portal-main :where(.grid-cols-2, .grid-cols-3, .grid-cols-4, .sm\:grid-cols-2, .sm\:grid-cols-3, .md\:grid-cols-2, .md\:grid-cols-3, .md\:grid-cols-4, .lg\:grid-cols-3, [class*="grid-cols-["]) {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .alumni-portal .portal-main :where(.sm\:flex-row) {
-      flex-direction: column !important;
-    }
-
-    .alumni-portal .portal-main :where(.sm\:items-center, .sm\:items-start, .sm\:items-end) {
-      align-items: stretch !important;
-    }
-
-    .alumni-portal .portal-main :where(.sm\:justify-between, .sm\:justify-end) {
-      justify-content: flex-start !important;
-    }
-
-    .alumni-portal .portal-main :where(.sm\:w-auto) {
-      width: 100% !important;
-    }
-
     .alumni-portal .portal-main :where(button, .inline-flex) {
       min-width: 0;
     }
@@ -944,14 +981,6 @@
 
     .alumni-portal .portal-main :where(.aspect-square) {
       aspect-ratio: 4 / 3;
-    }
-
-    .alumni-portal .portal-main :where(.overflow-x-auto:not(:has(table))) {
-      overflow-x: visible;
-    }
-
-    .alumni-portal .portal-main :where(.overflow-x-auto:not(:has(table)) > .flex) {
-      flex-wrap: wrap;
     }
 
     .alumni-portal .portal-main :where(.dashboard-swipe-row) {
@@ -1052,6 +1081,26 @@
       font-size: 0.62rem;
       line-height: 1;
     }
+
+    :is(.admin-portal, .chairman-portal) .portal-main :where(.text-base) {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+
+    :is(.admin-portal, .chairman-portal) .portal-main :where(.text-sm, p, li, td) {
+      font-size: 0.875rem;
+      line-height: 1.45;
+    }
+
+    :is(.admin-portal, .chairman-portal) .portal-main :where(.text-xs, th, label) {
+      font-size: 0.75rem;
+      line-height: 1.4;
+    }
+
+    :is(.admin-mobile-nav, .chairman-mobile-nav) {
+      min-height: 64px !important;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
   }
 
   @media (max-width: 380px) {
@@ -1059,14 +1108,19 @@
       gap: 0.35rem;
     }
 
-    .alumni-portal .portal-header-button,
-    .alumni-portal .portal-account-button {
-      min-height: 40px;
-      min-width: 40px;
-      padding: 0.5rem;
+    .portal-header {
+      gap: 0.35rem;
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
     }
 
-    .alumni-portal .alumni-mobile-nav span {
+    .portal-header-button,
+    .portal-account-button {
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+    }
+
+    :is(.alumni-mobile-nav, .admin-mobile-nav, .chairman-mobile-nav) span {
       display: none;
     }
   }

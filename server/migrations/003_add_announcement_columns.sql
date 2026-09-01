@@ -1,0 +1,25 @@
+﻿ALTER TABLE announcements ADD COLUMN type VARCHAR(100) NULL;
+ALTER TABLE announcements ADD COLUMN google_form_link TEXT NULL;
+ALTER TABLE announcements ADD COLUMN approval_status VARCHAR(50) NOT NULL DEFAULT 'approved';
+ALTER TABLE announcements ADD COLUMN created_by VARCHAR(36) NULL;
+ALTER TABLE announcements ADD COLUMN approved_by VARCHAR(36) NULL;
+ALTER TABLE announcements ADD COLUMN rejection_reason TEXT NULL;
+ALTER TABLE announcements ADD COLUMN audience_scope VARCHAR(20) NOT NULL DEFAULT 'all';
+ALTER TABLE announcements ADD COLUMN audience_value VARCHAR(255) NULL;
+ALTER TABLE announcements ADD COLUMN start_datetime DATETIME NULL;
+ALTER TABLE announcements ADD COLUMN end_datetime DATETIME NULL;
+ALTER TABLE announcements ADD COLUMN auto_archive_at DATETIME NULL;
+ALTER TABLE announcements ADD COLUMN archived_at DATETIME NULL;
+ALTER TABLE announcements ADD COLUMN interest_enabled TINYINT(1) NOT NULL DEFAULT 0;
+
+ALTER TABLE surveys ADD COLUMN start_datetime DATETIME NULL;
+ALTER TABLE surveys ADD COLUMN end_datetime DATETIME NULL;
+ALTER TABLE surveys ADD COLUMN auto_archive_at DATETIME NULL;
+ALTER TABLE surveys ADD COLUMN archived_at DATETIME NULL;
+ALTER TABLE surveys ADD COLUMN allow_multiple_responses TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE survey_answers ADD COLUMN response_id INT DEFAULT NULL;
+ALTER TABLE survey_answers ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+ALTER TABLE events ADD COLUMN start_datetime DATETIME NULL;
+ALTER TABLE events ADD COLUMN end_datetime DATETIME NULL;
+ALTER TABLE events ADD COLUMN auto_archive_at DATETIME NULL;
+ALTER TABLE events ADD COLUMN archived_at DATETIME NULL;

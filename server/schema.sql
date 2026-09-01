@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 CREATE TABLE IF NOT EXISTS user_roles (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NULL,
     role VARCHAR(50) NOT NULL,
     archived TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_user_roles_user_role (user_id, role),
@@ -652,6 +652,12 @@ CREATE TABLE IF NOT EXISTS donations (
     reviewed_at DATETIME DEFAULT NULL,
     reviewed_by VARCHAR(36) DEFAULT NULL,
     review_notes TEXT,
+    is_anonymous TINYINT(1) NOT NULL DEFAULT 0,
+    donor_name VARCHAR(255) NULL,
+    donor_email VARCHAR(255) NULL,
+    donor_student_id VARCHAR(100) NULL,
+    donor_batch VARCHAR(100) NULL,
+    donor_course VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
@@ -965,6 +971,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
     login_background_path LONGTEXT,
     login_backgrounds_json LONGTEXT,
     login_slideshow_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    programs_json LONGTEXT,
     primary_color VARCHAR(20),
     secondary_color VARCHAR(20),
     sidebar_color VARCHAR(20),
@@ -977,6 +984,12 @@ CREATE TABLE IF NOT EXISTS system_settings (
     mission TEXT,
     vision TEXT,
     history TEXT,
+    philosophy TEXT,
+    institutional_goal TEXT,
+    alumni_portal_description TEXT,
+    about_cover_image_path LONGTEXT,
+    map_url TEXT,
+    office_hours VARCHAR(255),
     facebook_link TEXT,
     twitter_link TEXT,
     instagram_link TEXT,
@@ -1028,6 +1041,39 @@ CREATE TABLE IF NOT EXISTS email_queue_settings (
     last_processed_at DATETIME NULL,
     last_daily_check_at DATETIME NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS institution_content_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    content_type VARCHAR(30) NOT NULL,
+    year_label VARCHAR(30) NULL,
+    title VARCHAR(255) NOT NULL,
+    subtitle VARCHAR(255) NULL,
+    description TEXT NULL,
+    organization VARCHAR(255) NULL,
+    department VARCHAR(255) NULL,
+    credentials VARCHAR(255) NULL,
+    category VARCHAR(100) NULL,
+    image_url LONGTEXT NULL,
+    icon VARCHAR(100) NULL,
+    display_order INT NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_institution_content_public (content_type, is_active, display_order)
+);
+
+CREATE TABLE IF NOT EXISTS institution_service_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    service_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    display_order INT NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_institution_service_items_public (service_id, is_active, display_order),
+    FOREIGN KEY (service_id) REFERENCES institution_content_items(id) ON DELETE CASCADE
 );
 
 INSERT IGNORE INTO email_queue_settings

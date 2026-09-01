@@ -1,6 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check, History, Loader2, Plus, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Check, History, Loader2, Plus, Save, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { API_URL, fetchApi, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import type { AboutContentItem } from "@/lib/about";
+import { INSTITUTION_OFFICIAL_CATEGORY, INSTITUTION_OFFICIAL_SLOTS, normalizeInstitutionPosition } from "@/lib/institutionOfficials";
 
 type ModuleMode = "directory" | "add";
 type PositionKey = "president" | "vice_president" | "secretary" | "treasurer" | "auditor" | "pio" | "assistant_secretary" | "assistant_treasurer";
@@ -49,6 +51,7 @@ function OfficerDirectory() {
   const [overview, setOverview] = useState<Overview>({ currentSchoolYearId: null, schoolYears: [] });
   const [detail, setDetail] = useState<Detail | null>(null);
   const [history, setHistory] = useState(false);
+  const [institutionSettings, setInstitutionSettings] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -73,15 +76,22 @@ function OfficerDirectory() {
   useEffect(() => { if (shownYear && detail?.schoolYear.id !== shownYear) void loadDetail(shownYear).catch((error) => toast.error(getError(error))); }, [shownYear]);
 
   const selectHistory = (schoolYearId: number) => { setSelectedHistoryId(schoolYearId); setHistory(true); };
-  const title = history ? "Officer History" : "Officer Directory";
-  return <AdminLayout title={title} subtitle="Alumni Officers"><div className="mx-auto w-full max-w-7xl space-y-4">
-    <div className="ml-auto flex w-fit flex-wrap items-center justify-end gap-2 rounded-xl border border-border/70 bg-card p-2 shadow-sm">
-      <Button variant={history ? "outline" : "default"} onClick={() => { setHistory(false); setSelectedHistoryId(null); }}><Users className="mr-2 h-4 w-4" />Current Officers</Button>
-      <Button variant={history ? "default" : "outline"} onClick={() => { setHistory(true); setSelectedHistoryId((current) => current || archivedYears[0]?.id || null); }}><History className="mr-2 h-4 w-4" />Officer History</Button>
-      <Button onClick={() => navigate("/admin/officers/add")}><Plus className="mr-2 h-4 w-4" />Add Officer</Button>
+  const title = institutionSettings ? "Institution Officials Settings" : history ? "Officer History" : "Officer Directory";
+  return <AdminLayout title={title} subtitle={institutionSettings ? "Institution Settings" : "Alumni Officers"}><div className="mx-auto w-full max-w-7xl space-y-4">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex w-fit flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card p-2 shadow-sm">
+        <Button variant={history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(true); setInstitutionSettings(false); setSelectedHistoryId((current) => current || archivedYears[0]?.id || null); }}><History className="mr-2 h-4 w-4" />Officer History</Button>
+      </div>
+      <div className="flex w-fit flex-wrap items-center gap-2 self-end rounded-xl border border-border/70 bg-card p-2 shadow-sm">
+        <Button variant={!history && !institutionSettings ? "default" : "outline"} onClick={() => { setHistory(false); setInstitutionSettings(false); setSelectedHistoryId(null); }}><Users className="mr-2 h-4 w-4" />Current Officers</Button>
+        <Button variant={institutionSettings ? "default" : "outline"} onClick={() => { setInstitutionSettings(true); setHistory(false); }}><Building2 className="mr-2 h-4 w-4" />Institution Officials</Button>
+        <Button onClick={() => institutionSettings ? document.getElementById(`institution-official-${INSTITUTION_OFFICIAL_SLOTS[0].key}`)?.focus() : navigate("/admin/officers/add")}>
+          {institutionSettings ? <Building2 className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}{institutionSettings ? "Set Officials" : "Set Officers"}
+        </Button>
+      </div>
     </div>
     {history && <ArchiveList years={archivedYears} selectedId={selectedHistoryId} onSelect={selectHistory} />}
-    {loading ? <Card><CardContent className="space-y-3 p-4"><Skeleton className="h-10 w-52" /><Skeleton className="h-64 w-full" /></CardContent></Card> : <RosterCard detail={history && !selectedHistoryId ? null : detail} archived={history} />}
+    {institutionSettings ? <InstitutionOfficialsSettings /> : loading ? <Card><CardContent className="space-y-3 p-4"><Skeleton className="h-10 w-52" /><Skeleton className="h-64 w-full" /></CardContent></Card> : <RosterCard detail={history && !selectedHistoryId ? null : detail} archived={history} />}
   </div></AdminLayout>;
 }
 
@@ -96,6 +106,152 @@ function RosterCard({ detail, archived }: { detail: Detail | null; archived: boo
 }
 
 function Avatar({ officer }: { officer: Officer }) { const photo = resolveAssetUrl(officer.photo); return <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold text-muted-foreground">{photo ? <img src={photo} alt="" className="h-full w-full object-cover" /> : officer.name.split(" ").map((item) => item[0]).slice(0, 2).join("")}</div>; }
+
+function InstitutionOfficialsSettings() {
+  const [records, setRecords] = useState<Record<string, AboutContentItem | undefined>>({});
+  const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(INSTITUTION_OFFICIAL_SLOTS.map((slot) => [slot.key, ""])));
+  const [photos, setPhotos] = useState<Record<string, string>>(() => Object.fromEntries(INSTITUTION_OFFICIAL_SLOTS.map((slot) => [slot.key, ""])));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const response = await fetchApi(`${API_URL}/admin/about/leadership`, { headers: getAuthHeaders() });
+      const items = (await readApiResponse<AboutContentItem[]>(response)).filter((item) => item.category === INSTITUTION_OFFICIAL_CATEGORY);
+      const unusedItems = [...items];
+      const nextRecords: Record<string, AboutContentItem | undefined> = {};
+      const nextNames: Record<string, string> = {};
+      const nextPhotos: Record<string, string> = {};
+
+      INSTITUTION_OFFICIAL_SLOTS.forEach((slot) => {
+        const normalizedLabel = normalizeInstitutionPosition(slot.label);
+        const matchingIndex = unusedItems.findIndex((item) => normalizeInstitutionPosition(item.subtitle) === normalizedLabel);
+        const item = matchingIndex >= 0 ? unusedItems.splice(matchingIndex, 1)[0] : undefined;
+        nextRecords[slot.key] = item;
+        nextNames[slot.key] = item?.isActive ? item.title : "";
+        nextPhotos[slot.key] = item?.isActive ? item.imageUrl : "";
+      });
+
+      setRecords(nextRecords);
+      setNames(nextNames);
+      setPhotos(nextPhotos);
+    } catch (error) {
+      toast.error(getError(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const handlePhotoUpload = (slotKey: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      toast.error("Choose an image file smaller than 5 MB.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => setPhotos((current) => ({
+      ...current,
+      [slotKey]: typeof reader.result === "string" ? reader.result : "",
+    })));
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(INSTITUTION_OFFICIAL_SLOTS.map(async (slot, displayOrder) => {
+        const existing = records[slot.key];
+        const name = String(names[slot.key] || "").trim();
+
+        if (!name) {
+          if (existing?.isActive) {
+            const response = await fetchApi(`${API_URL}/admin/about/leadership/${existing.id}`, { method: "DELETE", headers: getAuthHeaders() });
+            await readApiResponse(response);
+          }
+          return;
+        }
+
+        const response = await fetchApi(`${API_URL}/admin/about/leadership${existing ? `/${existing.id}` : ""}`, {
+          method: existing ? "PUT" : "POST",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            ...(existing || {}),
+            title: name,
+            subtitle: slot.label,
+            category: INSTITUTION_OFFICIAL_CATEGORY,
+            imageUrl: photos[slot.key] || "",
+            displayOrder,
+            isActive: true,
+          }),
+        });
+        await readApiResponse(response);
+      }));
+      toast.success("Institution officials and staff saved. Alumni officer records were not changed.");
+      await load();
+    } catch (error) {
+      toast.error(getError(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const groups = [
+    { key: "municipal", title: "Municipal Leadership" },
+    { key: "executive", title: "College Executive Leadership" },
+    { key: "staff", title: "College Staff" },
+  ] as const;
+
+  return (
+    <Card id="institution-officials-settings" className="scroll-mt-4 border-border/70 shadow-sm">
+      <CardHeader className="border-b border-border/60">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-5 w-5" /></div>
+          <div>
+            <CardTitle>Institution Officials and Staff</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Set the name and photo assigned to each position shown on the Institution About Us page. These settings are separate from Alumni Association officers and officer history.</p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5 p-4 sm:p-5">
+        {loading ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 9 }).map((_, index) => <Skeleton key={index} className="h-16 rounded-lg" />)}</div>
+        ) : (
+          groups.map((group) => (
+            <section key={group.key}>
+              <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">{group.title}</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {INSTITUTION_OFFICIAL_SLOTS.filter((slot) => slot.level === group.key).map((slot) => (
+                  <div key={slot.key} className="rounded-lg border border-border/70 bg-muted/15 p-3">
+                    <Label htmlFor={`institution-official-${slot.key}`} className="mb-1.5 block text-xs">{slot.label}</Label>
+                    <Input id={`institution-official-${slot.key}`} value={names[slot.key] || ""} onChange={(event) => setNames((current) => ({ ...current, [slot.key]: event.target.value }))} placeholder="Enter full name" className="text-sm" />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted text-[10px] font-semibold text-muted-foreground">
+                        {photos[slot.key] ? <img src={resolveAssetUrl(photos[slot.key]) || photos[slot.key]} alt={`${slot.label} preview`} className="h-full w-full object-cover" /> : "Photo"}
+                      </div>
+                      <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input bg-background px-2.5 text-xs font-medium hover:bg-accent">
+                        Upload Photo
+                        <input type="file" accept="image/*" className="hidden" onChange={(event) => handlePhotoUpload(slot.key, event)} />
+                      </label>
+                      {photos[slot.key] && <Button type="button" variant="ghost" size="sm" className="h-9 px-2 text-xs" onClick={() => setPhotos((current) => ({ ...current, [slot.key]: "" }))}>Remove</Button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))
+        )}
+        <div className="flex justify-end border-t border-border/60 pt-4">
+          <Button onClick={() => void save()} disabled={loading || saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{saving ? "Saving..." : "Save Institution Officials"}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function OfficerBundleWizard() {
   const navigate = useNavigate();

@@ -1,6 +1,11 @@
 export interface CourseOption {
   code: string;
   label: string;
+  description?: string;
+  department?: string;
+  imageUrl?: string;
+  displayOrder?: number;
+  isActive?: boolean;
 }
 
 export const COURSE_OPTIONS: CourseOption[] = [
@@ -31,7 +36,8 @@ export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
   const seen = new Set<string>();
   const normalized: CourseOption[] = [];
 
-  for (const item of source) {
+  for (const [index, item] of source.entries()) {
+    const partial = typeof item === "object" && item !== null ? item as Partial<CourseOption> : {};
     const rawCode = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.code || "");
     const code = normalizeCourseKey(rawCode);
     const rawLabel = typeof item === "string" ? item : String((item as Partial<CourseOption> | null)?.label || "");
@@ -39,7 +45,15 @@ export const normalizeCourseOptions = (value: unknown): CourseOption[] => {
 
     if (!code || seen.has(code)) continue;
     seen.add(code);
-    normalized.push({ code, label });
+    normalized.push({
+      code,
+      label,
+      description: String(partial.description || "").trim(),
+      department: String(partial.department || "").trim(),
+      imageUrl: String(partial.imageUrl || "").trim(),
+      displayOrder: Number.isFinite(Number(partial.displayOrder)) ? Number(partial.displayOrder) : index,
+      isActive: partial.isActive !== false,
+    });
   }
 
   return normalized.length > 0 ? normalized : COURSE_OPTIONS;

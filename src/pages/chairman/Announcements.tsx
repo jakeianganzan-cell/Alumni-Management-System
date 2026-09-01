@@ -51,7 +51,7 @@ export default function ChairmanAnnouncements() {
       setError("");
       const response = await fetch(`${API_URL}/announcements`, { headers: getAuthHeaders() });
       const payload = await readApiResponse<Announcement[]>(response);
-      setAnnouncements(payload.filter((item) => item.type === "announcement"));
+      setAnnouncements(payload.filter((item) => item.type === "announcement" && (item.approvalStatus || "approved") === "approved"));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load announcements.");
     } finally {

@@ -1,15 +1,12 @@
 import { ChangeEvent, DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bell, Camera, ChevronDown, Film, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, X, Youtube } from "lucide-react";
+import { Bell, Camera, ChevronDown, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, Youtube } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { API_URL, fetchApi, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { canAccessModule, getRoleLabel, type OfficerRole } from "@/lib/rbac";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import {
-  getYouTubeVideoId,
   getSlideMediaType,
-  isUploadedVideoMedia,
-  toYouTubeEmbedUrl,
   type SlideMediaType,
 } from "@/lib/slideshowMedia";
 import { HOMEPAGE_MEDIA_UPDATED_EVENT, openHomepageMediaDialog } from "@/lib/homepageMediaEvents";
@@ -28,7 +25,7 @@ import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 
 type ModuleMode = "alumni" | "admin";
 type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports" | "settings";
-type AdminSettingsPanel = "branding" | "sessions" | "email";
+type AdminSettingsPanel = "branding" | "email" | "media" | "sessions";
 
 interface ManageAccountModuleProps {
   mode: ModuleMode;
@@ -69,35 +66,11 @@ interface HomepageSlide {
   status?: string | null;
 }
 
-interface HomepageSlideForm {
-  title: string;
-  caption: string;
-  mediaType: SlideMediaType;
-  mediaUrl: string;
-  youtubeUrl: string;
-  linkUrl: string;
-  displayOrder: number;
-  status: string;
-  isHighlighted: boolean;
-}
-
 const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   emailNotifications: true,
   inAppNotifications: true,
   eventAnnouncements: true,
   tracerNotifications: true,
-};
-
-const EMPTY_HOMEPAGE_SLIDE: HomepageSlideForm = {
-  title: "",
-  caption: "",
-  mediaType: "image",
-  mediaUrl: "",
-  youtubeUrl: "",
-  linkUrl: "",
-  displayOrder: 0,
-  status: "active",
-  isHighlighted: false,
 };
 
 function isOfficerRole(role: string | null): role is OfficerRole {
@@ -147,8 +120,117 @@ function ToggleRow({
   );
 }
 
-function getUploadTitle(file: File) {
-  return file.name.replace(/\.[^/.]+$/, "").trim() || "Homepage advertisement";
+function PostedMediaPanel({
+  slides,
+  loading,
+  message,
+  draggedSlideId,
+  onRefresh,
+  onDragStart,
+  onDrop,
+  onDragEnd,
+  onEdit,
+  onDelete,
+}: {
+  slides: HomepageSlide[];
+  loading: boolean;
+  message: string;
+  draggedSlideId: number | string | null;
+  onRefresh: () => void;
+  onDragStart: (event: DragEvent<HTMLDivElement>, slideId: number | string) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>, slideId: number | string) => void;
+  onDragEnd: () => void;
+  onEdit: (slide: HomepageSlide) => void;
+  onDelete: (slideId: number | string) => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="font-display text-2xl font-bold text-navy-dark">Post Media</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Edit, reorder, or remove slides shown on the homepage.</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+          {loading ? "Loading..." : "Refresh"}
+        </Button>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading homepage slides...</p>
+        ) : slides.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No homepage slides posted yet.</p>
+        ) : (
+          slides.map((slide) => {
+            const slideMedia = resolveAssetUrl(slide.mediaUrl || slide.imageUrl) || slide.mediaUrl || slide.imageUrl || "";
+            const slideType = getSlideMediaType(slide.mediaType, slideMedia);
+            const isDragging = String(draggedSlideId) === String(slide.id);
+            return (
+              <div
+                key={slide.id}
+                draggable
+                onDragStart={(event) => onDragStart(event, slide.id)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => onDrop(event, slide.id)}
+                onDragEnd={onDragEnd}
+                className={`grid cursor-grab gap-3 rounded-xl border border-border bg-background p-3 transition active:cursor-grabbing sm:grid-cols-[32px_120px_minmax(0,1fr)_auto] sm:items-center ${
+                  isDragging ? "opacity-55 ring-2 ring-navy/30" : "hover:border-navy/35"
+                }`}
+              >
+                <div className="flex items-center justify-center text-muted-foreground" title="Drag to reorder">
+                  <GripVertical className="h-5 w-5" />
+                </div>
+                <div className="aspect-video overflow-hidden rounded-lg bg-gray-100">
+                  {slideMedia && slideType === "youtube" ? (
+                    <div className="flex h-full w-full items-center justify-center bg-gray-950 text-white">
+                      <Youtube className="h-6 w-6" />
+                    </div>
+                  ) : slideMedia && slideType === "video" ? (
+                    <video src={slideMedia} className="h-full w-full object-contain" muted playsInline preload="metadata" />
+                  ) : slideMedia ? (
+                    <img src={slideMedia} alt={slide.title} className="h-full w-full object-contain" loading="lazy" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No media</div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-navy-dark">{slide.title}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{slide.caption || slideMedia}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                      {slideType}
+                    </span>
+                    {slide.status && (
+                      <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                        {slide.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  <Button type="button" variant="outline" size="sm" onClick={() => onEdit(slide)}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => onDelete(slide.id)}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {message && (
+        <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          {message}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ManageAccountModule({ mode }: ManageAccountModuleProps) {
@@ -193,10 +275,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(true);
   const [homepageSlides, setHomepageSlides] = useState<HomepageSlide[]>([]);
-  const [homepageSlideForm, setHomepageSlideForm] = useState<HomepageSlideForm>(EMPTY_HOMEPAGE_SLIDE);
-  const [editingHomepageSlideId, setEditingHomepageSlideId] = useState<number | string | null>(null);
   const [loadingHomepageSlides, setLoadingHomepageSlides] = useState(false);
-  const [savingHomepageSlide, setSavingHomepageSlide] = useState(false);
   const [homepageSlideMessage, setHomepageSlideMessage] = useState("");
   const [draggedHomepageSlideId, setDraggedHomepageSlideId] = useState<number | string | null>(null);
 
@@ -204,12 +283,16 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     if (!isAdminView) return;
 
     setLoadingHomepageSlides(true);
+    setHomepageSlideMessage("");
     try {
-      const response = await fetch(`${API_URL}/admin/slideshow`, {
+      const response = await fetchApi(`${API_URL}/admin/slideshow`, {
         headers: getAuthHeaders(),
       });
-      const slides = await readApiResponse<HomepageSlide[]>(response);
-      setHomepageSlides(slides);
+      const payload = await readApiResponse<unknown>(response);
+      if (!Array.isArray(payload)) {
+        throw new Error("The homepage media service returned an invalid response. Check the configured API URL and backend deployment.");
+      }
+      setHomepageSlides(payload as HomepageSlide[]);
     } catch (error) {
       setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to load homepage slides.");
     } finally {
@@ -221,17 +304,34 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     const requestedSection = searchParams.get("section");
     const requestedPanel = searchParams.get("panel");
 
-    if (requestedSection === "reports" && canViewReports) {
+    if (!requestedSection || requestedSection === "profile") {
+      setActiveSection("profile");
+    } else if (["security", "notifications"].includes(requestedSection)) {
+      setActiveSection(requestedSection as SectionKey);
+    } else if (!isAdminView && requestedSection === "problem") {
+      setActiveSection("problem");
+    } else if (requestedSection === "reports" && canViewReports) {
       setActiveSection("reports");
-    } else if (isAdminView && ["settings", "branding", "sessions", "email"].includes(requestedSection || "")) {
+    } else if (isAdminView && ["settings", "branding", "media", "sessions", "email"].includes(requestedSection || "")) {
       setActiveSection("settings");
-      setSettingsPanel(requestedSection === "sessions" || requestedPanel === "sessions" ? "sessions" : requestedSection === "email" || requestedPanel === "email" ? "email" : "branding");
+      setSettingsPanel(
+        requestedSection === "sessions" || requestedPanel === "sessions"
+          ? "sessions"
+          : requestedSection === "email" || requestedPanel === "email"
+            ? "email"
+            : requestedSection === "media" || requestedPanel === "media"
+              ? "media"
+              : "branding",
+      );
+    } else {
+      setActiveSection("profile");
     }
   }, [canViewReports, isAdminView, searchParams]);
 
   useEffect(() => {
+    if (!isAdminView || activeSection !== "settings" || settingsPanel !== "media") return;
     void loadHomepageSlides();
-  }, [loadHomepageSlides]);
+  }, [activeSection, isAdminView, loadHomepageSlides, settingsPanel]);
 
   useEffect(() => {
     if (!isAdminView) return;
@@ -272,8 +372,13 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       }
     };
 
+    if (activeSection !== "notifications") {
+      setLoadingNotifications(false);
+      return;
+    }
+
     void loadNotificationData();
-  }, []);
+  }, [activeSection]);
 
   const roleLabel = isOfficerRole(role) ? getRoleLabel(role) : isAdminView ? "Admin" : "Alumni";
   const profileBadge = useMemo(() => {
@@ -434,86 +539,8 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     }
   };
 
-  const handleHomepageSlideImage = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== "string") return;
-      const mediaType: SlideMediaType = file.type.startsWith("video/") ? "video" : "image";
-      setHomepageSlideMessage("");
-      setHomepageSlideForm((current) => ({
-        ...current,
-        title: getUploadTitle(file),
-        mediaType,
-        mediaUrl: reader.result as string,
-        youtubeUrl: "",
-      }));
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleHomepageYouTubeChange = (value: string) => {
-    setHomepageSlideMessage("");
-    setHomepageSlideForm((current) => ({
-      ...current,
-      mediaType: "youtube",
-      youtubeUrl: value,
-      mediaUrl: value ? toYouTubeEmbedUrl(value) || value : "",
-    }));
-  };
-
-  const resetHomepageSlideForm = () => {
-    setHomepageSlideForm(EMPTY_HOMEPAGE_SLIDE);
-    setEditingHomepageSlideId(null);
-  };
-
   const editHomepageSlide = (slide: HomepageSlide) => {
     openHomepageMediaDialog(slide);
-  };
-
-  const saveHomepageSlide = async () => {
-    const selectedMediaUrl = homepageSlideForm.mediaType === "youtube"
-      ? homepageSlideForm.youtubeUrl.trim()
-      : homepageSlideForm.mediaUrl;
-
-    if (!selectedMediaUrl) {
-      setHomepageSlideMessage("Upload media or paste a YouTube link before saving.");
-      return;
-    }
-
-    if (homepageSlideForm.mediaType === "youtube" && !getYouTubeVideoId(selectedMediaUrl)) {
-      setHomepageSlideMessage("Enter a valid YouTube watch, Shorts, Live, embed, or youtu.be link.");
-      return;
-    }
-
-    setSavingHomepageSlide(true);
-    setHomepageSlideMessage("");
-
-    try {
-      const response = await fetch(
-        editingHomepageSlideId ? `${API_URL}/admin/slideshow/${editingHomepageSlideId}` : `${API_URL}/admin/slideshow`,
-        {
-        method: editingHomepageSlideId ? "PUT" : "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          ...homepageSlideForm,
-          title: homepageSlideForm.title.trim() || "Homepage advertisement",
-          mediaUrl: selectedMediaUrl,
-          imageUrl: selectedMediaUrl,
-        }),
-      }
-      );
-      await readApiResponse(response);
-      resetHomepageSlideForm();
-      setHomepageSlideMessage(editingHomepageSlideId ? "Homepage slide updated." : "Homepage slide posted.");
-      await loadHomepageSlides();
-    } catch (error) {
-      setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to save homepage slide.");
-    } finally {
-      setSavingHomepageSlide(false);
-    }
   };
 
   const saveHomepageSlideOrder = async (nextSlides: HomepageSlide[]) => {
@@ -522,7 +549,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     setHomepageSlideMessage("");
 
     try {
-      const response = await fetch(`${API_URL}/admin/slideshow/reorder`, {
+      const response = await fetchApi(`${API_URL}/admin/slideshow/reorder`, {
         method: "PATCH",
         headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -532,8 +559,11 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
           })),
         }),
       });
-      const updatedSlides = await readApiResponse<HomepageSlide[]>(response);
-      setHomepageSlides(updatedSlides);
+      const payload = await readApiResponse<unknown>(response);
+      if (!Array.isArray(payload)) {
+        throw new Error("The homepage media service returned an invalid reorder response.");
+      }
+      setHomepageSlides(payload as HomepageSlide[]);
       setHomepageSlideMessage("Homepage slide order updated.");
     } catch (error) {
       setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to reorder homepage slides.");
@@ -570,37 +600,17 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
     setHomepageSlideMessage("");
 
     try {
-      const response = await fetch(`${API_URL}/admin/slideshow/${slideId}`, {
+      const response = await fetchApi(`${API_URL}/admin/slideshow/${slideId}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
       await readApiResponse(response);
       setHomepageSlides((current) => current.filter((slide) => String(slide.id) !== String(slideId)));
-      if (String(editingHomepageSlideId) === String(slideId)) {
-        resetHomepageSlideForm();
-      }
       setHomepageSlideMessage("Homepage slide deleted.");
     } catch (error) {
       setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to delete homepage slide.");
     }
   };
-
-  const homepageYouTubePreviewUrl = homepageSlideForm.mediaType === "youtube"
-    ? toYouTubeEmbedUrl(homepageSlideForm.youtubeUrl)
-    : "";
-  const homepageSlidePreviewUrl = homepageSlideForm.mediaType === "youtube"
-    ? homepageYouTubePreviewUrl
-    : resolveAssetUrl(homepageSlideForm.mediaUrl) || homepageSlideForm.mediaUrl;
-  const isHomepageYouTubeInvalid = Boolean(
-    homepageSlideForm.mediaType === "youtube" &&
-    homepageSlideForm.youtubeUrl.trim() &&
-    !homepageYouTubePreviewUrl
-  );
-  const canSaveHomepageSlide = Boolean(
-    homepageSlideForm.mediaType === "youtube"
-      ? homepageSlideForm.youtubeUrl.trim() && homepageYouTubePreviewUrl
-      : homepageSlideForm.mediaUrl
-  );
 
   const confirmLogout = () => {
     setLogoutConfirmOpen(false);
@@ -608,7 +618,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   };
 
   const isSettingsView = isAdminView && activeSection === "settings";
-  const showProfileMediaComposer = false;
   return (
     <>
     <div className={isSettingsView ? "space-y-6" : "grid grid-cols-1 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]"}>
@@ -785,214 +794,6 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
           {!isAdminView && <MyPostsPanel />}
 
-          {isAdminView && (
-            <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
-              {showProfileMediaComposer && (
-              <>
-              <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h3 className="font-display text-2xl font-bold text-navy-dark">
-                    {editingHomepageSlideId ? "Edit Slide" : "Post Media"}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Upload an image or video, or paste a YouTube link for the alumni homepage slideshow.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {editingHomepageSlideId && (
-                    <Button type="button" variant="outline" onClick={resetHomepageSlideForm}>
-                      <X className="mr-2 h-4 w-4" />
-                      Cancel
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    onClick={() => void saveHomepageSlide()}
-                    disabled={savingHomepageSlide || !canSaveHomepageSlide}
-                  >
-                    <Save className="mr-2 h-4 w-4" />
-                    {savingHomepageSlide ? "Saving..." : editingHomepageSlideId ? "Save Slide" : "Post"}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <Field label="Slide Title">
-                      <Input
-                        value={homepageSlideForm.title}
-                        onChange={(event) => setHomepageSlideForm((current) => ({ ...current, title: event.target.value }))}
-                        placeholder="Homepage advertisement"
-                      />
-                    </Field>
-                    <Field label="Status">
-                      <select
-                        value={homepageSlideForm.status}
-                        onChange={(event) => setHomepageSlideForm((current) => ({ ...current, status: event.target.value }))}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </Field>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/20 p-3">
-                      <label className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-sm text-muted-foreground transition hover:border-navy">
-                        <ImagePlus className="h-8 w-8 text-navy" />
-                        <span className="font-semibold text-navy-dark">Upload image or video</span>
-                        <span className="text-xs">Images and short videos stay inside the slideshow frame.</span>
-                        <input type="file" accept="image/*,video/*" className="hidden" onChange={handleHomepageSlideImage} />
-                      </label>
-                    </div>
-
-                    <div className="rounded-2xl border border-border bg-muted/20 p-3">
-                      <Field label="YouTube Link">
-                        <div className="relative">
-                          <Youtube className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-rose-600" />
-                          <Input
-                            value={homepageSlideForm.youtubeUrl}
-                            onChange={(event) => handleHomepageYouTubeChange(event.target.value)}
-                            placeholder="https://www.youtube.com/watch?v=VIDEO_ID"
-                            className="pl-9"
-                          />
-                        </div>
-                      </Field>
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        Normal YouTube links are saved as embedded slideshow videos automatically.
-                      </p>
-                      {isHomepageYouTubeInvalid && (
-                        <p className="mt-2 text-xs font-medium text-red-600">
-                          This YouTube link is not valid. Use a watch, Shorts, Live, embed, or youtu.be link.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-border bg-gray-950 p-3 text-white">
-                  <div className="aspect-video overflow-hidden rounded-xl bg-black">
-                    {homepageSlidePreviewUrl && homepageSlideForm.mediaType === "youtube" ? (
-                      <iframe
-                        src={homepageSlidePreviewUrl}
-                        title="YouTube slide preview"
-                        className="h-full w-full"
-                        loading="lazy"
-                        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                        allowFullScreen
-                      />
-                    ) : homepageSlidePreviewUrl && isUploadedVideoMedia(homepageSlidePreviewUrl) ? (
-                      <video src={homepageSlidePreviewUrl} className="h-full w-full object-contain" controls muted playsInline preload="metadata" />
-                    ) : homepageSlidePreviewUrl ? (
-                      <img src={homepageSlidePreviewUrl} alt="Slide preview" className="h-full w-full object-contain" />
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-white/70">
-                        <Film className="h-8 w-8" />
-                        <span>Slide preview</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/70">
-                    <span className="inline-flex items-center rounded-full bg-white/10 px-2.5 py-1 font-semibold uppercase">
-                      {homepageSlideForm.mediaType}
-                    </span>
-                    {homepageSlideForm.isHighlighted && <span>Highlighted</span>}
-                  </div>
-                </div>
-              </div>
-              </>
-              )}
-
-              <div className="rounded-2xl border border-border bg-muted/20 p-4">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-navy-dark">Posted Media</p>
-                    <p className="text-xs text-muted-foreground">Edit, reorder, or remove slides shown on the homepage.</p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => void loadHomepageSlides()} disabled={loadingHomepageSlides}>
-                    {loadingHomepageSlides ? "Loading..." : "Refresh"}
-                  </Button>
-                </div>
-
-                <div className="mt-4 space-y-3">
-                  {loadingHomepageSlides ? (
-                    <p className="text-sm text-muted-foreground">Loading homepage slides...</p>
-                  ) : homepageSlides.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No homepage slides posted yet.</p>
-                  ) : (
-                    homepageSlides.map((slide) => {
-                      const slideMedia = resolveAssetUrl(slide.mediaUrl || slide.imageUrl) || slide.mediaUrl || slide.imageUrl || "";
-                      const slideType = getSlideMediaType(slide.mediaType, slideMedia);
-                      const isDragging = String(draggedHomepageSlideId) === String(slide.id);
-                      return (
-                        <div
-                          key={slide.id}
-                          draggable
-                          onDragStart={(event) => handleHomepageSlideDragStart(event, slide.id)}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "move";
-                          }}
-                          onDrop={(event) => void handleHomepageSlideDrop(event, slide.id)}
-                          onDragEnd={() => setDraggedHomepageSlideId(null)}
-                          className={`grid cursor-grab gap-3 rounded-xl border border-border bg-background p-3 transition active:cursor-grabbing sm:grid-cols-[32px_120px_minmax(0,1fr)_auto] sm:items-center ${
-                            isDragging ? "opacity-55 ring-2 ring-navy/30" : "hover:border-navy/35"
-                          }`}
-                        >
-                          <div className="flex items-center justify-center text-muted-foreground" title="Drag to reorder">
-                            <GripVertical className="h-5 w-5" />
-                          </div>
-                          <div className="aspect-video overflow-hidden rounded-lg bg-gray-100">
-                            {slideMedia && slideType === "youtube" ? (
-                              <div className="flex h-full w-full items-center justify-center bg-gray-950 text-white">
-                                <Youtube className="h-6 w-6" />
-                              </div>
-                            ) : slideMedia && slideType === "video" ? (
-                              <video src={slideMedia} className="h-full w-full object-contain" muted playsInline preload="metadata" />
-                            ) : slideMedia ? (
-                              <img src={slideMedia} alt={slide.title} className="h-full w-full object-contain" loading="lazy" />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No media</div>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-navy-dark">{slide.title}</p>
-                            <p className="mt-1 truncate text-xs text-muted-foreground">{slide.caption || slideMedia}</p>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
-                                {slideType}
-                              </span>
-                            {slide.status && (
-                              <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
-                                {slide.status}
-                              </span>
-                            )}
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2 sm:justify-end">
-                            <Button type="button" variant="outline" size="sm" onClick={() => editHomepageSlide(slide)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button type="button" variant="outline" size="sm" onClick={() => void deleteHomepageSlide(slide.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {homepageSlideMessage && (
-                <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-                  {homepageSlideMessage}
-                </div>
-              )}
-            </div>
-          )}
           </>
         )}
 
@@ -1132,53 +933,59 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
         {activeSection === "settings" && isAdminView && (
           <>
-            <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="font-display text-2xl font-bold text-navy-dark">Settings</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">Manage system branding, email queue limits, and administrator session controls.</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="default" className="pointer-events-none">
-                    {settingsPanel === "branding" ? (
-                      <><Palette className="mr-2 h-4 w-4" /> System Branding</>
-                    ) : settingsPanel === "sessions" ? (
-                      <><MonitorSmartphone className="mr-2 h-4 w-4" /> Session Monitoring</>
-                    ) : (
-                      <><Mail className="mr-2 h-4 w-4" /> Email Settings</>
-                    )}
+            <div className="flex justify-end">
+              <Popover open={settingsCategoriesOpen} onOpenChange={setSettingsCategoriesOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" aria-label="Open settings categories">
+                    {settingsPanel === "branding"
+                      ? "System Branding"
+                      : settingsPanel === "email"
+                        ? "Email Settings"
+                        : settingsPanel === "media"
+                          ? "Post Media"
+                          : "Session Monitoring"}
+                    <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
-                  <Popover open={settingsCategoriesOpen} onOpenChange={setSettingsCategoriesOpen}>
-                    <PopoverTrigger asChild>
-                      <Button type="button" variant="outline" size="icon" aria-label="Open settings categories">
-                        <ChevronDown className="h-4 w-4" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-64 p-2">
-                      <div className="space-y-1">
-                        {settingsPanel !== "branding" && (
-                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("branding")}>
-                            <Palette className="mr-2 h-4 w-4" /> System Branding
-                          </Button>
-                        )}
-                        {settingsPanel !== "sessions" && (
-                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("sessions")}>
-                            <MonitorSmartphone className="mr-2 h-4 w-4" /> Session Monitoring
-                          </Button>
-                        )}
-                        {settingsPanel !== "email" && (
-                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => selectSettingsPanel("email")}>
-                            <Mail className="mr-2 h-4 w-4" /> Email Settings
-                          </Button>
-                        )}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </div>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-64 p-2">
+                  <div className="space-y-1">
+                    <Button type="button" variant="ghost" className={`w-full justify-start ${settingsPanel === "branding" ? "bg-muted" : ""}`} onClick={() => selectSettingsPanel("branding")}>
+                      <Palette className="mr-2 h-4 w-4" /> System Branding
+                    </Button>
+                    <Button type="button" variant="ghost" className={`w-full justify-start ${settingsPanel === "email" ? "bg-muted" : ""}`} onClick={() => selectSettingsPanel("email")}>
+                      <Mail className="mr-2 h-4 w-4" /> Email Settings
+                    </Button>
+                    <Button type="button" variant="ghost" className={`w-full justify-start ${settingsPanel === "media" ? "bg-muted" : ""}`} onClick={() => selectSettingsPanel("media")}>
+                      <ImagePlus className="mr-2 h-4 w-4" /> Post Media
+                    </Button>
+                    <Button type="button" variant="ghost" className={`w-full justify-start ${settingsPanel === "sessions" ? "bg-muted" : ""}`} onClick={() => selectSettingsPanel("sessions")}>
+                      <MonitorSmartphone className="mr-2 h-4 w-4" /> Session Monitoring
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
 
-            {settingsPanel === "branding" ? <SystemBrandingPanel /> : settingsPanel === "email" ? <EmailQueueSettingsPanel /> : <SessionMonitoringPanel />}
+            {settingsPanel === "branding" ? (
+              <SystemBrandingPanel />
+            ) : settingsPanel === "email" ? (
+              <EmailQueueSettingsPanel />
+            ) : settingsPanel === "media" ? (
+              <PostedMediaPanel
+                slides={homepageSlides}
+                loading={loadingHomepageSlides}
+                message={homepageSlideMessage}
+                draggedSlideId={draggedHomepageSlideId}
+                onRefresh={() => void loadHomepageSlides()}
+                onDragStart={handleHomepageSlideDragStart}
+                onDrop={(event, slideId) => void handleHomepageSlideDrop(event, slideId)}
+                onDragEnd={() => setDraggedHomepageSlideId(null)}
+                onEdit={editHomepageSlide}
+                onDelete={(slideId) => void deleteHomepageSlide(slideId)}
+              />
+            ) : (
+              <SessionMonitoringPanel />
+            )}
           </>
         )}
         {activeSection === "reports" && canViewReports && <ReportExportsPanel showExports={false} />}

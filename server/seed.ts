@@ -5,6 +5,7 @@ import bcrypt from "bcrypt";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { logger } from "./utils/logger";
 
 type DbValue = string | number | boolean | Date | null;
 
@@ -1583,61 +1584,6 @@ async function insertEngagementMetrics(conn: PoolConnection) {
   }
 }
 
-async function insertAlumniProjectsAndFeeRecords(conn: PoolConnection) {
-  for (const project of sampleAlumniProjects) {
-    await execute(
-      conn,
-      `INSERT INTO alumni_projects
-        (title, description, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, start_date, end_date, status, beneficiaries, estimated_value, funding_source, related_contribution_id, contribution_record_id, accomplishments, remarks, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        project.title,
-        project.description,
-        project.category,
-        project.batchYear,
-        project.leadOfficer.id,
-        project.leadAlumni.id,
-        project.organizationName,
-        project.organizationName,
-        project.startDate,
-        project.endDate,
-        project.status,
-        project.beneficiaries,
-        project.estimatedValue,
-        project.fundingSource,
-        project.relatedContributionId,
-        project.relatedContributionId,
-        project.accomplishments,
-        project.remarks,
-        adminUsers[0].id,
-      ],
-    );
-  }
-
-  for (const record of sampleAlumniFeeRecords) {
-    await execute(
-      conn,
-      `INSERT INTO alumni_fee_records
-        (alumni_id, payment_type, amount, payment_date, payment_mode, reference_number, receipt_path, status, encoded_by, remarks, batch_year, program, department)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        record.alumni.id,
-        record.paymentType,
-        record.amount,
-        record.paymentDate,
-        record.paymentMode,
-        record.referenceNumber,
-        null,
-        record.status,
-        adminUsers[0].id,
-        record.remarks,
-        record.alumni.batchYear,
-        record.alumni.course,
-        record.alumni.course,
-      ],
-    );
-  }
-}
 async function insertOfficerBundles(conn: PoolConnection) {
   const bundles = [
     {
@@ -1727,7 +1673,7 @@ async function seed() {
   const conn = await pool.getConnection();
 
   try {
-    console.log(`Seeding SaCC demo data into MySQL database "${DB_NAME}"...`);
+    logger.startup("Seeding SaCC demo data");
     await createTables(conn);
     await conn.beginTransaction();
     await clearDemoData(conn);
@@ -1743,18 +1689,14 @@ async function seed() {
     await insertDashboardSlides(conn);
     await insertEngagementMetrics(conn);
     await insertOfficerBundles(conn);
-    await insertAlumniProjectsAndFeeRecords(conn);
 
     await conn.commit();
 
-    console.log("SaCC demo seed complete.");
-    console.log(`Admin login: ${adminUsers[0].email} / ${DEFAULT_PASSWORD}`);
-    console.log(`Alumni login: ${alumni[0].email} / ${DEFAULT_PASSWORD}`);
-    console.log("Inserted: 10 alumni, 2 admins, 10 achievements, 10 non-event announcements/surveys, 8 events, 30 RSVPs, 4 dashboard slideshow images, 20 Freedom Wall posts, 50 wall comments, 80 wall reactions, engagement metrics for every alumni, 2 officer bundles, 4 alumni projects, and 10 alumni fee records.");
+    logger.startup("SaCC demo seed completed");
   } catch (error) {
     await conn.query("SET FOREIGN_KEY_CHECKS = 1");
     await conn.rollback();
-    console.error("Seed failed:", error);
+    logger.error("Seed failed", error);
     process.exitCode = 1;
   } finally {
     conn.release();

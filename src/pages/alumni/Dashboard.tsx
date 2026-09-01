@@ -1,8 +1,9 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useRef, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Calendar, Bell, ChevronRight, MessageCircle, Send, CheckCircle, UserCheck, XCircle, FolderKanban } from "lucide-react";
+import { Calendar, Bell, ChevronRight, MessageCircle, Send, CheckCircle, UserCheck, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import salayBackground from "@/assets/salay-background.png";
@@ -53,25 +54,6 @@ interface DonationActivity {
   donorName: string;
 }
 
-interface AlumniProject {
-  id: number;
-  title: string;
-  description: string;
-  category: string;
-  batchYear: string;
-  leadOfficer: string;
-  leadAlumni: string;
-  organizationName: string;
-  startDate: string;
-  endDate: string;
-  status: string;
-  estimatedValue: number;
-  fundingSource: string;
-  beneficiaries: string;
-  accomplishments: string;
-  remarks: string;
-  fileCount: number;
-}
 interface DashboardResponse {
   events?: AnnouncementData[];
   surveys?: SurveyData[];
@@ -80,7 +62,6 @@ interface DashboardResponse {
   comments?: DashboardCommentResponse[];
   slideshow?: SlideData[];
   donationUpdates?: DonationActivity[];
-  alumniProjects?: AlumniProject[];
 }
 
 type EventRsvpStatus = "Going" | "Interested" | "Not Going";
@@ -203,9 +184,6 @@ function VConn({ h = 6, mdH, className = "bg-border" }: { h?: number; mdH?: numb
   );
 }
 
-const formatDonationAmount = (value: number) =>
-  `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-
 const formatActivityDate = (value: string | null) => {
   if (!value) return "Recently";
   const date = new Date(value);
@@ -231,15 +209,14 @@ export default function AlumniDashboard() {
   const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [donationActivity, setDonationActivity] = useState<DonationActivity[]>([]);
-  const [alumniProjects, setAlumniProjects] = useState<AlumniProject[]>([]);
-  const [selectedProject, setSelectedProject] = useState<AlumniProject | null>(null);
   const [loading, setLoading] = useState(true);
+  const hasLoadedDashboard = useRef(false);
 
   useEffect(() => {
     if (!user) return;
 
     const fetchData = async () => {
-      const keepSpinner = announcements.length === 0 && officers.length === 0;
+      const keepSpinner = !hasLoadedDashboard.current;
       try {
         const res = await fetch(`${API_URL}/alumni/dashboard`, {
           headers: getAuthHeaders(),
@@ -250,7 +227,6 @@ export default function AlumniDashboard() {
         setSurveys(data.surveys || []);
         setSlideshow(data.slideshow || []);
         setDonationActivity((data.donationUpdates || []).slice(0, 4));
-        setAlumniProjects((data.alumniProjects || []).slice(0, 8));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
           (data.officers || []).map((officer) => ({
@@ -271,8 +247,9 @@ export default function AlumniDashboard() {
         });
         setComments(grouped);
       } catch (err) {
-        console.error("Failed to load dashboard data", err);
+        clientLogger.error("Failed to load dashboard data", err);
       } finally {
+        hasLoadedDashboard.current = true;
         if (keepSpinner) {
           setLoading(false);
         }
@@ -294,7 +271,7 @@ export default function AlumniDashboard() {
         setRegistrations((prev) => new Set(prev).add(eventId));
       }
     } catch (err) {
-      console.error("Failed to load RSVP status", err);
+      clientLogger.error("Failed to load RSVP status", err);
     }
   };
 
@@ -319,7 +296,7 @@ export default function AlumniDashboard() {
       setRegistrations((prev) => new Set(prev).add(eventId));
       setRsvpChoiceOpen((current) => ({ ...current, [eventId]: false }));
     } catch (err) {
-      console.error("Failed to save RSVP", err);
+      clientLogger.error("Failed to save RSVP", err);
     }
   };
 
@@ -338,7 +315,7 @@ export default function AlumniDashboard() {
         return next;
       });
     } catch (err) {
-      console.error("Failed to cancel RSVP", err);
+      clientLogger.error("Failed to cancel RSVP", err);
     }
   };
 
@@ -352,7 +329,7 @@ export default function AlumniDashboard() {
       const payload = await readApiResponse<{ rsvp: EventRsvpState }>(response);
       setEventRsvps((current) => ({ ...current, [eventId]: payload.rsvp }));
     } catch (err) {
-      console.error("Failed to check in", err);
+      clientLogger.error("Failed to check in", err);
     }
   };
 
@@ -382,7 +359,7 @@ export default function AlumniDashboard() {
       }));
       setCommentInputs((ci) => ({ ...ci, [eventId]: "" }));
     } catch (err) {
-      console.error(err);
+      clientLogger.error(err);
     }
   };
 
@@ -446,7 +423,7 @@ export default function AlumniDashboard() {
       await readApiResponse(response);
       setSelectedSurvey(null);
     } catch (err) {
-      console.error("Failed to submit survey", err);
+      clientLogger.error("Failed to submit survey", err);
     } finally {
       setSubmittingSurvey(false);
     }
@@ -599,17 +576,6 @@ export default function AlumniDashboard() {
                 Open survey
               </span>
             </button>
-          ))}
-        </DashboardContentSection>
-
-        <DashboardContentSection
-          title="Alumni Projects"
-          description="Current and completed alumni initiatives posted by the institution."
-          count={alumniProjects.length}
-          emptyText="No alumni projects are posted yet."
-        >
-          {alumniProjects.map((project) => (
-            <ProjectCard key={project.id} project={project} onOpen={setSelectedProject} />
           ))}
         </DashboardContentSection>
 
@@ -803,109 +769,10 @@ export default function AlumniDashboard() {
           )}
         </DialogContent>
       </Dialog>
-      <Dialog open={Boolean(selectedProject)} onOpenChange={(open) => !open && setSelectedProject(null)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          {selectedProject && (
-            <>
-              <DialogHeader>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge className={projectStatusClass(selectedProject.status)}>{selectedProject.status || "Planned"}</Badge>
-                  <Badge variant="outline">{selectedProject.category || "Project"}</Badge>
-                  {selectedProject.batchYear && <Badge variant="outline">Batch {selectedProject.batchYear}</Badge>}
-                </div>
-                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedProject.title}</DialogTitle>
-                <DialogDescription>Complete alumni project details.</DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <ProjectDetail label="Schedule" value={projectSchedule(selectedProject)} />
-                  <ProjectDetail label="Lead / In-charge" value={selectedProject.leadOfficer || selectedProject.leadAlumni || "To be announced"} />
-                  <ProjectDetail label="Estimated Value" value={formatDonationAmount(selectedProject.estimatedValue || 0)} />
-                  <ProjectDetail label="Funding Source" value={selectedProject.fundingSource || "Not specified"} />
-                  <ProjectDetail label="Beneficiaries" value={selectedProject.beneficiaries || "Not specified"} />
-                  <ProjectDetail label="Attachments" value={`${selectedProject.fileCount || 0} file${selectedProject.fileCount === 1 ? "" : "s"}`} />
-                </div>
-
-                <div className="rounded-2xl border border-border/70 bg-muted/15 p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Project description</p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground">
-                    {selectedProject.description || "No description has been posted yet."}
-                  </p>
-                </div>
-
-                {selectedProject.accomplishments && (
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Accomplishments</p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-emerald-900">{selectedProject.accomplishments}</p>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </AlumniLayout>
   );
 }
 
-function projectStatusClass(status: string) {
-  const normalized = String(status || "Planned").toLowerCase();
-  if (normalized === "ongoing") return "bg-blue-100 text-blue-800 hover:bg-blue-100";
-  if (normalized === "completed") return "bg-emerald-100 text-emerald-800 hover:bg-emerald-100";
-  if (normalized === "cancelled") return "bg-rose-100 text-rose-800 hover:bg-rose-100";
-  return "bg-amber-100 text-amber-800 hover:bg-amber-100";
-}
-
-function projectSchedule(project: AlumniProject) {
-  const start = formatActivityDate(project.startDate || null);
-  const end = project.endDate ? formatActivityDate(project.endDate) : "Open schedule";
-  return project.startDate || project.endDate ? `${start} - ${end}` : "Schedule to be announced";
-}
-
-function ProjectDetail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-navy-dark">{value}</p>
-    </div>
-  );
-}
-
-function ProjectCard({ project, onOpen }: { project: AlumniProject; onOpen: (project: AlumniProject) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(project)}
-      className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-navy/30 hover:shadow-md"
-    >
-      <div className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-700 transition group-hover:bg-blue-100">
-        <FolderKanban className="h-5 w-5" />
-      </div>
-      <div className="mb-3 flex max-w-[calc(100%-3rem)] flex-wrap items-center gap-2">
-        <Badge className={projectStatusClass(project.status)}>{project.status || "Planned"}</Badge>
-        <Badge variant="outline">{project.category || "Project"}</Badge>
-      </div>
-      <h4 className="line-clamp-2 text-base font-semibold leading-tight text-navy-dark md:text-sm">{project.title}</h4>
-      <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground md:mt-1 md:line-clamp-2 md:text-xs md:leading-5">
-        {project.description || project.accomplishments || "Project details will be posted by the alumni office."}
-      </p>
-      <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <Calendar className="h-3.5 w-3.5 text-navy" />
-          {projectSchedule(project)}
-        </span>
-        <span className="truncate font-semibold text-navy-dark">
-          {project.leadOfficer || project.leadAlumni || "Lead to be announced"}
-        </span>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {project.batchYear && <Badge variant="outline">Batch {project.batchYear}</Badge>}
-        {project.estimatedValue > 0 && <Badge variant="outline">{formatDonationAmount(project.estimatedValue)}</Badge>}
-      </div>
-    </button>
-  );
-}
 function DashboardContentSection({
   title,
   description,
@@ -1006,32 +873,25 @@ function DashboardContentSection({
 
 function DonationActivitySection({ donations }: { donations: DonationActivity[] }) {
   return (
-    <section className="mt-6 overflow-hidden rounded-xl border border-border bg-card shadow-card">
-      <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
-        <div>
-          <h3 className="text-sm font-bold text-navy-dark">Donation Activity</h3>
-          <p className="text-[11px] text-muted-foreground">Recent alumni donors.</p>
-        </div>
-        <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">
+    <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-2">
+        <h3 className="text-xs font-bold text-navy-dark">Donation Activity</h3>
+        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">
           {donations.length}
         </span>
       </div>
       <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
         {donations.length > 0 ? (
           donations.map((donation) => (
-            <div key={donation.id} className="flex items-start justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-navy-dark">{donation.donorName}</p>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{donation.purpose || donation.message || "General donation"}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">{formatActivityDate(donation.created_at)}</p>
-              </div>
-              <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700">
-                {formatDonationAmount(donation.amount)}
-              </span>
+            <div key={donation.id} className="min-w-0 px-3 py-2">
+              <p className="truncate text-xs font-semibold text-navy-dark">{donation.donorName}</p>
+              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                {donation.purpose || donation.message || "General donation"} · {formatActivityDate(donation.created_at)}
+              </p>
             </div>
           ))
         ) : (
-          <div className="px-4 py-5 text-center text-sm text-muted-foreground md:col-span-2">
+          <div className="px-3 py-4 text-center text-xs text-muted-foreground md:col-span-2">
             No recent donor activity yet.
           </div>
         )}

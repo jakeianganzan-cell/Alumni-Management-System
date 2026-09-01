@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from './utils/logger';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
@@ -57,14 +58,15 @@ async function init() {
   });
 
   try {
-    console.log('Applying schema.sql...');
+    logger.startup('Applying database schema');
     const schema = fs.readFileSync(path.join(currentDirPath, 'schema.sql'), 'utf8');
     await pool.query(schema);
-    console.log('Schema applied successfully!');
+    logger.startup('Database schema applied successfully');
   } catch (err) {
-    console.error('Initialization error:', err);
+    logger.error('Database initialization failed', err);
+    process.exitCode = 1;
   } finally {
-    process.exit(0);
+    await pool.end();
   }
 }
 

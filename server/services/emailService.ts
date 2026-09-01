@@ -153,10 +153,6 @@ export const sendTransactionalEmail = async ({
     if (!response.ok) {
         const details = await getBrevoErrorDetails(response);
         const message = getBrevoErrorMessage(details);
-        console.error("BREVO EMAIL ERROR:", {
-            status: response.status,
-            message
-        });
         throw new BrevoEmailError(message, response.status, details);
     }
 

@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Reply, Send, UserCircle } from "lucide-react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
@@ -6,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { Announcement } from "@/context/AnnouncementContext";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
@@ -124,7 +124,7 @@ export default function AlumniAnnouncements() {
       const data = await readApiResponse<Announcement[]>(response);
       setAnnouncements(data);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load announcements");
     } finally {
       setLoading(false);
@@ -139,7 +139,7 @@ export default function AlumniAnnouncements() {
       const data = await readApiResponse<SurveyData[]>(response);
       setSurveys(data);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load surveys");
     }
   };
@@ -160,7 +160,7 @@ export default function AlumniAnnouncements() {
     if (canShowInterestButton(selectedAnnouncement)) {
       void loadInterestStatus(selectedAnnouncement.id);
     }
-  }, [selectedAnnouncement?.id, selectedAnnouncement?.type]);
+  }, [selectedAnnouncement]);
 
   const publicAnnouncements = useMemo(() => {
     return announcements.filter((announcement) => (announcement.approvalStatus || "approved") === "approved");
@@ -185,17 +185,17 @@ export default function AlumniAnnouncements() {
     () => [
       {
         id: "announcements" as const,
-        label: "All Announcements",
+        label: "Announcements",
         count: announcementItems.length,
       },
       {
         id: "events" as const,
-        label: "All Events",
+        label: "Events",
         count: eventItems.length,
       },
       {
         id: "surveys" as const,
-        label: "All Surveys",
+        label: "Surveys",
         count: surveyItems.length,
       },
     ],
@@ -236,7 +236,7 @@ export default function AlumniAnnouncements() {
       setFormOpen(false);
       await loadAnnouncements();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to submit announcement");
     } finally {
       setSubmitting(false);
@@ -252,7 +252,7 @@ export default function AlumniAnnouncements() {
       const data = await readApiResponse<AnnouncementComment[]>(response);
       setComments((current) => ({ ...current, [announcementId]: data }));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to load comments");
     } finally {
       setLoadingComments(false);
@@ -274,7 +274,7 @@ export default function AlumniAnnouncements() {
       await loadComments(selectedAnnouncement.id);
       toast.success("Comment posted");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to post comment");
     } finally {
       setSubmittingComment(false);
@@ -297,7 +297,7 @@ export default function AlumniAnnouncements() {
       await loadComments(selectedAnnouncement.id);
       toast.success("Reply posted");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to post reply");
     } finally {
       setSubmittingComment(false);
@@ -312,7 +312,7 @@ export default function AlumniAnnouncements() {
       const data = await readApiResponse<{ interest: AnnouncementInterest | null }>(response);
       setInterestStatus((current) => ({ ...current, [announcementId]: data.interest }));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
     }
   };
 
@@ -329,7 +329,7 @@ export default function AlumniAnnouncements() {
       await loadInterestStatus(announcementId);
       toast.success(current?.isInterested ? "Marked as Not Interested" : "Marked as Interested");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to update interest");
     } finally {
       setSubmittingInterest(false);
@@ -403,7 +403,7 @@ export default function AlumniAnnouncements() {
       setSelectedSurvey(null);
       await loadSurveys();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to submit survey");
     } finally {
       setSubmittingSurvey(false);
@@ -444,9 +444,6 @@ export default function AlumniAnnouncements() {
           <>
             {activeTab === "announcements" && (
               <AnnouncementSection
-                title="All Announcements"
-                description="Official updates and alumni notices."
-                count={announcementItems.length}
                 emptyText="No announcements available."
                 items={announcementItems}
                 page={activePage}
@@ -457,9 +454,6 @@ export default function AlumniAnnouncements() {
 
             {activeTab === "events" && (
               <AnnouncementSection
-                title="All Events"
-                description="Alumni activities, gatherings, and event schedules."
-                count={eventItems.length}
                 emptyText="No events available."
                 items={eventItems}
                 page={activePage}
@@ -470,9 +464,6 @@ export default function AlumniAnnouncements() {
 
             {activeTab === "surveys" && (
               <SurveySection
-                title="All Surveys"
-                description="Answer available alumni surveys directly inside the system."
-                count={surveyItems.length}
                 emptyText="No surveys available."
                 items={surveyItems}
                 page={activePage}
@@ -688,18 +679,12 @@ export default function AlumniAnnouncements() {
 }
 
 function AnnouncementSection({
-  title,
-  description,
-  count,
   emptyText,
   items,
   page,
   onPageChange,
   onOpen,
 }: {
-  title: string;
-  description: string;
-  count: number;
   emptyText: string;
   items: Announcement[];
   page: number;
@@ -716,14 +701,6 @@ function AnnouncementSection({
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-navy-dark">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        <Badge variant="outline">{count}</Badge>
-      </div>
-
       {items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">
           {emptyText}
@@ -752,18 +729,12 @@ function AnnouncementSection({
 }
 
 function SurveySection({
-  title,
-  description,
-  count,
   emptyText,
   items,
   page,
   onPageChange,
   onOpen,
 }: {
-  title: string;
-  description: string;
-  count: number;
   emptyText: string;
   items: SurveyData[];
   page: number;
@@ -780,14 +751,6 @@ function SurveySection({
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm md:p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-navy-dark">{title}</h3>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        <Badge variant="outline">{count}</Badge>
-      </div>
-
       {items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-muted-foreground">
           {emptyText}

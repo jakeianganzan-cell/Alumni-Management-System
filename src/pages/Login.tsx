@@ -175,7 +175,7 @@ export default function Login() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
+    <div className="relative min-h-dvh overflow-hidden">
       <div
         className="absolute inset-0 bg-cover bg-center transition-all duration-700"
         style={{ backgroundImage: `url(${currentBackground})` }}
@@ -192,7 +192,7 @@ export default function Login() {
           setProblemError("");
           setProblemMessage("");
         }}
-        className="fixed right-4 top-4 z-30 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/35 bg-white/95 text-navy shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:bg-white hover:text-navy-dark focus:outline-none focus:ring-2 focus:ring-white/80"
+        className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-30 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/35 bg-white/95 text-navy shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:bg-white hover:text-navy-dark focus:outline-none focus:ring-2 focus:ring-white/80 sm:right-4"
       >
         <MessageSquareWarning className="h-5 w-5" />
       </button>
@@ -200,13 +200,13 @@ export default function Login() {
       {showProblemReport && (
         <div className="fixed inset-0 z-40">
           <button type="button" aria-label="Close report form" className="absolute inset-0 bg-black/45" onClick={() => setShowProblemReport(false)} />
-          <form onSubmit={submitProblemReport} className="absolute right-4 top-16 w-[min(92vw,24rem)] rounded-2xl border border-white/70 bg-white p-4 shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
+          <form onSubmit={submitProblemReport} className="absolute inset-x-2 top-[max(4rem,calc(env(safe-area-inset-top)+3.5rem))] max-h-[calc(100dvh-4.5rem-env(safe-area-inset-top))] overflow-y-auto overscroll-contain rounded-2xl border border-white/70 bg-white p-4 shadow-[0_24px_70px_rgba(0,0,0,0.34)] sm:left-auto sm:right-4 sm:w-[min(92vw,24rem)]">
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-navy">Report a Problem</p>
                 <h2 className="mt-1 text-base font-bold text-navy-dark">Login Issue</h2>
               </div>
-              <button type="button" aria-label="Close" onClick={() => setShowProblemReport(false)} className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100 hover:text-navy">
+              <button type="button" aria-label="Close" onClick={() => setShowProblemReport(false)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-navy">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -214,19 +214,19 @@ export default function Login() {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Name</label>
-                <input value={problemForm.reporterName} onChange={(event) => setProblemForm((current) => ({ ...current, reporterName: event.target.value }))} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15" />
+                <input value={problemForm.reporterName} onChange={(event) => setProblemForm((current) => ({ ...current, reporterName: event.target.value }))} className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Email</label>
-                <input type="email" value={problemForm.reporterEmail} onChange={(event) => setProblemForm((current) => ({ ...current, reporterEmail: event.target.value }))} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15" />
+                <input type="email" value={problemForm.reporterEmail} onChange={(event) => setProblemForm((current) => ({ ...current, reporterEmail: event.target.value }))} className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Subject</label>
-                <input value={problemForm.subject} onChange={(event) => setProblemForm((current) => ({ ...current, subject: event.target.value }))} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15" required />
+                <input value={problemForm.subject} onChange={(event) => setProblemForm((current) => ({ ...current, subject: event.target.value }))} className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm" required />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Problem Details</label>
-                <textarea value={problemForm.message} onChange={(event) => setProblemForm((current) => ({ ...current, message: event.target.value }))} rows={4} className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15" required />
+                <textarea value={problemForm.message} onChange={(event) => setProblemForm((current) => ({ ...current, message: event.target.value }))} rows={4} className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-base focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm" required />
               </div>
 
               {(problemError || problemMessage) && (
@@ -243,10 +243,10 @@ export default function Login() {
           </form>
         </div>
       )}
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-4">
+      <div className="relative z-10 flex min-h-dvh items-center justify-center px-3 py-[max(1rem,env(safe-area-inset-top))] sm:px-4">
         <div className="w-full max-w-lg">
           <div className="overflow-hidden rounded-[30px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,246,247,0.98))] shadow-[0_30px_80px_rgba(0,0,0,0.36)] ring-1 ring-white/50">
-            <div className="relative overflow-hidden border-b border-slate-200/90 px-6 pb-4 pt-5 sm:px-7">
+            <div className="relative overflow-hidden border-b border-slate-200/90 px-4 pb-4 pt-5 sm:px-7">
               <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(85,0,0,0.98),rgba(42,42,42,0.95))]" />
               <div className="absolute -right-10 top-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
               <div className="absolute left-8 top-16 h-16 w-16 rounded-full bg-white/10 blur-xl" />
@@ -263,7 +263,7 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="px-6 py-5 sm:px-7">
+            <div className="px-4 py-5 sm:px-7">
               <div className="mb-4 text-center">
                 <h1 className="mx-auto max-w-[18rem] text-lg font-extrabold leading-snug text-black sm:max-w-xs sm:text-[1.45rem]">
                   {settings.welcomeMessage}
@@ -323,7 +323,7 @@ export default function Login() {
                       type="text"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15"
+                      className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-base text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm"
                       required
                     />
                   </div>
@@ -335,14 +335,14 @@ export default function Login() {
                         type={showPassword ? "text" : "password"}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 pr-11 text-sm text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15"
+                        className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 pr-12 text-base text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm"
                         required
                       />
 
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 transition-colors hover:text-navy"
+                        className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-slate-500 transition-colors hover:text-navy"
                       >
                         {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>

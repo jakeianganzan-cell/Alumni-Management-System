@@ -6,6 +6,7 @@ import path from "path";
 import type { Response } from "express";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import db from "../db";
+import { logger } from "../utils/logger";
 import type { AuthenticatedRequest } from "../types/auth";
 import {
   createStoredZipBuffer,
@@ -847,7 +848,7 @@ const buildDownloadPdfBuffer = async (row: TracerSummaryRow) => {
   try {
     return await generateTracerPdfBuffer(toPdfRecord(row));
   } catch (error) {
-    console.error("TRACER PDF TEMPLATE GENERATION ERROR:", error);
+    logger.error("TRACER PDF TEMPLATE GENERATION ERROR:", error);
     throw new Error(`Unable to generate the official Graduate Tracer PDF template: ${getErrorMessage(error)}`);
   }
 };
@@ -1230,7 +1231,7 @@ export const getMyTracer = async (req: AuthenticatedRequest, res: Response) => {
       canSubmit: true,
     });
   } catch (error: unknown) {
-    console.error("GET MY TRACER ERROR:", error);
+    logger.error("GET MY TRACER ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1253,7 +1254,7 @@ export const saveTracerDraft = async (req: AuthenticatedRequest, res: Response) 
     const draft = await getDraftByUserId(req.user.id);
     res.json({ success: true, draft: draft ? { ...draft, ched_payload: safeParseJson(draft.ched_payload, {}) } : null });
   } catch (error: unknown) {
-    console.error("SAVE TRACER DRAFT ERROR:", error);
+    logger.error("SAVE TRACER DRAFT ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1347,7 +1348,7 @@ export const submitTracer = async (req: AuthenticatedRequest, res: Response) => 
     });
   } catch (error: unknown) {
     await conn.rollback();
-    console.error("SUBMIT TRACER ERROR:", error);
+    logger.error("SUBMIT TRACER ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   } finally {
     conn.release();
@@ -1369,7 +1370,7 @@ export const exportMyTracerRecord = async (req: AuthenticatedRequest, res: Respo
     await writeAuditLog(req.user.id, req.user.id, `download_${format}`, { scope: "self" });
     res.download(exported.outputPath, exported.fileName);
   } catch (error: unknown) {
-    console.error("EXPORT MY TRACER ERROR:", error);
+    logger.error("EXPORT MY TRACER ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1389,7 +1390,7 @@ export const previewMyTracerRecord = async (req: AuthenticatedRequest, res: Resp
     await writeAuditLog(req.user.id, req.user.id, "preview_pdf", { scope: "self" });
     sendPdfResponse(res, fileName, pdfBuffer, "inline");
   } catch (error: unknown) {
-    console.error("PREVIEW MY TRACER ERROR:", error);
+    logger.error("PREVIEW MY TRACER ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1408,7 +1409,7 @@ export const listTracerRecords = async (req: AuthenticatedRequest, res: Response
 
     res.json({ rows, pagination });
   } catch (error: unknown) {
-    console.error("LIST TRACER RECORDS ERROR:", error);
+    logger.error("LIST TRACER RECORDS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1423,7 +1424,7 @@ export const getAdminTracerRecord = async (req: AuthenticatedRequest, res: Respo
 
     res.json({ ...row, ched_payload: safeParseJson(row.ched_payload, {}) });
   } catch (error: unknown) {
-    console.error("GET ADMIN TRACER RECORD ERROR:", error);
+    logger.error("GET ADMIN TRACER RECORD ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1432,7 +1433,7 @@ export const getTracerAnalytics = async (_req: AuthenticatedRequest, res: Respon
   try {
     res.json(await buildAnalytics());
   } catch (error: unknown) {
-    console.error("GET TRACER ANALYTICS ERROR:", error);
+    logger.error("GET TRACER ANALYTICS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1457,7 +1458,7 @@ export const reopenTracerSubmission = async (req: AuthenticatedRequest, res: Res
     await writeAuditLog(req.user.id, targetUserId, "reopen_submission", { reopenedAt: new Date().toISOString() });
     res.json({ success: true });
   } catch (error: unknown) {
-    console.error("REOPEN TRACER SUBMISSION ERROR:", error);
+    logger.error("REOPEN TRACER SUBMISSION ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1478,7 +1479,7 @@ export const exportTracerRecord = async (req: AuthenticatedRequest, res: Respons
     await writeAuditLog(req.user.id, userId, `admin_download_${format}`, { scope: "individual" });
     res.download(exported.outputPath, exported.fileName);
   } catch (error: unknown) {
-    console.error("EXPORT TRACER RECORD ERROR:", error);
+    logger.error("EXPORT TRACER RECORD ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1504,7 +1505,7 @@ export const exportTracerPdfByRecordId = async (req: AuthenticatedRequest, res: 
 
     sendPdfResponse(res, fileName, pdfBuffer, "attachment");
   } catch (error: unknown) {
-    console.error("EXPORT TRACER PDF BY ID ERROR:", error);
+    logger.error("EXPORT TRACER PDF BY ID ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1529,7 +1530,7 @@ export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res:
     await writeAuditLog(req.user.id, row.user_id, "admin_preview_pdf_by_record_id", { tracerId });
     sendPdfResponse(res, fileName, pdfBuffer, "inline");
   } catch (error: unknown) {
-    console.error("PREVIEW TRACER PDF BY ID ERROR:", error);
+    logger.error("PREVIEW TRACER PDF BY ID ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1597,7 +1598,7 @@ export const bulkDownloadTracerPdfs = async (req: AuthenticatedRequest, res: Res
     res.setHeader("Cache-Control", "no-store");
     res.send(zipBuffer);
   } catch (error: unknown) {
-    console.error("BULK DOWNLOAD TRACER PDF ERROR:", error);
+    logger.error("BULK DOWNLOAD TRACER PDF ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1648,7 +1649,7 @@ export const exportTracerArchive = async (req: AuthenticatedRequest, res: Respon
     res.setHeader("Cache-Control", "no-store");
     res.send(zipBuffer);
   } catch (error: unknown) {
-    console.error("EXPORT TRACER ARCHIVE ERROR:", error);
+    logger.error("EXPORT TRACER ARCHIVE ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1706,7 +1707,7 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
     res.setHeader("Content-Disposition", `inline; filename="graduate-tracer-report-${formatFileDate()}.html"`);
     return res.send(buildReportHtml(analytics, summaryRows));
   } catch (error: unknown) {
-    console.error("EXPORT TRACER REPORTS ERROR:", error);
+    logger.error("EXPORT TRACER REPORTS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };
@@ -1718,7 +1719,7 @@ export const assertTracerAdminAccess = async (req: AuthenticatedRequest, res: Re
     if (!allowed) return res.sendStatus(403);
     next();
   } catch (error: unknown) {
-    console.error("TRACER ADMIN ACCESS ERROR:", error);
+    logger.error("TRACER ADMIN ACCESS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
   }
 };

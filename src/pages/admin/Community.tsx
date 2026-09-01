@@ -1,6 +1,6 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AdminPageIntro } from "@/components/admin/AdminPageIntro";
 import { AlertTriangle, MessageSquare, Pin, Search, Trash2 } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { toast } from "sonner";
@@ -37,7 +37,7 @@ export default function AdminCommunity() {
       const data = await readApiResponse<Post[]>(response);
       setPosts(data);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to load Freedom Wall posts");
     } finally {
       setLoading(false);
@@ -84,7 +84,7 @@ export default function AdminCommunity() {
         toast.success("Post marked as deleted");
         await loadPosts();
       } catch (error) {
-        console.error(error);
+        clientLogger.error(error);
         toast.error(error instanceof Error ? error.message : "Could not delete post");
       }
     }
@@ -100,7 +100,7 @@ export default function AdminCommunity() {
       await readApiResponse(response);
       await loadPosts();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Could not update pin state");
     }
   };
@@ -116,7 +116,7 @@ export default function AdminCommunity() {
       toast.success("Flag cleared");
       await loadPosts();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Could not clear flag");
     }
   };
@@ -124,10 +124,6 @@ export default function AdminCommunity() {
   return (
     <AdminLayout title="Freedom Wall">
       <div className="space-y-6">
-        <AdminPageIntro
-          title="Freedom Wall posts"
-        />
-
         <section>
           <div className="rounded-3xl border border-border bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -155,7 +151,7 @@ export default function AdminCommunity() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-2xl border border-border">
-              <div className="overflow-hidden">
+              <div className="overflow-x-auto" tabIndex={0} aria-label="Freedom Wall moderation table">
                 <table className="w-full table-fixed text-[13px]">
                 <colgroup>
                   <col className="w-[15%]" /><col className="w-[28%]" /><col className="w-[11%]" /><col className="w-[12%]" />

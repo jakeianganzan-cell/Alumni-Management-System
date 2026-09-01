@@ -1,3 +1,4 @@
+import { clientLogger } from "@/lib/logger";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
@@ -90,6 +91,7 @@ const EMPTY_REACTIONS: ReactionCounts = {
 
 export default function AlumniAchievements() {
   const [achievements, setAchievements] = useState<AchievementRecord[]>([]);
+  const [achievementOrder, setAchievementOrder] = useState<number[]>([]);
   const [comments, setComments] = useState<Record<number, AchievementComment[]>>({});
   const [commentsOpen, setCommentsOpen] = useState<Record<number, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
@@ -118,9 +120,24 @@ export default function AlumniAchievements() {
         commentCount: achievement.commentCount || 0,
       }));
       setAchievements(normalized);
+      setAchievementOrder((currentOrder) => {
+        const availableIds = normalized.map((achievement) => achievement.id);
+        if (currentOrder.length === 0) {
+          return [
+            ...normalized.filter((achievement) => !achievement.currentUserReaction).map((achievement) => achievement.id),
+            ...normalized.filter((achievement) => Boolean(achievement.currentUserReaction)).map((achievement) => achievement.id),
+          ];
+        }
+
+        const availableIdSet = new Set(availableIds);
+        const retainedIds = currentOrder.filter((id) => availableIdSet.has(id));
+        const retainedIdSet = new Set(retainedIds);
+        const newIds = availableIds.filter((id) => !retainedIdSet.has(id));
+        return [...newIds, ...retainedIds];
+      });
       setSelected((current) => (current ? normalized.find((achievement) => achievement.id === current.id) || current : current));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load achievements");
     } finally {
       setLoading(false);
@@ -136,7 +153,7 @@ export default function AlumniAchievements() {
       const data = await readApiResponse<AchievementComment[]>(response);
       setComments((current) => ({ ...current, [achievementId]: data }));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load achievement comments");
     } finally {
       setLoadingComments((current) => ({ ...current, [achievementId]: false }));
@@ -148,14 +165,23 @@ export default function AlumniAchievements() {
   }, []);
 
   useEffect(() => {
-    if (!selected) return;
+    const achievementId = selected?.id;
+    if (!achievementId) return;
 
-    void loadComments(selected.id);
+    void loadComments(achievementId);
   }, [selected?.id]);
 
   const approvedAchievements = useMemo(
-    () => achievements.filter((achievement) => achievement.status === "approved"),
-    [achievements],
+    () => {
+      const orderById = new Map(achievementOrder.map((id, index) => [id, index]));
+      const approved = achievements.filter((achievement) => achievement.status === "approved");
+      return approved.sort(
+        (left, right) =>
+          (orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+      );
+    },
+    [achievementOrder, achievements],
   );
 
   const submitAchievement = async (event: React.FormEvent) => {
@@ -174,7 +200,7 @@ export default function AlumniAchievements() {
       setShowForm(false);
       await loadAchievements();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not submit achievement");
     } finally {
       setSaving(false);
@@ -222,7 +248,7 @@ export default function AlumniAchievements() {
           : current,
       );
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not update reaction");
     } finally {
       setReactingTo(null);
@@ -243,7 +269,7 @@ export default function AlumniAchievements() {
       setCommentInput("");
       await Promise.all([loadComments(selected.id), loadAchievements()]);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not add comment");
     } finally {
       setSendingComment(false);
@@ -273,7 +299,7 @@ export default function AlumniAchievements() {
       setCommentInputs((current) => ({ ...current, [achievementId]: "" }));
       await Promise.all([loadComments(achievementId), loadAchievements()]);
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Could not add comment");
     } finally {
       setSubmittingComment((current) => ({ ...current, [achievementId]: false }));
@@ -369,11 +395,6 @@ export default function AlumniAchievements() {
 
         <div className="flex justify-center">
           <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-navy-dark">Approved achievements</h2>
-              <p className="text-sm text-muted-foreground">React, comment, and open any achievement to follow the discussion in real time.</p>
-            </div>
-
             <div className="space-y-4">
               {loading ? (
                 <div className="text-sm text-muted-foreground">Loading achievements...</div>

@@ -81,7 +81,7 @@ export default function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button className="relative rounded-lg p-2 text-white transition-colors hover:bg-white/15" type="button">
+        <button className="portal-header-button relative" type="button" aria-label="Open notifications">
           <Bell className="h-5 w-5 text-white" />
           {unreadCount > 0 && (
             <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
@@ -90,7 +90,7 @@ export default function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(360px,calc(100vw-1.5rem))] p-0 max-[640px]:max-h-[52dvh] max-[640px]:w-[min(17rem,62vw)]" align="end">
+      <PopoverContent className="w-[min(360px,calc(100vw-1rem))] p-0 max-[640px]:max-h-[70dvh]" align="end">
         <div className="border-b border-border px-4 py-3 max-[640px]:px-3 max-[640px]:py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -102,7 +102,7 @@ export default function NotificationBell() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1 px-2 text-xs max-[640px]:h-7 max-[640px]:px-1.5"
+              className="gap-1 px-2 text-xs"
               onClick={() => readAllMutation.mutate()}
               disabled={unreadCount === 0 || readAllMutation.isPending}
             >
@@ -112,7 +112,7 @@ export default function NotificationBell() {
           </div>
         </div>
 
-        <div className="max-h-[420px] overflow-y-auto max-[640px]:max-h-[calc(52dvh-58px)]">
+        <div className="max-h-[420px] overflow-y-auto overscroll-contain max-[640px]:max-h-[calc(70dvh-64px)]">
           {notifications.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground max-[640px]:px-3 max-[640px]:py-6 max-[640px]:text-xs">
               No notifications yet.
@@ -122,7 +122,7 @@ export default function NotificationBell() {
               <button
                 key={notification.id}
                 onClick={() => openNotification(notification)}
-                className={`w-full border-b border-border px-4 py-3 text-left transition hover:bg-muted/40 max-[640px]:px-3 max-[640px]:py-2.5 ${
+                className={`min-h-11 w-full border-b border-border px-4 py-3 text-left transition hover:bg-muted/40 max-[640px]:px-3 max-[640px]:py-2.5 ${
                   notification.isRead ? "bg-background" : "bg-rose-50/40"
                 }`}
                 type="button"

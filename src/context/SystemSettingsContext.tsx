@@ -30,6 +30,12 @@ export interface SystemSettings {
   mission: string;
   vision: string;
   history: string;
+  philosophy: string;
+  institutionalGoal: string;
+  alumniPortalDescription: string;
+  aboutCoverImagePath: string;
+  mapUrl: string;
+  officeHours: string;
   facebookLink: string;
   twitterLink: string;
   instagramLink: string;
@@ -66,6 +72,12 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   mission: "Provide a reliable alumni platform that supports communication, graduate tracking, engagement, and institutional decision-making.",
   vision: "A connected alumni community that helps the institution improve programs, services, and graduate outcomes.",
   history: "",
+  philosophy: "",
+  institutionalGoal: "",
+  alumniPortalDescription: "The Salay Community College Alumni Management System serves as a centralized digital platform for maintaining alumni records, conducting graduate tracer studies, strengthening alumni engagement, sharing institutional announcements and events, facilitating donations, and providing data-driven reports for the college administration.",
+  aboutCoverImagePath: "",
+  mapUrl: "",
+  officeHours: "",
   facebookLink: "",
   twitterLink: "",
   instagramLink: "",
@@ -121,6 +133,21 @@ const normalizeSettings = (value: Partial<SystemSettings> | null | undefined): S
     : DEFAULT_SYSTEM_SETTINGS.themeMode,
 });
 
+let systemSettingsRequest: Promise<SystemSettings> | null = null;
+
+const requestSystemSettings = () => {
+  if (!systemSettingsRequest) {
+    systemSettingsRequest = fetch(`${API_URL}/system-settings`)
+      .then((response) => readApiResponse<SystemSettings>(response))
+      .then(normalizeSettings)
+      .finally(() => {
+        systemSettingsRequest = null;
+      });
+  }
+
+  return systemSettingsRequest;
+};
+
 const setFavicon = (href: string) => {
   if (!href) return;
   const resolvedHref = resolveAssetUrl(href) || href;
@@ -174,8 +201,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refreshSettings = useCallback(async () => {
-    const response = await fetch(`${API_URL}/system-settings`);
-    const data = normalizeSettings(await readApiResponse<SystemSettings>(response));
+    const data = await requestSystemSettings();
     setSettings(data);
     applySystemSettings(data);
     return data;

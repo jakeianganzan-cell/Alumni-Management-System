@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { uploadBrandingFile } from "@/lib/adminUploads";
 
 type BrandingForm = SystemSettings;
 type BrandingCategory = "identity" | "assets" | "login" | "theme" | "homepage" | "programs";
@@ -15,7 +17,7 @@ const BRANDING_CATEGORIES: Array<{ value: BrandingCategory; label: string }> = [
   { value: "assets", label: "Logos & Icons" },
   { value: "login", label: "Login Experience" },
   { value: "theme", label: "Theme & Colors" },
-  { value: "homepage", label: "Homepage Content" },
+  { value: "homepage", label: "About Us" },
   { value: "programs", label: "Programs" },
 ];
 
@@ -45,15 +47,6 @@ function Field({
   );
 }
 
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Unable to read file."));
-    reader.onerror = () => reject(new Error("Unable to read file."));
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function SystemBrandingPanel() {
   const { settings, refreshSettings } = useSystemSettings();
   const [form, setForm] = useState<BrandingForm>(settings);
@@ -62,6 +55,7 @@ export default function SystemBrandingPanel() {
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<BrandingCategory>("identity");
   const [programDraft, setProgramDraft] = useState({ code: "", label: "" });
+  const [programToRemove, setProgramToRemove] = useState<number | null>(null);
 
   useEffect(() => {
     setForm(settings);
@@ -78,7 +72,10 @@ export default function SystemBrandingPanel() {
     setMessage("");
     setForm((current) => ({
       ...current,
-      programs: current.programs.map((program, programIndex) => programIndex === index ? { ...program, [key]: key === "code" ? normalizeProgramCode(value) : value } : program),
+      programs: current.programs.map((program, programIndex) => programIndex === index ? {
+        ...program,
+        [key]: key === "code" ? normalizeProgramCode(String(value)) : value,
+      } : program),
     }));
   };
 
@@ -97,29 +94,30 @@ export default function SystemBrandingPanel() {
     }
 
     setMessage("");
-    setForm((current) => ({ ...current, programs: [...current.programs, { code, label }] }));
+    setForm((current) => ({
+      ...current,
+      programs: [...current.programs, {
+        code,
+        label,
+        description: "",
+        department: "",
+        displayOrder: current.programs.length,
+        isActive: true,
+      }],
+    }));
     setProgramDraft({ code: "", label: "" });
   };
 
-  const removeProgram = (index: number) => {
+  const confirmRemoveProgram = () => {
+    if (programToRemove === null || form.programs.length <= 1) return;
     setMessage("");
-    setForm((current) => current.programs.length <= 1 ? current : {
+    setForm((current) => ({
       ...current,
-      programs: current.programs.filter((_, programIndex) => programIndex !== index),
-    });
+      programs: current.programs.filter((_, programIndex) => programIndex !== programToRemove),
+    }));
+    setProgramToRemove(null);
   };
-  const uploadFile = async (file: File) => {
-    const dataUrl = await readFileAsDataUrl(file);
-    const response = await fetch(`${API_URL}/admin/system-settings/upload`, {
-      method: "POST",
-      headers: getAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ fileName: file.name, dataUrl }),
-    });
-    const data = await readApiResponse<{ path: string }>(response);
-    return data.path;
-  };
-
-  const handleSingleUpload = async (key: "logoPath" | "loginLogoPath" | "faviconPath" | "loginBackgroundPath", event: ChangeEvent<HTMLInputElement>) => {
+  const handleSingleUpload = async (key: "logoPath" | "loginLogoPath" | "faviconPath" | "loginBackgroundPath" | "aboutCoverImagePath", event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
@@ -127,7 +125,7 @@ export default function SystemBrandingPanel() {
     setUploadingField(key);
     setMessage("");
     try {
-      const path = await uploadFile(file);
+      const path = await uploadBrandingFile(file);
       updateForm(key, path);
       if (key === "loginBackgroundPath") {
         setForm((current) => ({
@@ -154,7 +152,7 @@ export default function SystemBrandingPanel() {
     try {
       const uploaded = [];
       for (const file of files) {
-        uploaded.push(await uploadFile(file));
+        uploaded.push(await uploadBrandingFile(file));
       }
       setForm((current) => {
         const nextBackgrounds = [...current.loginBackgrounds, ...uploaded].filter((path, index, list) => path && list.indexOf(path) === index);
@@ -197,7 +195,7 @@ export default function SystemBrandingPanel() {
     accept = "image/*",
   }: {
     label: string;
-    field: "logoPath" | "loginLogoPath" | "faviconPath" | "loginBackgroundPath";
+    field: "logoPath" | "loginLogoPath" | "faviconPath" | "loginBackgroundPath" | "aboutCoverImagePath";
     accept?: string;
   }) => {
     const preview = resolveAssetUrl(String(form[field] || "")) || String(form[field] || "");
@@ -236,8 +234,7 @@ export default function SystemBrandingPanel() {
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Admin Settings</p>
-            <h3 className="mt-1 font-display text-2xl font-bold text-navy-dark">System Branding & Customization</h3>
+            <h3 className="font-display text-2xl font-bold text-navy-dark">System Branding & Customization</h3>
           </div>
           <Button type="button" onClick={() => void saveSettings()} disabled={saving || Boolean(uploadingField)}>
             <Save className="mr-2 h-4 w-4" />
@@ -303,7 +300,7 @@ export default function SystemBrandingPanel() {
           <h3 className="font-display text-xl font-bold text-navy-dark">Program Management</h3>
           <p className="mt-1 text-sm text-muted-foreground">Programs added here appear in alumni assignment and import selections.</p>
         </div>
-        <div className="mt-6 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto]">
+        <div className="mt-6 grid gap-3 md:grid-cols-[150px_minmax(0,1fr)_auto]">
           <Field label="Program Code">
             <Input value={programDraft.code} onChange={(event) => setProgramDraft((current) => ({ ...current, code: event.target.value }))} placeholder="BSIT" />
           </Field>
@@ -316,12 +313,12 @@ export default function SystemBrandingPanel() {
             </Button>
           </div>
         </div>
-        <div className="mt-6 space-y-3">
+        <div className="mt-6 space-y-2">
           {form.programs.map((program, index) => (
-            <div key={`${program.code}-${index}`} className="grid gap-3 rounded-2xl border border-border bg-muted/20 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto]">
+            <div key={`${program.code}-${index}`} className="grid grid-cols-[minmax(80px,120px)_minmax(0,1fr)_40px] items-center gap-2 rounded-xl border border-border bg-muted/20 p-2 sm:grid-cols-[150px_minmax(0,1fr)_40px]">
               <Input value={program.code} onChange={(event) => updateProgram(index, "code", event.target.value)} aria-label="Program code" />
               <Input value={program.label} onChange={(event) => updateProgram(index, "label", event.target.value)} aria-label="Program name" />
-              <Button type="button" variant="outline" size="icon" aria-label="Remove program" onClick={() => removeProgram(index)} disabled={form.programs.length <= 1}>
+              <Button type="button" variant="outline" size="icon" className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive" aria-label="Remove program" onClick={() => setProgramToRemove(index)} disabled={form.programs.length <= 1}>
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -449,12 +446,17 @@ export default function SystemBrandingPanel() {
       <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="flex items-center gap-3 border-b border-border pb-4">
           <Building2 className="h-5 w-5 text-navy" />
-          <h3 className="font-display text-xl font-bold text-navy-dark">Homepage Branding</h3>
+          <div>
+            <h3 className="font-display text-xl font-bold text-navy-dark">About Us Settings</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Content and contact details displayed on the alumni About Us page.</p>
+          </div>
         </div>
         <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-          <Field label="About Us Content">
+          <div className="md:col-span-2">
+          <Field label="Institution Description">
             <textarea value={form.aboutContent} onChange={(event) => updateForm("aboutContent", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
           </Field>
+          </div>
           <Field label="School History">
             <textarea value={form.history} onChange={(event) => updateForm("history", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
           </Field>
@@ -463,6 +465,18 @@ export default function SystemBrandingPanel() {
           </Field>
           <Field label="Vision">
             <textarea value={form.vision} onChange={(event) => updateForm("vision", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+          </Field>
+          <Field label="Philosophy">
+            <textarea value={form.philosophy} onChange={(event) => updateForm("philosophy", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+          </Field>
+          <Field label="Institutional Goal">
+            <textarea value={form.institutionalGoal} onChange={(event) => updateForm("institutionalGoal", event.target.value)} className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none focus:ring-2 focus:ring-ring" />
+          </Field>
+          <Field label="Map / Location URL">
+            <Input value={form.mapUrl} onChange={(event) => updateForm("mapUrl", event.target.value)} />
+          </Field>
+          <Field label="Office Hours">
+            <Input value={form.officeHours} onChange={(event) => updateForm("officeHours", event.target.value)} />
           </Field>
           <Field label="Facebook Link">
             <Input value={form.facebookLink} onChange={(event) => updateForm("facebookLink", event.target.value)} />
@@ -476,6 +490,23 @@ export default function SystemBrandingPanel() {
         </div>
       </div>
       )}
+
+      <Dialog open={programToRemove !== null} onOpenChange={(open) => !open && setProgramToRemove(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove program?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove {programToRemove !== null
+                ? form.programs[programToRemove]?.label || form.programs[programToRemove]?.code || "this program"
+                : "this program"}?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setProgramToRemove(null)}>Cancel</Button>
+            <Button type="button" variant="destructive" onClick={confirmRemoveProgram}>Remove</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {message && (
         <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">

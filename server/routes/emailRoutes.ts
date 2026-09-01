@@ -1,5 +1,6 @@
 import express from "express";
 import { sendTransactionalEmail } from "../services/emailService";
+import { logger } from "../utils/logger";
 
 const router = express.Router();
 
@@ -35,7 +36,7 @@ router.post("/send-reminder", async (req, res) => {
       message: "Reminder sent successfully",
     });
   } catch (error) {
-    console.error("Brevo email error:", error);
+    logger.error("Brevo email error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to send reminder",

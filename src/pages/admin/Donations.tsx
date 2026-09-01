@@ -1,6 +1,6 @@
+import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useRef, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { AlumniFeeRecordsTab } from "@/components/admin/AlumniFeeRecordsTab";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   Loader2,
   LockKeyhole,
   Pencil,
+  Plus,
   QrCode,
   Search,
   Settings,
@@ -34,7 +35,7 @@ type DonationStatus = "Pending Review" | "Approved" | "Rejected";
 
 interface Donation {
   id: string;
-  user_id: string;
+  user_id: string | null;
   method: string;
   amount: number;
   created_at: string | null;
@@ -43,6 +44,7 @@ interface Donation {
   ref_number: string | null;
   receipt_url: string | null;
   message: string | null;
+  is_anonymous?: boolean;
   reviewed_at?: string | null;
   reviewed_by?: string | null;
   review_notes?: string | null;
@@ -91,6 +93,18 @@ const EMPTY_SUMMARY: DonationSummary = {
   totalDonations: 0,
 };
 
+const EMPTY_WALK_IN_FORM = {
+  donorName: "",
+  donorEmail: "",
+  donorStudentId: "",
+  donorBatch: "",
+  donorCourse: "",
+  amount: "",
+  purpose: "",
+  message: "",
+  isAnonymous: false,
+};
+
 const statusTone: Record<DonationStatus, string> = {
   Approved: "bg-emerald-100 text-emerald-700",
   "Pending Review": "bg-amber-100 text-amber-700",
@@ -106,7 +120,6 @@ const DONATION_PAGE_SIZE = 10;
 
 export default function AdminDonations() {
   const { profile, user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"review" | "fees">("review");
   const [search, setSearch] = useState("");
   const [donations, setDonations] = useState<Donation[]>([]);
   const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
@@ -114,6 +127,9 @@ export default function AdminDonations() {
   const [filter, setFilter] = useState<"All" | DonationStatus>("All");
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showWalkInForm, setShowWalkInForm] = useState(false);
+  const [walkInForm, setWalkInForm] = useState(EMPTY_WALK_IN_FORM);
+  const [submittingWalkIn, setSubmittingWalkIn] = useState(false);
   const [actionNote, setActionNote] = useState("");
   const [submittingAction, setSubmittingAction] = useState<"" | "approve" | "reject" | "request-info">("");
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
@@ -141,7 +157,7 @@ export default function AdminDonations() {
       const data = await readApiResponse<Donation[]>(res);
       setDonations(data.map((donation) => ({ ...donation, amount: Number(donation.amount || 0) })));
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load donations");
     } finally {
       setLoading(false);
@@ -163,7 +179,7 @@ export default function AdminDonations() {
         totalDonations: Number(data.totalDonations || 0),
       });
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load donation totals");
     }
   };
@@ -183,7 +199,7 @@ export default function AdminDonations() {
         personal_office: data.personal_office ?? "",
       });
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to load donation settings");
     }
   };
@@ -199,7 +215,7 @@ export default function AdminDonations() {
       setSelectedDonation(detail);
       setActionNote(detail.review_notes || "");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to open donation details");
     } finally {
       setLoadingDetail(false);
@@ -217,7 +233,7 @@ export default function AdminDonations() {
       await readApiResponse(response);
       toast.success("Donation payment settings saved");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error("Failed to save payment settings");
     } finally {
       setSavingSettings(false);
@@ -294,7 +310,7 @@ export default function AdminDonations() {
       await fetchDonationSummary();
       toast.success(status === "Approved" ? "Donation approved" : "Donation rejected");
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to update donation status");
     } finally {
       setSubmittingAction("");
@@ -325,10 +341,37 @@ export default function AdminDonations() {
       );
       await fetchDonationSummary();
     } catch (error) {
-      console.error(error);
+      clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to request more info");
     } finally {
       setSubmittingAction("");
+    }
+  };
+
+  const submitWalkInDonation = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setSubmittingWalkIn(true);
+      const response = await fetch(`${API_URL}/admin/donations/walk-in`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...walkInForm,
+          amount: Number(walkInForm.amount),
+        }),
+      });
+      await readApiResponse(response);
+      setWalkInForm(EMPTY_WALK_IN_FORM);
+      setShowWalkInForm(false);
+      setFilter("Approved");
+      await Promise.all([fetchDonations(), fetchDonationSummary()]);
+      toast.success("Walk-in donation recorded and approved");
+    } catch (error) {
+      clientLogger.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to record walk-in donation");
+    } finally {
+      setSubmittingWalkIn(false);
     }
   };
 
@@ -403,10 +446,6 @@ export default function AdminDonations() {
   return (
     <AdminLayout title="Donation Monitoring">
       <div className="space-y-4">
-        <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
-          {[ ["review", "Donation Review"], ["fees", "Alumni Fee Records"] ].map(([key, label]) => <button key={key} type="button" onClick={() => setActiveTab(key as "review" | "fees")} className={`rounded-lg px-3 py-2 text-sm font-medium transition ${activeTab === key ? "bg-navy text-white shadow-sm" : "text-muted-foreground hover:bg-white hover:text-navy"}`}>{label}</button>)}
-        </div>
-        {activeTab === "review" && <>
         <div className="grid gap-3 lg:grid-cols-4">
           <SummaryCard label="Total Approved" value={`PHP ${totalApproved.toLocaleString()}`} toneClassName="bg-navy text-white" icon={<Heart className="h-4 w-4" />} />
           <SummaryCard label="Pending Review" value={String(pendingCount)} toneClassName="bg-white text-navy-dark" icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
@@ -440,10 +479,22 @@ export default function AdminDonations() {
                       )}
                     >
                       {status}
+                      {status === "Pending Review" && pendingCount > 0 && (
+                        <span
+                          className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                          aria-label={`${pendingCount} donations pending review`}
+                        >
+                          {pendingCount}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
 
+                <Button type="button" onClick={() => setShowWalkInForm(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Record Walk-in
+                </Button>
                 <Button type="button" variant="outline" onClick={() => void openSettingsAccess()}>
                   <Settings className="mr-2 h-4 w-4" />
                   Payment Settings
@@ -457,7 +508,7 @@ export default function AdminDonations() {
           </CardHeader>
 
           <CardContent className="p-0">
-            <div className="overflow-hidden">
+            <div className="overflow-x-auto" tabIndex={0} aria-label="Donation records table">
               <table className="w-full table-fixed text-[13px]">
                 <colgroup>
                   <col className="w-[20%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[11%]" />
@@ -527,12 +578,10 @@ export default function AdminDonations() {
             />
           </CardContent>
         </Card>
-        </>}
-        {activeTab === "fees" && <AlumniFeeRecordsTab />}
       </div>
 
       <Dialog open={Boolean(selectedDonation)} onOpenChange={(open) => !submittingAction && !loadingDetail && !open && setSelectedDonation(null)}>
-        <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto border-slate-200 bg-white p-4 shadow-2xl sm:p-4">
           {loadingDetail ? (
             <div className="flex items-center justify-center py-16 text-muted-foreground">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -540,20 +589,21 @@ export default function AdminDonations() {
             </div>
           ) : selectedDonation ? (
             <>
-              <DialogHeader>
+              <DialogHeader className="gap-1.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className={statusTone[selectedDonation.status]}>{selectedDonation.status}</Badge>
                   <Badge variant="outline" className="border-slate-200 bg-white">
                     {selectedDonation.method}
                   </Badge>
                 </div>
-                <DialogTitle className="pr-8 text-xl text-navy-dark sm:text-2xl">{selectedDonation.profile.name}</DialogTitle>
-                <DialogDescription>Review all donor details here before confirming approval or rejection.</DialogDescription>
+                <DialogTitle className="pr-8 text-base text-navy-dark">{selectedDonation.profile.name}</DialogTitle>
+                <DialogDescription className="text-xs">Review donor details before approval or rejection.</DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   <DetailCard label="Donor Name" value={selectedDonation.profile.name} />
+                  <DetailCard label="Donor Visibility" value={selectedDonation.is_anonymous ? "Anonymous publicly" : "Named donor"} />
                   <DetailCard label="Amount" value={`PHP ${selectedDonation.amount.toLocaleString()}`} />
                   <DetailCard label="Payment Method" value={selectedDonation.method} />
                   <DetailCard label="Date Submitted" value={selectedDonation.created_at ? new Date(selectedDonation.created_at).toLocaleString() : "Not set"} />
@@ -564,38 +614,38 @@ export default function AdminDonations() {
                   <DetailCard label="Email" value={selectedDonation.profile.email || "Not provided"} />
                 </div>
 
-                <section className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">Proof of Payment</h3>
-                  <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Proof of Payment</h3>
+                  <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
                     {selectedDonation.receipt_url ? (
-                      <img src={resolveAssetUrl(selectedDonation.receipt_url) || selectedDonation.receipt_url} alt="Proof of payment" className="max-h-[420px] w-full object-contain" />
+                      <img src={resolveAssetUrl(selectedDonation.receipt_url) || selectedDonation.receipt_url} alt="Proof of payment" className="max-h-60 w-full object-contain" />
                     ) : (
-                      <div className="px-6 py-16 text-center text-sm text-muted-foreground">No proof of payment uploaded.</div>
+                      <div className="px-4 py-8 text-center text-xs text-muted-foreground">No proof of payment uploaded.</div>
                     )}
                   </div>
                 </section>
 
-                <section className="rounded-3xl border border-slate-200 bg-white p-5">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">Notes / Message</h3>
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground">{selectedDonation.message || "No donor message provided."}</p>
+                <section className="rounded-xl border border-slate-200 bg-white p-3">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Notes / Message</h3>
+                  <p className="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-foreground">{selectedDonation.message || "No donor message provided."}</p>
                 </section>
 
-                <section className="rounded-3xl border border-slate-200 bg-white p-5">
-                  <Label htmlFor="review-note" className="text-sm font-semibold text-navy-dark">
+                <section className="rounded-xl border border-slate-200 bg-white p-3">
+                  <Label htmlFor="review-note" className="text-xs font-semibold text-navy-dark">
                     Admin review notes
                   </Label>
                   <Textarea
                     id="review-note"
-                    rows={4}
+                    rows={2}
                     value={actionNote}
                     onChange={(event) => setActionNote(event.target.value)}
-                    className="mt-3 border-slate-300 bg-white"
+                    className="mt-2 min-h-16 border-slate-300 bg-white text-xs"
                     placeholder="Add rejection notes, request details, or internal review remarks."
                   />
-                  <p className="mt-2 text-xs text-muted-foreground">Use this when rejecting a donation or when you need more information from the donor.</p>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">Use this for rejection notes or information requests.</p>
                 </section>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&_button]:h-9 [&_button]:text-xs">
                   <Button type="button" variant="outline" onClick={() => setSelectedDonation(null)} disabled={Boolean(submittingAction)}>
                     Close
                   </Button>
@@ -642,6 +692,62 @@ export default function AdminDonations() {
               </div>
             </>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showWalkInForm} onOpenChange={(open) => !submittingWalkIn && setShowWalkInForm(open)}>
+        <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto border-slate-200 bg-white p-4 shadow-2xl sm:p-5">
+          <DialogHeader className="gap-1">
+            <DialogTitle className="pr-8 text-lg text-navy-dark">Record Personal / Walk-in Donation</DialogTitle>
+            <DialogDescription className="text-xs">
+              Enter the donor information. This record is approved immediately and does not require a receipt image.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={submitWalkInDonation} className="mt-2 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Donor Name *">
+                <Input required maxLength={255} value={walkInForm.donorName} onChange={(event) => setWalkInForm((current) => ({ ...current, donorName: event.target.value }))} placeholder="Full name" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <Field label="Email">
+                <Input type="email" maxLength={255} value={walkInForm.donorEmail} onChange={(event) => setWalkInForm((current) => ({ ...current, donorEmail: event.target.value }))} placeholder="Optional email" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <Field label="Alumni / Student ID">
+                <Input maxLength={100} value={walkInForm.donorStudentId} onChange={(event) => setWalkInForm((current) => ({ ...current, donorStudentId: event.target.value }))} placeholder="e.g. 2026-0001" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <Field label="Batch">
+                <Input maxLength={100} value={walkInForm.donorBatch} onChange={(event) => setWalkInForm((current) => ({ ...current, donorBatch: event.target.value }))} placeholder="e.g. 2026" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <Field label="Course">
+                <Input maxLength={255} value={walkInForm.donorCourse} onChange={(event) => setWalkInForm((current) => ({ ...current, donorCourse: event.target.value }))} placeholder="Optional course" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <Field label="Donation Amount (PHP) *">
+                <Input required type="number" inputMode="decimal" min="1" step="0.01" value={walkInForm.amount} onChange={(event) => setWalkInForm((current) => ({ ...current, amount: event.target.value }))} placeholder="Enter exact amount" className="h-9 border-slate-300 bg-white text-sm" />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Specific Purpose *">
+                  <Input required maxLength={255} value={walkInForm.purpose} onChange={(event) => setWalkInForm((current) => ({ ...current, purpose: event.target.value }))} placeholder="What the donation is for" className="h-9 border-slate-300 bg-white text-sm" />
+                </Field>
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Notes">
+                  <Textarea rows={2} value={walkInForm.message} onChange={(event) => setWalkInForm((current) => ({ ...current, message: event.target.value }))} placeholder="Optional walk-in notes" className="min-h-16 border-slate-300 bg-white text-sm" />
+                </Field>
+              </div>
+            </div>
+
+            <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-navy-dark">
+              <input type="checkbox" checked={walkInForm.isAnonymous} onChange={(event) => setWalkInForm((current) => ({ ...current, isAnonymous: event.target.checked }))} className="h-3.5 w-3.5 accent-navy" />
+              Donate anonymously
+            </label>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setShowWalkInForm(false)} disabled={submittingWalkIn}>Cancel</Button>
+              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={submittingWalkIn}>
+                {submittingWalkIn ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Save as Approved</>}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -860,9 +966,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function DetailCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-2 text-sm text-foreground">{value}</p>
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+      <p className="mt-0.5 truncate text-xs text-foreground" title={value}>{value}</p>
     </div>
   );
 }

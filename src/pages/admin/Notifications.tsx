@@ -53,6 +53,16 @@ interface EmailLog {
   created_at: string;
 }
 
+type EmailLogsResponse = EmailLog[] | {
+  rows?: EmailLog[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
 interface MailingFilterOptions {
   courses: string[];
   batches: string[];
@@ -182,8 +192,8 @@ export default function AdminNotifications() {
     setLoadingLogs(true);
     try {
       const res = await fetchApi(`${API_URL}/admin/mailing/logs`, { headers: getAuthHeaders() });
-      const data = await readApiResponse<EmailLog[]>(res);
-      setLogs(data ?? []);
+      const data = await readApiResponse<EmailLogsResponse>(res);
+      setLogs(Array.isArray(data) ? data : data?.rows ?? []);
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Unable to load email logs.");
     } finally {

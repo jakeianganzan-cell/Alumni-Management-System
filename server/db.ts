@@ -4,41 +4,42 @@ import { fileURLToPath } from 'url';
 import mysql from 'mysql2/promise';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type { Event, RSVP, Comment, Metrics, EngagementOverview } from './types/db';
+import { config } from './config';
+import { logger } from './utils/logger';
 
 type DbParam = string | number | boolean | Date | Buffer | null;
 
-interface MaxAllowedPacketRow extends RowDataPacket {
-  maxAllowedPacket: number | string;
-}
-
-const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
-const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
-const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || 'root';
-const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
-const DB_NAME = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'ustp_alumni';
-const DEFAULT_MAX_ALLOWED_PACKET = 64 * 1024 * 1024;
+const DB_HOST = config.dbHost;
+const DB_PORT = config.dbPort;
+const DB_USER = config.dbUser;
+const DB_PASSWORD = config.dbPassword;
+const DB_NAME = config.dbName;
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 
 const parseBooleanEnv = (value: string | undefined) =>
   ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
 
-const DB_SSL_CA = process.env.DB_SSL_CA || process.env.MYSQL_SSL_CA;
-const DB_SSL_CA_FILE = process.env.DB_SSL_CA_FILE || process.env.MYSQL_SSL_CA_FILE;
+const DB_SSL_CA = config.dbSslCa;
+const DB_SSL_CA_FILE = config.dbSslCaFile;
 const DB_SSL_ENABLED =
-  parseBooleanEnv(process.env.DB_SSL || process.env.MYSQL_SSL || process.env.MYSQL_SSL_REQUIRED) ||
+  parseBooleanEnv(config.dbSsl) ||
   Boolean(DB_SSL_CA || DB_SSL_CA_FILE);
 const DB_SSL_REJECT_UNAUTHORIZED = process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false";
 
-const getErrorMessage = (error: unknown) => {
-  return error instanceof Error ? error.message : "Unknown error";
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as Record<string, unknown>).message);
+  }
+  return "Unknown error";
 };
 
-const getErrorCode = (error: unknown) => {
+const getErrorCode = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "code" in error) {
-    return String(error.code || "");
+    const code = (error as Record<string, unknown>).code;
+    return typeof code === 'string' ? code : String(code || "");
   }
-
   return "";
 };
 
@@ -88,8 +89,6 @@ const withDatabaseRetry = async <T>(operation: () => Promise<T>, retries = 2): P
   throw lastError;
 };
 
-const getDatabaseTarget = () => `${DB_HOST}:${DB_PORT}/${DB_NAME}`;
-
 const readSslCa = () => {
   const caValue = DB_SSL_CA?.trim();
 
@@ -124,48 +123,12 @@ const getSslConfig = () => {
   };
 };
 
-const parsePacketLimit = (value: string | undefined) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_ALLOWED_PACKET;
+const POOL_CONFIG = {
+  maxIdle: Number(process.env.DB_POOL_MAX_IDLE || 15),
+  idleTimeout: Number(process.env.DB_POOL_IDLE_TIMEOUT || 30000),
+  connectionLimit: Number(process.env.DB_POOL_CONNECTION_LIMIT || 25),
+  queueLimit: Number(process.env.DB_POOL_QUEUE_LIMIT || 250),
 };
-
-const MYSQL_MAX_ALLOWED_PACKET = parsePacketLimit(
-  process.env.MYSQL_MAX_ALLOWED_PACKET || process.env.DB_MAX_ALLOWED_PACKET,
-);
-
-const ensureMysqlPacketLimit = async () => {
-  let connection: Awaited<ReturnType<typeof mysql.createConnection>> | null = null;
-
-  try {
-    connection = await mysql.createConnection({
-      host: DB_HOST,
-      port: DB_PORT,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      ssl: getSslConfig(),
-    });
-
-    const [rows] = await connection.query<MaxAllowedPacketRow[]>(
-      'SELECT @@global.max_allowed_packet AS maxAllowedPacket',
-    );
-    const currentLimit = Number(rows[0]?.maxAllowedPacket || 0);
-
-    if (currentLimit < MYSQL_MAX_ALLOWED_PACKET) {
-      await connection.query(`SET GLOBAL max_allowed_packet = ${MYSQL_MAX_ALLOWED_PACKET}`);
-      console.log(`MySQL max_allowed_packet increased to ${MYSQL_MAX_ALLOWED_PACKET} bytes`);
-    }
-  } catch (error) {
-    console.warn('Unable to verify or increase MySQL max_allowed_packet:', {
-      target: `${DB_HOST}:${DB_PORT}`,
-      code: getErrorCode(error) || undefined,
-      message: getErrorMessage(error),
-    });
-  } finally {
-    await connection?.end();
-  }
-};
-
-await ensureMysqlPacketLimit();
 
 const pool = mysql.createPool({
   host: DB_HOST,
@@ -175,25 +138,32 @@ const pool = mysql.createPool({
   database: DB_NAME,
   ssl: getSslConfig(),
   waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
+  connectionLimit: POOL_CONFIG.connectionLimit,
+  maxIdle: POOL_CONFIG.maxIdle,
+  idleTimeout: POOL_CONFIG.idleTimeout,
+  queueLimit: POOL_CONFIG.queueLimit,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 10000,
 });
 
-(async () => {
-  try {
-    const conn = await pool.getConnection();
-    console.log('Connected to MySQL database!');
-    conn.release();
-  } catch (error) {
-    console.error('Database connection failed:', {
-      target: getDatabaseTarget(),
-      code: getErrorCode(error) || undefined,
-      message: getErrorMessage(error),
-    });
+// Warn on sustained pool saturation without logging every normal query.
+let activeConnections = 0;
+let lastSaturationWarningAt = 0;
+const SATURATION_WARN_THRESHOLD = Math.max(1, Math.ceil(POOL_CONFIG.connectionLimit * 0.8));
+const SATURATION_WARNING_INTERVAL_MS = 5000;
+
+pool.on('acquire', () => {
+  activeConnections += 1;
+  const now = Date.now();
+  if (activeConnections >= SATURATION_WARN_THRESHOLD && now - lastSaturationWarningAt >= SATURATION_WARNING_INTERVAL_MS) {
+    lastSaturationWarningAt = now;
+    logger.warn(`[Database] High pool usage: ${activeConnections}/${POOL_CONFIG.connectionLimit}`);
   }
-})();
+});
+
+pool.on('release', () => {
+  activeConnections = Math.max(0, activeConnections - 1);
+});
 
 interface EventRow extends RowDataPacket {
   id: number;
@@ -272,6 +242,10 @@ const mapComment = (row: CommentRow): Comment => ({
 });
 
 export const db = {
+  async end() {
+    await pool.end();
+  },
+
   async getConnection() {
     return await withDatabaseRetry(() => pool.getConnection());
   },
@@ -376,20 +350,11 @@ export const db = {
   },
 
   async getEventMetrics(eventId: number): Promise<Metrics> {
-    const [rsvpRows] = await pool.query<CountRow[]>(
-      'SELECT COUNT(*) as rsvps FROM event_registrations WHERE event_id = ?',
-      [eventId]
-    );
-
-    const [commentRows] = await pool.query<CountRow[]>(
-      'SELECT COUNT(*) as comments FROM event_comments WHERE event_id = ?',
-      [eventId]
-    );
-
-    const [viewRows] = await pool.query<CountRow[]>(
-      'SELECT views FROM announcements WHERE id = ?',
-      [eventId]
-    );
+    const [[rsvpRows], [commentRows], [viewRows]] = await Promise.all([
+      pool.query<CountRow[]>('SELECT COUNT(*) as rsvps FROM event_registrations WHERE event_id = ?', [eventId]),
+      pool.query<CountRow[]>('SELECT COUNT(*) as comments FROM event_comments WHERE event_id = ?', [eventId]),
+      pool.query<CountRow[]>('SELECT views FROM announcements WHERE id = ?', [eventId]),
+    ]);
 
     const rsvps = rsvpRows[0]?.rsvps ?? 0;
     const comments = commentRows[0]?.comments ?? 0;
@@ -423,31 +388,36 @@ export const db = {
   },
 
   async getEngagementOverview(): Promise<EngagementOverview[]> {
-    const [events] = await pool.query<EventRow[]>(
-      'SELECT * FROM announcements ORDER BY created_at DESC LIMIT 5'
+    // N+1 fix: Batch all COUNT queries into a single query
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT
+        a.id,
+        a.title,
+        a.success_score,
+        COALESCE(er.rsvp_count, 0) AS attendance,
+        COALESCE(ec.comment_count, 0) AS comments
+      FROM announcements a
+      LEFT JOIN (
+        SELECT event_id, COUNT(*) AS rsvp_count
+        FROM event_registrations
+        GROUP BY event_id
+      ) er ON er.event_id = a.id
+      LEFT JOIN (
+        SELECT event_id, COUNT(*) AS comment_count
+        FROM event_comments
+        GROUP BY event_id
+      ) ec ON ec.event_id = a.id
+      ORDER BY a.created_at DESC
+      LIMIT 5`
     );
 
-    const overview = await Promise.all(events.map(async (event) => {
-      const [rsvpRows] = await pool.query<CountRow[]>(
-        'SELECT COUNT(*) as rsvps FROM event_registrations WHERE event_id = ?',
-        [event.id]
-      );
-
-      const [commentRows] = await pool.query<CountRow[]>(
-        'SELECT COUNT(*) as comments FROM event_comments WHERE event_id = ?',
-        [event.id]
-      );
-
-      return {
-        title: event.title,
-        success_score: event.success_score,
-        attendance: rsvpRows[0]?.rsvps ?? 0,
-        comments: commentRows[0]?.comments ?? 0,
-        avg_feedback: 4.5
-      };
+    return rows.map((row) => ({
+      title: String(row.title || ''),
+      success_score: Number(row.success_score || 0),
+      attendance: Number(row.attendance || 0),
+      comments: Number(row.comments || 0),
+      avg_feedback: 4.5,
     }));
-
-    return overview;
   }
 };
 
