@@ -1217,14 +1217,117 @@
     }
 
     .mobile-compact-category-filter {
+      display: grid !important;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
       gap: 0.25rem !important;
       margin-bottom: 0.5rem !important;
     }
 
     .mobile-compact-category-filter > button {
-      padding: 0.25rem 0.5rem !important;
+      grid-column: span 3;
+      min-width: 0;
+      height: 1.75rem;
+      padding: 0.25rem !important;
+      border-radius: 0.5rem !important;
       font-size: 0.5625rem !important;
       line-height: 0.875rem !important;
+    }
+
+    .mobile-compact-category-filter > button:nth-last-child(-n+3) {
+      grid-column: span 4;
+    }
+
+    .mobile-compact-alumni-features {
+      padding: 0.5rem !important;
+    }
+
+    .mobile-compact-alumni-features > :first-child {
+      font-size: 0.4375rem !important;
+      line-height: 0.75rem !important;
+    }
+
+    .mobile-compact-alumni-features > :last-child {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.375rem !important;
+      margin-top: 0.375rem !important;
+    }
+
+    .mobile-compact-alumni-features article {
+      min-height: 5.5rem;
+      padding: 0.5rem !important;
+    }
+
+    .mobile-compact-alumni-features article svg {
+      height: 0.75rem;
+      width: 0.75rem;
+    }
+
+    .mobile-compact-alumni-features article h3 {
+      margin-top: 0.375rem !important;
+      font-size: 0.5625rem !important;
+      line-height: 0.875rem !important;
+    }
+
+    .mobile-compact-alumni-features article p {
+      margin-top: 0.25rem !important;
+      font-size: 0.5rem !important;
+      line-height: 0.75rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) {
+      gap: 0.75rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) > div > section {
+      padding: 0.625rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article {
+      padding: 0.625rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall)
+      :where([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"]) {
+      font-size: 0.625rem !important;
+      line-height: 1rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) :where(h3) {
+      font-size: 0.6875rem !important;
+      line-height: 1rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article > div {
+      gap: 0.5rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article :where([class~="h-11"][class~="w-11"]) {
+      height: 2rem !important;
+      width: 2rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article :where([class~="h-9"][class~="w-9"]) {
+      height: 1.75rem !important;
+      width: 1.75rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article :where([class~="h-40"][class~="w-40"]) {
+      height: 7rem !important;
+      width: 7rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article button.rounded-full {
+      padding: 0.375rem 0.625rem !important;
+      font-size: 0.625rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article :where([class*="mt-3"], [class*="mt-4"]) {
+      margin-top: 0.5rem !important;
+    }
+
+    :is(.mobile-compact-achievements, .mobile-compact-freedom-wall) article :where(input, textarea) {
+      min-height: 2rem !important;
+      font-size: 0.625rem !important;
     }
 
     .mobile-compact-donation-activity {
@@ -1249,6 +1352,10 @@
       max-height: calc(100dvh - 1rem) !important;
       gap: 0.625rem !important;
       padding: 0.75rem !important;
+    }
+
+    .mobile-compact-content-dialog.mobile-compact-achievement-dialog {
+      width: 100% !important;
     }
 
     .mobile-compact-content-dialog :where([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"], [class*="text-xl"], [class*="text-2xl"]) {

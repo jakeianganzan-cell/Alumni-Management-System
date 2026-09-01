@@ -312,7 +312,7 @@ export default function AlumniAchievements() {
 
   return (
     <AlumniLayout title="Achievements" subtitle="Celebrate alumni milestones with real reactions and live discussion">
-      <div className="space-y-6">
+      <div className="mobile-compact-achievements space-y-6">
         {showForm && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -323,7 +323,7 @@ export default function AlumniAchievements() {
             }}
           >
           <section
-            className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl"
+            className="mobile-compact-content-dialog mobile-compact-achievement-dialog max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4">
@@ -557,7 +557,7 @@ export default function AlumniAchievements() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}>
-          <div className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-4 shadow-2xl sm:p-5" onClick={(event) => event.stopPropagation()}>
+          <div className="mobile-compact-content-dialog mobile-compact-achievement-dialog max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-4 shadow-2xl sm:p-5" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
                 <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy text-sm font-semibold text-white">

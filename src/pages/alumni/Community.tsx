@@ -251,7 +251,7 @@ export default function Community() {
 
   return (
     <AlumniLayout title="Freedom Wall" subtitle="Share updates and interact with alumni posts in real time">
-      <div className="space-y-6">
+      <div className="mobile-compact-freedom-wall space-y-6">
         <div className="flex justify-center">
           <section className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mobile-compact-category-filter mb-4 flex flex-wrap gap-2">

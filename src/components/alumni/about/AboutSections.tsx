@@ -357,7 +357,7 @@ export function InstitutionServices({ entries }: { entries: AboutContentItem[] }
 }
 
 export function AlumniFeatures() {
-  return <section className="rounded-xl border border-border/60 bg-card p-3 md:rounded-2xl md:p-4"><p className="text-[8px] font-semibold uppercase tracking-[0.18em] text-primary md:text-[9px]">SaCC Alumni Management System</p><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{SOFTWARE_FEATURES.map((feature) => <article key={feature.title} className="rounded-lg border border-border/60 bg-muted/15 p-3 md:rounded-xl"><feature.icon className="h-3.5 w-3.5 text-primary" /><h3 className="mt-2 text-xs font-semibold text-foreground">{feature.title}</h3><p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">{feature.description}</p></article>)}</div></section>;
+  return <section className="mobile-compact-alumni-features rounded-xl border border-border/60 bg-card p-3 md:rounded-2xl md:p-4"><p className="text-[8px] font-semibold uppercase tracking-[0.18em] text-primary md:text-[9px]">SaCC Alumni Management System</p><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{SOFTWARE_FEATURES.map((feature) => <article key={feature.title} className="rounded-lg border border-border/60 bg-muted/15 p-3 md:rounded-xl"><feature.icon className="h-3.5 w-3.5 text-primary" /><h3 className="mt-2 text-xs font-semibold text-foreground">{feature.title}</h3><p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">{feature.description}</p></article>)}</div></section>;
 }
 
 export function AlumniPortalAbout({ description }: { description: string }) {
