@@ -1,4 +1,7 @@
 import "./env";
+import { assertDatabaseEnvironment } from "./environment-policy.mjs";
+
+const appEnvironment = assertDatabaseEnvironment();
 
 export const config = {
   // JWT
@@ -7,8 +10,8 @@ export const config = {
   refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
 
   // Admin credentials (must be set in .env)
-  adminEmail: getRequiredEnv("ADMIN_EMAIL", "Admin email must be configured in .env"),
-  adminPassword: getRequiredEnv("ADMIN_PASSWORD", "Admin password must be configured in .env"),
+  adminEmail: getAdminEmailEnv(),
+  adminPassword: getRequiredPasswordEnv("ADMIN_PASSWORD", "Admin password must be configured in .env"),
   adminName: process.env.ADMIN_NAME || "System Administrator",
 
   // Database
@@ -35,6 +38,7 @@ export const config = {
   // Application
   port: Number(process.env.PORT || 3001),
   nodeEnv: process.env.NODE_ENV || "development",
+  appEnvironment,
   appBaseUrl: process.env.APP_BASE_URL || "",
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
 
@@ -45,6 +49,7 @@ export const config = {
   // Security
   corsAllowAll: process.env.CORS_ALLOW_ALL === "true",
   allowedOrigins: parseCsvEnv(process.env.ALLOWED_ORIGINS),
+  trustProxyHops: getNonNegativeIntegerEnv("TRUST_PROXY_HOPS", 0),
 
   // Feature flags
   queueProcessingEnabled: process.env.QUEUE_PROCESSING_ENABLED !== "false",
@@ -71,6 +76,27 @@ function parseCsvEnv(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function getAdminEmailEnv(): string {
+  const email = getRequiredEnv("ADMIN_EMAIL", "Admin email must be configured in .env").toLowerCase();
+  if (email === "admin.president@saccalumni.local") {
+    throw new Error("ADMIN_EMAIL must use a neutral System Administrator account. The President login has been retired.");
+  }
+  return email;
+}
+
+function getRequiredPasswordEnv(name: string, message: string): string {
+  const value = getRequiredEnv(name, message);
+  if (value.length < 12 || Buffer.byteLength(value, "utf8") > 72) {
+    throw new Error(`${name} must be at least 12 characters and no more than 72 UTF-8 bytes.`);
+  }
+  return value;
+}
+
+function getNonNegativeIntegerEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
 

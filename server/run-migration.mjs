@@ -4,12 +4,15 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { assertDatabaseEnvironment } from "./environment-policy.mjs";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 
-dotenv.config({ path: path.resolve(currentDirPath, "../.env") });
-dotenv.config({ path: path.resolve(currentDirPath, ".env"), override: true });
+if (process.env.SKIP_DOTENV !== "true") {
+  dotenv.config({ path: path.resolve(currentDirPath, ".env"), quiet: true });
+}
+assertDatabaseEnvironment();
 
 const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
 const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
@@ -77,6 +80,11 @@ const isIgnorableIdempotencyError = (error) => {
   );
 };
 
+const isIgnorableLegacyEventsError = (error, file, statement) =>
+  file === "003_add_announcement_columns.sql" &&
+  getErrorCode(error) === "ER_NO_SUCH_TABLE" &&
+  /^ALTER TABLE events\s+/i.test(statement.trim());
+
 const pool = mysql.createPool({
   host: DB_HOST,
   port: DB_PORT,
@@ -140,9 +148,13 @@ const runMigration = async () => {
       try {
         await pool.query(statement);
       } catch (error) {
-        if (!isIgnorableIdempotencyError(error)) {
+        if (!isIgnorableIdempotencyError(error) && !isIgnorableLegacyEventsError(error, file, statement)) {
           console.error(`Migration failed in ${file}.`);
           throw error;
+        }
+
+        if (isIgnorableLegacyEventsError(error, file, statement)) {
+          console.warn(`Skipping legacy events-table statement in ${file}; the canonical event table is announcements.`);
         }
       }
     }

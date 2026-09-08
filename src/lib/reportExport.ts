@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import schoolLogo from "@/assets/salay.png";
 import { DEFAULT_SYSTEM_SETTINGS, SYSTEM_SETTINGS_CACHE_KEY, type SystemSettings } from "@/context/SystemSettingsContext";
 import { resolveAssetUrl } from "@/lib/api";
@@ -61,6 +60,7 @@ const getLogoDataUrl = async () => {
 const sanitizeSheetName = (value: string) => value.replace(/[\\/*?:[\]]/g, " ").slice(0, 31) || "Report";
 
 export const downloadBrandedExcel = async <T extends Record<string, string | number | null | undefined>>(options: ReportExportOptions<T>) => {
+  const { default: ExcelJS } = await import("exceljs");
   const branding = getCachedBranding();
   const schoolName = branding.institutionName || branding.systemName;
   const primaryColor = branding.primaryColor.replace("#", "").toUpperCase() || "550000";

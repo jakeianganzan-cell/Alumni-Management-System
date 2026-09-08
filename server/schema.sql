@@ -44,6 +44,13 @@ DROP TABLE IF EXISTS event_rsvps;
 DROP TABLE IF EXISTS event_registrations;
 DROP TABLE IF EXISTS announcement_comment_replies;
 DROP TABLE IF EXISTS announcement_comments;
+DROP TABLE IF EXISTS accomplishment_report_documents;
+DROP TABLE IF EXISTS accomplishment_report_contributions;
+DROP TABLE IF EXISTS accomplishment_reports;
+DROP TABLE IF EXISTS moa_documents;
+DROP TABLE IF EXISTS moa_records;
+DROP TABLE IF EXISTS organizational_target_progress;
+DROP TABLE IF EXISTS organizational_targets;
 DROP TABLE IF EXISTS alumni_project_files;
 DROP TABLE IF EXISTS alumni_projects;
 DROP TABLE IF EXISTS alumni_fee_records;
@@ -641,11 +648,20 @@ CREATE TABLE IF NOT EXISTS tracer_responses (
 
 CREATE TABLE IF NOT EXISTS donations (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NULL,
+    contribution_type VARCHAR(60) NOT NULL DEFAULT 'Financial',
+    contribution_date DATE NULL,
     amount DECIMAL(10, 2) NOT NULL,
     method VARCHAR(100),
     status VARCHAR(50) DEFAULT 'pending_review',
     purpose VARCHAR(255),
+    activity_name VARCHAR(255) NULL,
+    volunteer_hours DECIMAL(10,2) NULL,
+    quantity_description VARCHAR(255) NULL,
+    estimated_value DECIMAL(12,2) NULL,
+    supporting_information TEXT NULL,
+    source_module VARCHAR(40) NULL,
+    source_record_id BIGINT NULL,
     ref_number VARCHAR(100),
     message TEXT,
     receipt_url LONGTEXT,
@@ -659,6 +675,10 @@ CREATE TABLE IF NOT EXISTS donations (
     donor_batch VARCHAR(100) NULL,
     donor_course VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_donations_source_record (source_module, source_record_id),
+    INDEX idx_donations_contribution_type (contribution_type),
+    INDEX idx_donations_contribution_date (contribution_date),
+    INDEX idx_donations_type_status_date (contribution_type, status, contribution_date),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
 );
@@ -667,11 +687,13 @@ CREATE TABLE IF NOT EXISTS alumni_projects (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     description TEXT NULL,
+    objectives TEXT NULL,
     category VARCHAR(100) NOT NULL,
     batch_year VARCHAR(20) NULL,
     lead_officer_id VARCHAR(36) NULL,
     lead_alumni_id VARCHAR(36) NULL,
     organization_name VARCHAR(255) NULL,
+    responsible_person VARCHAR(255) NULL,
     alumni_group VARCHAR(255) NULL,
     start_date DATE NULL,
     end_date DATE NULL,
@@ -680,8 +702,11 @@ CREATE TABLE IF NOT EXISTS alumni_projects (
     estimated_value DECIMAL(14,2) NULL,
     funding_source VARCHAR(255) NULL,
     related_contribution_id VARCHAR(100) NULL,
+    related_target_id BIGINT NULL,
+    related_moa_id BIGINT NULL,
     contribution_record_id VARCHAR(100) NULL,
     accomplishments TEXT NULL,
+    evidence_notes TEXT NULL,
     remarks TEXT NULL,
     created_by VARCHAR(36) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -690,10 +715,223 @@ CREATE TABLE IF NOT EXISTS alumni_projects (
     INDEX idx_alumni_projects_category (category),
     INDEX idx_alumni_projects_batch (batch_year),
     INDEX idx_alumni_projects_dates (start_date),
+    INDEX idx_alumni_projects_target (related_target_id),
+    INDEX idx_alumni_projects_moa (related_moa_id),
     FOREIGN KEY (lead_officer_id) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (lead_alumni_id) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS contribution_opportunities (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    announcement_id INT NOT NULL,
+    opportunity_type VARCHAR(40) NOT NULL,
+    registration_deadline DATETIME NULL,
+    capacity INT NULL,
+    required_skills TEXT NULL,
+    available_roles TEXT NULL,
+    instructions TEXT NULL,
+    objectives TEXT NULL,
+    target_date DATE NULL,
+    support_types TEXT NULL,
+    target_quantity VARCHAR(120) NULL,
+    contact_instructions TEXT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Open',
+    created_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_contribution_opportunity_announcement (announcement_id),
+    INDEX idx_contribution_opportunity_type_status (opportunity_type, status),
+    INDEX idx_contribution_opportunity_deadline (registration_deadline),
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS contribution_submissions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    opportunity_id BIGINT NOT NULL,
+    announcement_id INT NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    submission_type VARCHAR(40) NOT NULL,
+    availability VARCHAR(255) NULL,
+    preferred_role VARCHAR(255) NULL,
+    skills TEXT NULL,
+    contact_info VARCHAR(255) NULL,
+    description TEXT NULL,
+    quantity DECIMAL(12,2) NULL,
+    unit VARCHAR(80) NULL,
+    estimated_value DECIMAL(14,2) NULL,
+    proposed_date DATE NULL,
+    message TEXT NULL,
+    evidence_url LONGTEXT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Registered',
+    assigned_role VARCHAR(255) NULL,
+    attendance_status VARCHAR(30) NULL,
+    actual_hours DECIMAL(10,2) NULL,
+    fulfilled_quantity DECIMAL(12,2) NULL,
+    fulfilled_value DECIMAL(14,2) NULL,
+    admin_notes TEXT NULL,
+    verified_by VARCHAR(36) NULL,
+    verified_at DATETIME NULL,
+    withdrawn_at DATETIME NULL,
+    contribution_id INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_contribution_submission_user_opportunity (opportunity_id, user_id),
+    INDEX idx_contribution_submission_type_status (submission_type, status),
+    INDEX idx_contribution_submission_user (user_id, status),
+    INDEX idx_contribution_submission_announcement (announcement_id),
+    FOREIGN KEY (opportunity_id) REFERENCES contribution_opportunities(id) ON DELETE CASCADE,
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (contribution_id) REFERENCES donations(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS organizational_targets (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    category VARCHAR(80) NOT NULL,
+    target_value DECIMAL(14,2) NOT NULL,
+    unit VARCHAR(80) NOT NULL,
+    calculation_method VARCHAR(20) NOT NULL DEFAULT 'Manual',
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    responsible_person VARCHAR(255) NOT NULL,
+    related_project_id BIGINT NULL,
+    related_announcement_id INT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+    supporting_notes TEXT NULL,
+    archived_at DATETIME NULL,
+    created_by VARCHAR(36) NULL,
+    updated_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_organizational_target_value CHECK (target_value > 0),
+    CONSTRAINT chk_organizational_target_dates CHECK (end_date >= start_date),
+    INDEX idx_organizational_targets_status_dates (status, start_date, end_date),
+    INDEX idx_organizational_targets_category (category),
+    FOREIGN KEY (related_project_id) REFERENCES alumni_projects(id) ON DELETE SET NULL,
+    FOREIGN KEY (related_announcement_id) REFERENCES announcements(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS organizational_target_progress (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    target_id BIGINT NOT NULL,
+    progress_value DECIMAL(14,2) NOT NULL,
+    progress_date DATE NOT NULL,
+    explanation TEXT NOT NULL,
+    evidence_note TEXT NULL,
+    recorded_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_organizational_progress_value CHECK (progress_value >= 0),
+    INDEX idx_target_progress_target_date (target_id, progress_date),
+    FOREIGN KEY (target_id) REFERENCES organizational_targets(id) ON DELETE CASCADE,
+    FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS moa_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    partner_organization VARCHAR(255) NOT NULL,
+    purpose TEXT NOT NULL,
+    reference_number VARCHAR(120) NULL,
+    effective_date DATE NOT NULL,
+    expiration_date DATE NULL,
+    responsible_person VARCHAR(255) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Active',
+    description TEXT NULL,
+    archived_at DATETIME NULL,
+    created_by VARCHAR(36) NULL,
+    updated_by VARCHAR(36) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_moa_date_range CHECK (expiration_date IS NULL OR expiration_date >= effective_date),
+    UNIQUE KEY uq_moa_reference_number (reference_number),
+    INDEX idx_moa_partner_status (partner_organization, status),
+    INDEX idx_moa_dates (effective_date, expiration_date),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS moa_documents (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    moa_id BIGINT NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(120) NOT NULL,
+    file_size INT NOT NULL,
+    file_data LONGBLOB NOT NULL,
+    uploaded_by VARCHAR(36) NULL,
+    archived_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_moa_documents_moa (moa_id, archived_at),
+    FOREIGN KEY (moa_id) REFERENCES moa_records(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS accomplishment_reports (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    reporting_period_start DATE NOT NULL,
+    reporting_period_end DATE NOT NULL,
+    related_project_id BIGINT NULL,
+    related_announcement_id INT NULL,
+    objectives TEXT NOT NULL,
+    activities_accomplished TEXT NOT NULL,
+    actual_results TEXT NOT NULL,
+    beneficiaries TEXT NULL,
+    challenges_recommendations TEXT NULL,
+    prepared_by VARCHAR(255) NOT NULL,
+    date_prepared DATE NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Draft',
+    review_notes TEXT NULL,
+    created_by VARCHAR(36) NULL,
+    reviewed_by VARCHAR(36) NULL,
+    submitted_at DATETIME NULL,
+    reviewed_at DATETIME NULL,
+    archived_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_accomplishment_report_period CHECK (reporting_period_end >= reporting_period_start),
+    INDEX idx_accomplishment_reports_status_period (status, reporting_period_start, reporting_period_end),
+    INDEX idx_accomplishment_reports_project (related_project_id),
+    FOREIGN KEY (related_project_id) REFERENCES alumni_projects(id) ON DELETE SET NULL,
+    FOREIGN KEY (related_announcement_id) REFERENCES announcements(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS accomplishment_report_contributions (
+    report_id BIGINT NOT NULL,
+    contribution_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (report_id, contribution_id),
+    FOREIGN KEY (report_id) REFERENCES accomplishment_reports(id) ON DELETE CASCADE,
+    FOREIGN KEY (contribution_id) REFERENCES donations(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS accomplishment_report_documents (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    report_id BIGINT NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(120) NOT NULL,
+    file_size INT NOT NULL,
+    file_data LONGBLOB NOT NULL,
+    uploaded_by VARCHAR(36) NULL,
+    archived_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_accomplishment_documents_report (report_id, archived_at),
+    FOREIGN KEY (report_id) REFERENCES accomplishment_reports(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+ALTER TABLE alumni_projects
+    ADD CONSTRAINT fk_alumni_projects_target FOREIGN KEY (related_target_id) REFERENCES organizational_targets(id) ON DELETE SET NULL,
+    ADD CONSTRAINT fk_alumni_projects_moa FOREIGN KEY (related_moa_id) REFERENCES moa_records(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS alumni_project_files (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     project_id BIGINT NOT NULL,

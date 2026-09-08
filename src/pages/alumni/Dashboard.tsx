@@ -158,7 +158,7 @@ function OfficerCard({
     <div className="flex flex-col items-center gap-2">
       <div className={`${s.avatar} rounded-full flex items-center justify-center overflow-hidden border-4 border-white shadow-lg ${bg}`}>
         {photo ? (
-          <img src={resolveAssetUrl(photo) || undefined} alt={name} className="h-full w-full object-cover" />
+          <img src={resolveAssetUrl(photo) || undefined} alt={name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
         ) : (
           <span className={`text-white font-bold ${s.text}`}>{name[0]}</span>
         )}
@@ -216,16 +216,6 @@ export default function AlumniDashboard() {
   useEffect(() => {
     if (!user) return;
 
-    const fetchSlideshow = async () => {
-      try {
-        const response = await fetch(`${API_URL}/slideshow`, { headers: getAuthHeaders() });
-        const slides = await readApiResponse<SlideData[]>(response);
-        if (Array.isArray(slides)) setSlideshow(slides);
-      } catch (error) {
-        clientLogger.debug("Failed to load slideshow early; using dashboard response fallback", error);
-      }
-    };
-
     const fetchData = async () => {
       const keepSpinner = !hasLoadedDashboard.current;
       try {
@@ -236,7 +226,7 @@ export default function AlumniDashboard() {
 
         setAnnouncements(data.events || []);
         setSurveys(data.surveys || []);
-        setSlideshow((current) => current.length > 0 ? current : data.slideshow || []);
+        setSlideshow(data.slideshow || []);
         setDonationActivity((data.donationUpdates || []).slice(0, 4));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
@@ -267,7 +257,6 @@ export default function AlumniDashboard() {
       }
     };
 
-    void fetchSlideshow();
     void fetchData();
   }, [user]);
 
@@ -625,7 +614,7 @@ export default function AlumniDashboard() {
                 className="overflow-hidden rounded-2xl border border-border bg-card text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-lg"
               >
                 {imageUrl && (
-                  <img src={imageUrl} alt={announcement.title} className="h-36 w-full object-contain" />
+                  <img src={imageUrl} alt={announcement.title} className="h-36 w-full object-contain" loading="lazy" decoding="async" />
                 )}
                 <div className="p-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -938,7 +927,7 @@ function ContentCard({ item, onOpen }: { item: AnnouncementData; onOpen: (item: 
       <div className={hasImage ? "relative flex min-h-[220px] flex-col justify-end p-4 sm:min-h-0 sm:flex sm:flex-col sm:justify-start sm:gap-4 sm:p-0 md:flex-row md:items-start max-[640px]:min-h-[145px] max-[640px]:p-2.5" : "flex flex-col gap-4 md:flex-row md:items-start max-[640px]:gap-2"}>
         {imageUrl && (
           <div className="hidden h-24 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 sm:flex md:w-36">
-            <img src={imageUrl} alt={item.title} className="h-full w-full object-contain" />
+            <img src={imageUrl} alt={item.title} className="h-full w-full object-contain" loading="lazy" decoding="async" />
           </div>
         )}
         <div className="min-w-0 flex-1">

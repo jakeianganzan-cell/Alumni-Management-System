@@ -1,11 +1,10 @@
 import dotenv from "dotenv";
 import path from "node:path";
+import { assertDatabaseEnvironment } from "../environment-policy.mjs";
 
 const serverRoot = path.resolve(import.meta.dirname, "..");
-const projectRoot = path.resolve(serverRoot, "..");
-
-dotenv.config({ path: path.resolve(projectRoot, ".env") });
-dotenv.config({ path: path.resolve(serverRoot, ".env"), override: true });
+dotenv.config({ path: path.resolve(serverRoot, ".env"), quiet: true });
+assertDatabaseEnvironment();
 
 const required = [
   "JWT_SECRET",
@@ -37,8 +36,9 @@ const weak = required.filter((name) => {
   if (name === "ADMIN_PASSWORD") return value.length < 12;
   return false;
 });
+const retiredAdminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase() === "admin.president@saccalumni.local";
 
-if (missing.length || placeholders.length || weak.length) {
+if (missing.length || placeholders.length || weak.length || retiredAdminEmail) {
   if (missing.length) {
     console.error(`Missing required environment variables: ${missing.join(", ")}`);
   }
@@ -49,6 +49,10 @@ if (missing.length || placeholders.length || weak.length) {
 
   if (weak.length) {
     console.error(`Strength check failed for environment values: ${weak.join(", ")}`);
+  }
+
+  if (retiredAdminEmail) {
+    console.error("ADMIN_EMAIL must use a neutral System Administrator account. The President login has been retired.");
   }
 
   process.exitCode = 1;

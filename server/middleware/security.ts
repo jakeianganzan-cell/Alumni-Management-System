@@ -1,5 +1,6 @@
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import { createHash } from "node:crypto";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { Request, Response, NextFunction } from "express";
 
 const positiveIntegerEnv = (name: string, fallback: number) => {
@@ -17,9 +18,9 @@ export const securityHeaders = helmet({
       "frame-ancestors": ["'none'"],
       "img-src": ["'self'", "data:", "blob:", "https:"],
       "media-src": ["'self'", "data:", "blob:", "https:"],
-      "script-src": ["'self'", "'unsafe-inline'"],
+      "script-src": ["'self'"],
       "style-src": ["'self'", "'unsafe-inline'"],
-      "connect-src": ["'self'", "http:", "https:"],
+      "connect-src": ["'self'", ...String(process.env.CSP_CONNECT_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean)],
       "frame-src": ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
     },
   },
@@ -42,10 +43,41 @@ export const apiRateLimiter = rateLimit({
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: positiveIntegerEnv("AUTH_RATE_LIMIT_MAX", 10),
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     error: "Too many login attempts. Please try again after 15 minutes.",
+    status: 429,
+  },
+});
+
+const identifierKey = (req: Request) => {
+  const identifier = String(req.body?.email || req.body?.identifier || "").trim().toLowerCase();
+  const identifierHash = createHash("sha256").update(identifier || "missing").digest("hex").slice(0, 24);
+  return `${ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown")}:${identifierHash}`;
+};
+
+export const loginAccountRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: positiveIntegerEnv("LOGIN_ACCOUNT_RATE_LIMIT_MAX", 5),
+  keyGenerator: identifierKey,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Too many login attempts. Please try again after 15 minutes.",
+    status: 429,
+  },
+});
+
+export const publicSubmissionRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: positiveIntegerEnv("PUBLIC_SUBMISSION_RATE_LIMIT_MAX", 5),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Too many submissions. Please try again later.",
     status: 429,
   },
 });

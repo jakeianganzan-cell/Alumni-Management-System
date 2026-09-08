@@ -6,11 +6,9 @@ import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 
 const serverRoot = path.resolve(import.meta.dirname, "..");
-const projectRoot = path.resolve(serverRoot, "..");
 const envPath = path.resolve(serverRoot, ".env");
 
-dotenv.config({ path: path.resolve(projectRoot, ".env") });
-dotenv.config({ path: envPath, override: true });
+dotenv.config({ path: envPath, quiet: true });
 
 const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 if (!adminEmail) throw new Error("ADMIN_EMAIL is required before rotating the admin password.");

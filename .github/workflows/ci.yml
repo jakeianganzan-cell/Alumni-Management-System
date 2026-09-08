@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      DB_ENVIRONMENT: test
     services:
       mysql:
         image: mysql:8.4
@@ -97,17 +100,34 @@ jobs:
       - name: Verify backup restoration into a disposable database
         shell: bash
         env:
-          MYSQL_PWD: root
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: ustp_alumni_ci
+          DB_SSL: "false"
+          BACKUP_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          BACKUP_FILE: ${{ runner.temp }}/ustp_alumni_ci.sql.gz.enc
+          RESTORE_DB_HOST: 127.0.0.1
+          RESTORE_DB_PORT: 3306
+          RESTORE_DB_USER: root
+          RESTORE_DB_PASSWORD: root
+          RESTORE_DB_NAME: ustp_alumni_restore_ci
+          RESTORE_CONFIRM_DATABASE: ustp_alumni_restore_ci
+          ALLOW_DATABASE_RESTORE: "YES"
         run: |
           set -euo pipefail
-          backup_file="$RUNNER_TEMP/ustp_alumni_ci.sql"
-          mysqldump --protocol=tcp -h 127.0.0.1 -P 3306 -u root --single-transaction --no-tablespaces ustp_alumni_ci > "$backup_file"
+          npm run backup --prefix server
+          export MYSQL_PWD=root
           mysql --protocol=tcp -h 127.0.0.1 -P 3306 -u root -e "DROP DATABASE IF EXISTS ustp_alumni_restore_ci; CREATE DATABASE ustp_alumni_restore_ci;"
-          mysql --protocol=tcp -h 127.0.0.1 -P 3306 -u root ustp_alumni_restore_ci < "$backup_file"
+          npm run restore --prefix server
           source_count="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root ustp_alumni_ci -e 'SELECT COUNT(*) FROM schema_migrations;')"
           restored_count="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root ustp_alumni_restore_ci -e 'SELECT COUNT(*) FROM schema_migrations;')"
+          source_tables="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'ustp_alumni_ci';")"
+          restored_tables="$(mysql --protocol=tcp -N -h 127.0.0.1 -P 3306 -u root -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'ustp_alumni_restore_ci';")"
           test "$source_count" -ge 9
           test "$restored_count" -eq "$source_count"
+          test "$restored_tables" -eq "$source_tables"
 
       - name: Start API server
         run: |

@@ -7,6 +7,8 @@ import type { Response } from "express";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import db from "../db";
 import { logger } from "../utils/logger";
+import { getPublicErrorMessage } from "../utils/safeError";
+import { roleHasPermission } from "../middleware/rbac";
 import type { AuthenticatedRequest } from "../types/auth";
 import {
   createStoredZipBuffer,
@@ -50,10 +52,6 @@ interface TracerDraftRow extends RowDataPacket {
   ched_payload: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface RoleRow extends RowDataPacket {
-  role: string;
 }
 
 interface SimpleCountRow extends RowDataPacket {
@@ -104,7 +102,9 @@ const slugify = (value: string) =>
     .trim()
     .replace(/\s+/g, "_");
 
-const jsonResponseError = (res: Response, status: number, error: string) => res.status(status).json({ error });
+const jsonResponseError = (res: Response, status: number, error: string) => res.status(status).json({
+  error: status >= 500 ? getPublicErrorMessage(new Error(error)) : error,
+});
 
 const tableExists = async (tableName: string) => {
   const rows = await db.query<RowDataPacket>("SHOW TABLES LIKE ?", [tableName]);
@@ -567,10 +567,8 @@ const ensureTracerSchema = async () => {
   }
 };
 
-const requireTracerAdmin = async (userId: string) => {
-  const roles = await db.query<RoleRow>("SELECT role FROM user_roles WHERE user_id = ? AND COALESCE(archived, 0) = 0", [userId]);
-  return roles.some((row) => cleanText(row.role) !== "alumni");
-};
+const requireTracerAdmin = async (selectedRole: string | undefined) =>
+  roleHasPermission(cleanText(selectedRole), "tracer.view");
 
 const getSubmissionByUserId = async (userId: string) => {
   await ensureTracerSchema();
@@ -953,7 +951,7 @@ const buildAnalytics = async () => {
   await ensureTracerSchema();
 
   const alumniRows = await db.query<SimpleCountRow>(
-    `SELECT COUNT(*) AS totalAlumni
+    `SELECT COUNT(DISTINCT user_id) AS totalAlumni
      FROM user_roles
      WHERE role = 'alumni' AND COALESCE(archived, 0) = 0`,
   );
@@ -967,7 +965,12 @@ const buildAnalytics = async () => {
       p.course,
       p.batch
      FROM tracer_form tf
-     LEFT JOIN profiles p ON p.id = tf.user_id`,
+     INNER JOIN user_roles ur
+       ON ur.user_id = tf.user_id
+      AND ur.role = 'alumni'
+      AND COALESCE(ur.archived, 0) = 0
+     LEFT JOIN profiles p ON p.id = tf.user_id
+     WHERE COALESCE(NULLIF(TRIM(tf.submission_status), ''), 'completed') = 'completed'`,
   );
 
   const totalAlumni = Number(alumniRows[0]?.totalAlumni || 0);
@@ -1658,7 +1661,6 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
   try {
     if (!req.user?.id) return res.sendStatus(401);
 
-    const analytics = await buildAnalytics();
     const { rows } = await getAdminTracerRows({ page: 1, pageSize: 1000 });
     const summaryRows = rows.map((row) => {
       const payload = row.ched_payload as Record<string, unknown>;
@@ -1678,34 +1680,20 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
       };
     });
 
-    const format = cleanText(req.query.format).toLowerCase() || "pdf";
-    if (!["excel", "pdf"].includes(format)) {
-      return jsonResponseError(res, 400, "Only Excel and PDF tracer report exports are available.");
+    const format = cleanText(req.query.format).toLowerCase() || "excel";
+    if (format !== "excel") {
+      return jsonResponseError(res, 400, "Only Excel tracer report exports are available.");
     }
     await db.execute(
       "INSERT INTO tracer_reports (report_type, generated_by, filters_json, file_name) VALUES (?, ?, ?, ?)",
       ["analytics", req.user.id, JSON.stringify(req.query || {}), `tracer-report-${format}`],
     ).catch(() => undefined);
 
-    if (format === "excel") {
-      const workbook = buildExcelWorkbookHtml(summaryRows);
-      await writeAuditLog(req.user.id, "", "export_report_excel", { rows: summaryRows.length });
-      res.setHeader("Content-Type", "application/vnd.ms-excel");
-      res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-report-${formatFileDate()}.xls"`);
-      return res.send(workbook);
-    }
-
-    if (format === "pdf") {
-      await writeAuditLog(req.user.id, "", "export_report_pdf", { rows: summaryRows.length });
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Content-Disposition", `inline; filename="graduate-tracer-report-${formatFileDate()}.html"`);
-      return res.send(buildReportHtml(analytics, summaryRows));
-    }
-
-    await writeAuditLog(req.user.id, "", "export_report_pdf", { rows: summaryRows.length });
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Content-Disposition", `inline; filename="graduate-tracer-report-${formatFileDate()}.html"`);
-    return res.send(buildReportHtml(analytics, summaryRows));
+    const workbook = buildExcelWorkbookHtml(summaryRows);
+    await writeAuditLog(req.user.id, "", "export_report_excel", { rows: summaryRows.length });
+    res.setHeader("Content-Type", "application/vnd.ms-excel");
+    res.setHeader("Content-Disposition", `attachment; filename="graduate-tracer-report-${formatFileDate()}.xls"`);
+    return res.send(workbook);
   } catch (error: unknown) {
     logger.error("EXPORT TRACER REPORTS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
@@ -1715,7 +1703,7 @@ export const exportTracerReports = async (req: AuthenticatedRequest, res: Respon
 export const assertTracerAdminAccess = async (req: AuthenticatedRequest, res: Response, next: () => void) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
-    const allowed = await requireTracerAdmin(req.user.id);
+    const allowed = await requireTracerAdmin(req.user.role);
     if (!allowed) return res.sendStatus(403);
     next();
   } catch (error: unknown) {

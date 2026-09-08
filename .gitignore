@@ -15,12 +15,16 @@ vite.config.ts.timestamp-*.mjs
 .env
 .env.*
 !.env.example
+!.env.staging.example
 !server/.env.example
 .vercel
 *.log
 backup.sql
 backup-defaultdb.sql
 backup-aiven.sql
+server/backups/
+*.sql.gz.enc
+*.sql.gz.enc.json
 server/private-uploads/
 Accounts.md
 

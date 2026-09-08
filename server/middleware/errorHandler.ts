@@ -12,7 +12,7 @@ export const errorHandler = (
     logger.error("[HTTP] Unexpected request error", err);
   }
 
-  if (err instanceof AppError) {
+  if (err instanceof AppError && err.isOperational && err.statusCode < 500) {
     const response: Record<string, unknown> = {
       error: err.message,
       status: err.statusCode,
@@ -37,18 +37,23 @@ export const errorHandler = (
     return;
   }
 
-  if (process.env.NODE_ENV === "production") {
-    res.status(500).json({
-      error: "Internal server error",
-      status: 500,
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    (("type" in err && (err as { type?: string }).type === "entity.too.large") ||
+      ("status" in err && (err as { status?: number }).status === 413))
+  ) {
+    res.status(413).json({
+      error: "Request payload too large.",
+      status: 413,
     });
-  } else {
-    res.status(500).json({
-      error: err.message || "Internal server error",
-      status: 500,
-      stack: err.stack,
-    });
+    return;
   }
+
+  res.status(500).json({
+    error: "Unable to complete your request. Please try again.",
+    status: 500,
+  });
 };
 
 export const notFoundHandler = (

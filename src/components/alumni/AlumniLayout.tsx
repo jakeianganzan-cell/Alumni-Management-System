@@ -29,7 +29,7 @@ const NAV_ITEMS = [
   { icon: Calendar, label: "Announcements", path: "/alumni/announcements" },
 
   { icon: FileText, label: "Graduate Tracer", path: "/alumni/tracer" },
-  { icon: Heart, label: "Make a Donation", path: "/alumni/donate" },
+  { icon: Heart, label: "Donation", path: "/alumni/donate" },
   { icon: Info, label: "About Us", path: "/alumni/about" },
 ];
 

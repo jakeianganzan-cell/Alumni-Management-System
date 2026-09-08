@@ -2,7 +2,7 @@ import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
-import { Award, CalendarClock, CheckCircle2, Eye, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
+import { Award, CalendarClock, CheckCircle2, Eye, Loader2, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 
@@ -34,6 +34,7 @@ export default function AdminAchievements() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [reviewing, setReviewing] = useState<{ id: number; action: "approve" | "reject" } | null>(null);
   const [achievementToDelete, setAchievementToDelete] = useState<AchievementRecord | null>(null);
   const [deletingAchievementId, setDeletingAchievementId] = useState<number | null>(null);
 
@@ -113,15 +114,26 @@ export default function AdminAchievements() {
       await readApiResponse(res);
 
       await loadAchievements();
+      return true;
     } catch (error) {
       clientLogger.error(error);
-      toast.error("Could not update achievement");
+      toast.error(error instanceof Error ? error.message : "Could not update achievement");
+      return false;
     }
   };
 
   const approve = async (item: AchievementRecord) => {
-    await updateAchievement(item, { status: "approved", featured: true, rejectionReason: null });
-    toast.success("Achievement approved");
+    if (reviewing) return;
+    setReviewing({ id: item.id, action: "approve" });
+    try {
+      if (await updateAchievement(item, { status: "approved", featured: true, rejectionReason: null })) {
+        setRejectionReason("");
+        setSelected(null);
+        toast.success("Achievement approved");
+      }
+    } finally {
+      setReviewing(null);
+    }
   };
 
   const reject = async (item: AchievementRecord) => {
@@ -130,15 +142,23 @@ export default function AdminAchievements() {
       return;
     }
 
-    await updateAchievement(item, { status: "rejected", featured: false, rejectionReason });
-    setRejectionReason("");
-    setSelected(null);
-    toast.success("Achievement rejected");
+    if (reviewing) return;
+    setReviewing({ id: item.id, action: "reject" });
+    try {
+      if (await updateAchievement(item, { status: "rejected", featured: false, rejectionReason })) {
+        setRejectionReason("");
+        setSelected(null);
+        toast.success("Achievement rejected");
+      }
+    } finally {
+      setReviewing(null);
+    }
   };
 
   const toggleFeatured = async (item: AchievementRecord) => {
-    await updateAchievement(item, { featured: !item.featured });
-    toast.success(item.featured ? "Removed from featured" : "Marked as featured");
+    if (await updateAchievement(item, { featured: !item.featured })) {
+      toast.success(item.featured ? "Removed from featured" : "Marked as featured");
+    }
   };
 
   const removeAchievement = async (item: AchievementRecord) => {
@@ -358,7 +378,7 @@ export default function AdminAchievements() {
         </section>
 
         {selected && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSelected(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !reviewing && setSelected(null)}>
             <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -367,7 +387,7 @@ export default function AdminAchievements() {
                     {selected.name} | {selected.organization || "No organization"}
                   </p>
                 </div>
-                <button onClick={() => setSelected(null)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-muted" type="button">
+                <button onClick={() => setSelected(null)} disabled={Boolean(reviewing)} className="rounded-lg p-2 text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50" type="button">
                   <XCircle className="h-4 w-4" />
                 </button>
               </div>
@@ -398,16 +418,19 @@ export default function AdminAchievements() {
                   <textarea
                     value={rejectionReason}
                     onChange={(event) => setRejectionReason(event.target.value)}
+                    disabled={Boolean(reviewing)}
                     rows={3}
                     className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-navy"
                     placeholder="Tell the alumni what needs to be corrected."
                   />
                   <div className="mt-3 flex flex-wrap gap-3">
-                    <button onClick={() => approve(selected)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700" type="button">
-                      Approve
+                    <button disabled={Boolean(reviewing)} onClick={() => approve(selected)} className="inline-flex min-w-28 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70" type="button">
+                      {reviewing?.id === selected.id && reviewing.action === "approve" && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {reviewing?.id === selected.id && reviewing.action === "approve" ? "Approving..." : "Approve"}
                     </button>
-                    <button onClick={() => reject(selected)} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-rose-700" type="button">
-                      Reject
+                    <button disabled={Boolean(reviewing)} onClick={() => reject(selected)} className="inline-flex min-w-28 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70" type="button">
+                      {reviewing?.id === selected.id && reviewing.action === "reject" && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {reviewing?.id === selected.id && reviewing.action === "reject" ? "Rejecting..." : "Reject"}
                     </button>
                   </div>
                 </div>

@@ -1,16 +1,15 @@
 import dotenv from "dotenv";
 import path from "node:path";
+import { assertNonProductionOperation } from "../environment-policy.mjs";
 
 const serverRoot = path.resolve(import.meta.dirname, "..");
-const projectRoot = path.resolve(serverRoot, "..");
-
-dotenv.config({ path: path.resolve(projectRoot, ".env") });
-dotenv.config({ path: path.resolve(serverRoot, ".env"), override: true });
+dotenv.config({ path: path.resolve(serverRoot, ".env"), quiet: true });
 
 const baseUrl = (process.env.API_BASE_URL || "http://127.0.0.1:5000").replace(/\/+$/, "");
 const adminEmail = process.env.SMOKE_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
 const adminPassword = process.env.SMOKE_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
 const runMutatingChecks = process.env.SMOKE_MUTATING === "true";
+if (runMutatingChecks) assertNonProductionOperation("Mutating smoke tests");
 
 const failures = [];
 

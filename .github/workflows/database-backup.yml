@@ -1,0 +1,64 @@
+name: Encrypted database backup
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    environment: production-backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes default-mysql-client
+
+      - name: Validate backup secrets
+        env:
+          DB_HOST: ${{ secrets.BACKUP_DB_HOST }}
+          DB_USER: ${{ secrets.BACKUP_DB_USER }}
+          DB_PASSWORD: ${{ secrets.BACKUP_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.BACKUP_DB_NAME }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: |
+          test -n "$DB_HOST"
+          test -n "$DB_USER"
+          test -n "$DB_PASSWORD"
+          test -n "$DB_NAME"
+          test "${#BACKUP_ENCRYPTION_KEY}" -eq 64
+
+      - name: Create encrypted backup
+        env:
+          DB_HOST: ${{ secrets.BACKUP_DB_HOST }}
+          DB_PORT: ${{ secrets.BACKUP_DB_PORT || '3306' }}
+          DB_USER: ${{ secrets.BACKUP_DB_USER }}
+          DB_PASSWORD: ${{ secrets.BACKUP_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.BACKUP_DB_NAME }}
+          DB_SSL: ${{ secrets.BACKUP_DB_SSL || 'true' }}
+          DB_SSL_CA: ${{ secrets.BACKUP_DB_SSL_CA }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_FILE: ${{ runner.temp }}/sacc-alumni-database.sql.gz.enc
+        run: npm run backup --prefix server
+
+      - name: Store encrypted backup off-database
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/sacc-alumni-database.sql.gz.enc
+            ${{ runner.temp }}/sacc-alumni-database.sql.gz.enc.json
+          if-no-files-found: error
+          retention-days: 30

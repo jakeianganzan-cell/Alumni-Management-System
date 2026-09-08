@@ -7,7 +7,6 @@ import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 interface BatchEngagement {
   batch: string;
   events: number;
-  donations: number;
   comments: number;
   score: number;
   memberCount: number;
@@ -26,19 +25,15 @@ interface EngagementMetricsResponse {
   eventCount?: number;
   regCount?: number;
   commentCount?: number;
-  donationCount?: number;
   profiles?: EngagementProfile[];
   regs?: EngagementRecord[];
   comments?: EngagementRecord[];
-  donations?: EngagementRecord[];
 }
 
 interface CourseComparisonPoint {
   course: string;
   courseLabel: string;
   alumniCount: number;
-  donations: number;
-  donatedAmount: number;
   events: number;
   surveyResponses: number;
   achievements: number;
@@ -47,7 +42,6 @@ interface CourseComparisonPoint {
   contributionScore: number;
   activeCount: number;
   engagementRate: number;
-  donationParticipationRate: number;
   eventParticipationRate: number;
   surveyParticipationRate: number;
   employmentRate: number;
@@ -68,7 +62,6 @@ interface AlumniPredictionPoint {
   score: number;
   prediction: string;
   eventParticipationLikelihood: number;
-  donorLikelihood: number;
   daysSinceLastActivity: number | null;
 }
 
@@ -107,12 +100,12 @@ export default function AdminEngagement() {
         if (profile.batch) userBatchMap.set(profile.id, profile.batch);
       });
 
-      const batchMap = new Map<string, { events: number; donations: number; comments: number; members: Set<string> }>();
+      const batchMap = new Map<string, { events: number; comments: number; members: Set<string> }>();
 
-      const addToBatch = (userId: string, type: "events" | "donations" | "comments") => {
+      const addToBatch = (userId: string, type: "events" | "comments") => {
         const batch = userBatchMap.get(userId);
         if (!batch) return;
-        const entry = batchMap.get(batch) ?? { events: 0, donations: 0, comments: 0, members: new Set<string>() };
+        const entry = batchMap.get(batch) ?? { events: 0, comments: 0, members: new Set<string>() };
         entry[type]++;
         entry.members.add(userId);
         batchMap.set(batch, entry);
@@ -120,15 +113,13 @@ export default function AdminEngagement() {
 
       data.regs?.forEach((registration) => addToBatch(registration.user_id, "events"));
       data.comments?.forEach((comment) => addToBatch(comment.user_id, "comments"));
-      data.donations?.forEach((donation) => addToBatch(donation.user_id, "donations"));
 
       const sorted = Array.from(batchMap.entries())
         .map(([batch, s]) => ({
           batch,
           events: s.events,
-          donations: s.donations,
           comments: s.comments,
-          score: s.events * 10 + s.donations * 15 + s.comments * 5,
+          score: s.events * 10 + s.comments * 5,
           memberCount: s.members.size,
         }))
         .sort((a, b) => b.score - a.score)
@@ -239,21 +230,20 @@ export default function AdminEngagement() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b">
-                  {["Course", "Engagement", "Events", "Surveys", "Donors", "Employment"].map((header) => (
+                  {["Course", "Engagement", "Events", "Surveys", "Employment"].map((header) => (
                     <th key={header} className="px-4 py-2 text-left font-semibold uppercase tracking-wide text-navy">{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {comparisonRows.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No course comparison data yet.</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No course comparison data yet.</td></tr>
                 ) : comparisonRows.map((course) => (
                   <tr key={course.course} className="border-b last:border-b-0">
                     <td className="px-4 py-3 font-semibold text-navy-dark">{course.courseLabel}</td>
                     <td className="px-4 py-3">{course.engagementRate}%</td>
                     <td className="px-4 py-3">{course.eventParticipationRate}%</td>
                     <td className="px-4 py-3">{course.surveyParticipationRate}%</td>
-                    <td className="px-4 py-3">{course.donationParticipationRate}%</td>
                     <td className="px-4 py-3">{course.employmentRate}%</td>
                   </tr>
                 ))}
@@ -278,7 +268,6 @@ export default function AdminEngagement() {
                 <div className="flex flex-wrap gap-2 text-xs md:justify-end">
                   <span className="rounded-full bg-muted px-2.5 py-1 font-semibold text-muted-foreground">{alumni.prediction}</span>
                   <span className="rounded-full bg-navy/10 px-2.5 py-1 font-semibold text-navy">{alumni.eventParticipationLikelihood}% event</span>
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">{alumni.donorLikelihood}% donor</span>
                 </div>
               </div>
             ))}
@@ -296,14 +285,14 @@ export default function AdminEngagement() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                {["Rank", "Batch", "Score", "Active Members", "Events Joined", "Donations", "Comments"].map(h => (
+                {["Rank", "Batch", "Score", "Active Members", "Events Joined", "Comments"].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-[10px] font-semibold text-navy uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!loading && topBatches.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">No engagement data yet.</td></tr>
+                <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">No engagement data yet.</td></tr>
               )}
               {topBatches.map((b, i) => (
                 <tr key={b.batch} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
@@ -321,7 +310,6 @@ export default function AdminEngagement() {
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{b.memberCount}</td>
                   <td className="px-4 py-3 text-muted-foreground">{b.events}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{b.donations}</td>
                   <td className="px-4 py-3 text-muted-foreground">{b.comments}</td>
                 </tr>
               ))}

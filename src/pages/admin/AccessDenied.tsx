@@ -24,7 +24,7 @@ export default function AccessDenied() {
           Your current role <span className="font-semibold text-navy">({isOfficerRole(role) ? getRoleLabel(role) : role ?? "Unknown"})</span> does not have permission to access this module.
         </p>
         <p className="text-sm text-muted-foreground mb-8 max-w-sm">
-          If you believe this is a mistake, please contact the Alumni President or System Administrator.
+          Please contact the System Administrator to review the role assigned to your account.
         </p>
         <button onClick={() => navigate("/admin")}
           className="flex items-center gap-2 px-5 py-2.5 bg-navy text-white rounded-lg font-semibold text-sm hover:bg-navy-light transition-colors">

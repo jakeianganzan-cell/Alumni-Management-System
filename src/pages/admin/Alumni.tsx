@@ -13,7 +13,6 @@ import {
   Loader2,
   Mail,
   Plus,
-  Printer,
   Search,
   Upload,
   X,
@@ -23,7 +22,7 @@ import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib
 import { ALL_COURSES_OPTION, COURSE_OPTIONS, SYSTEM_COURSES, formatCourseLabel, type CourseOption } from "@/lib/courseCatalog";
 import { useAuth } from "@/hooks/useAuth";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
-import { downloadBrandedExcel, openPrintableReport, type ReportColumn } from "@/lib/reportExport";
+import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
 
 const BATCHES = ["All Batches", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"];
 const ALUMNI_PAGE_SIZE = 15;
@@ -100,6 +99,12 @@ interface ImportResponse {
     alumniId: string;
     emailAddress: string;
     fullName: string;
+    graduationYear: string;
+    program: string;
+    contactNumber: string;
+    borNumber: string | null;
+    advancedStudiesLevel: string | null;
+    advancedStudiesStatus: string | null;
     emailSent?: boolean;
     emailStatus?: string;
   }>;
@@ -385,6 +390,17 @@ const worksheetToRows = (worksheet: ExcelJS.Worksheet, programOptions: CourseOpt
 
   if (headerRowNumber === 0) {
     throw new Error("The import file must include headers: name, email, and program.");
+  }
+
+  const mappedHeaders = new Set(headerIndexes.values());
+  const missingHeaders = [
+    !mappedHeaders.has("fullName") ? "Name" : "",
+    !mappedHeaders.has("emailAddress") ? "Email" : "",
+    !mappedHeaders.has("program") ? "Program" : "",
+  ].filter(Boolean);
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`Missing required import column${missingHeaders.length === 1 ? "" : "s"}: ${missingHeaders.join(", ")}.`);
   }
 
   const rows: Omit<ImportRow, "errors">[] = [];
@@ -779,6 +795,9 @@ export default function AdminAlumni() {
 
       const data = await readApiResponse<ImportResponse>(res);
       setImportResult(data);
+      setImportRows([]);
+      setImportFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await fetchAlumni();
 
       if (data.summary.importedRows > 0) {
@@ -848,11 +867,6 @@ export default function AdminAlumni() {
     await downloadBrandedExcel(buildAlumniReport(records));
   };
 
-  const exportPdf = async () => {
-    const records = await fetchAllFilteredAlumni();
-    openPrintableReport(buildAlumniReport(records));
-  };
-
   return (
     <AdminLayout title="Alumni Management">
       <div className="min-w-0">
@@ -881,7 +895,6 @@ export default function AdminAlumni() {
             <div className="flex flex-wrap gap-1.5">
               <button onClick={() => { resetImportState(); setShowImport(true); }} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Upload className="h-3 w-3" />Import</button>
               <button onClick={() => void exportExcel()} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><FileSpreadsheet className="h-3 w-3" />Excel</button>
-              <button onClick={() => void exportPdf()} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Printer className="h-3 w-3" />PDF</button>
               <button onClick={() => { setForm(BLANK); setAddError(""); setPhotoPreview(null); setShowAdd(true); }} className="flex h-7 items-center gap-1 rounded-md bg-navy px-2 text-[11px] font-medium text-white hover:bg-navy-light"><Plus className="h-3 w-3" />Add</button>
             </div>
           </div>
@@ -949,13 +962,13 @@ export default function AdminAlumni() {
       )}
 
       <Dialog open={showImport} onOpenChange={(open) => !open ? setShowImport(false) : setShowImport(true)}>
-        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4 sm:p-5">
+          <DialogHeader className="space-y-1">
             <DialogTitle>Import Alumni Records</DialogTitle>
             <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-[220px_1fr] sm:items-end">
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-end">
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-navy">School Year *</label>
                 <input
@@ -974,11 +987,11 @@ export default function AdminAlumni() {
                   maxLength={4}
                   placeholder="2026"
                   disabled={importParsing || importSubmitting}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none"
+                  className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm focus:border-navy focus:outline-none"
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-white ${/^\d{4}$/.test(importSchoolYear) && !importParsing && !importSubmitting ? "cursor-pointer bg-navy hover:bg-navy-light" : "cursor-not-allowed bg-muted-foreground/60"}`}>
+                <label className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium text-white ${/^\d{4}$/.test(importSchoolYear) && !importParsing && !importSubmitting ? "cursor-pointer bg-navy hover:bg-navy-light" : "cursor-not-allowed bg-muted-foreground/60"}`}>
                   <FileSpreadsheet className="h-4 w-4" />
                   {importParsing ? "Reading File..." : "Choose File"}
                   <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={handleImportFileSelect} disabled={importParsing || importSubmitting || !/^\d{4}$/.test(importSchoolYear)} />
@@ -987,15 +1000,15 @@ export default function AdminAlumni() {
               </div>
             </div>
 
-            {importError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{importError}</div>}
+            {importError && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{importError}</div>}
 
             {importRows.length > 0 && <>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-3 gap-2">
                 <SummaryTile label="Rows Found" value={String(importRows.length)} tone="neutral" />
                 <SummaryTile label="Ready" value={String(importReadyCount)} tone="success" />
                 <SummaryTile label="Issues" value={String(importIssueCount)} tone={importIssueCount > 0 ? "danger" : "neutral"} />
               </div>
-              <div className="overflow-x-auto rounded-xl border border-border">
+              <div className="max-h-[360px] overflow-auto rounded-lg border border-border">
                 <table className="min-w-[760px] w-full text-xs">
                   <thead>
                     <tr className="border-b bg-muted/40">
@@ -1009,17 +1022,64 @@ export default function AdminAlumni() {
                       <th className="px-3 py-2 text-left">Validation</th>
                     </tr>
                   </thead>
-                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-2">{row.graduationYear || "-"}</td><td className="px-3 py-2" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-2">{row.borNumber || "-"}</td><td className="px-3 py-2">{row.emailAddress || "-"}</td><td className="px-3 py-2">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
+                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-1.5">{row.rowNumber}</td><td className="px-3 py-1.5 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-1.5">{row.graduationYear || "-"}</td><td className="px-3 py-1.5" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-1.5">{row.borNumber || "-"}</td><td className="px-3 py-1.5">{[row.advancedStudiesLevel, row.advancedStudiesStatus].filter(Boolean).join(" - ") || "-"}</td><td className="px-3 py-1.5">{row.emailAddress || "-"}</td><td className="px-3 py-1.5">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
                 </table>
               </div>
-              <button type="button" onClick={handleImportSubmit} disabled={importSubmitting || importReadyCount === 0} className="inline-flex items-center justify-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-medium text-white hover:bg-navy-light disabled:opacity-60">{importSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Final Import</button>
+              <button type="button" onClick={handleImportSubmit} disabled={importSubmitting || importReadyCount === 0} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-navy px-3 text-xs font-medium text-white hover:bg-navy-light disabled:opacity-60">{importSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Final Import</button>
             </>}
 
-            {importResult && <div className="rounded-xl border border-border bg-white p-4 text-sm"><strong>{importResult.summary.importedRows}</strong> rows imported. Failed rows: <strong>{importResult.summary.failedRows}</strong>.</div>}
+            {importResult && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <SummaryTile label="Created" value={String(importResult.importedRows.length)} tone="success" />
+                  <SummaryTile label="Not Created" value={String(importResult.failedRows.length)} tone={importResult.failedRows.length ? "danger" : "neutral"} />
+                  <SummaryTile label="Email Issues" value={String(importResult.failedEmailRows?.length || 0)} tone={importResult.failedEmailRows?.length ? "danger" : "neutral"} />
+                </div>
+
+                {importResult.importedRows.length > 0 && (
+                  <div className="max-h-[380px] overflow-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[850px] text-[11px]">
+                      <thead className="sticky top-0 bg-muted/90 text-[9px] uppercase tracking-wide text-muted-foreground backdrop-blur">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left">Row</th>
+                          <th className="px-2 py-1.5 text-left">Alumni ID</th>
+                          <th className="px-2 py-1.5 text-left">Name</th>
+                          <th className="px-2 py-1.5 text-left">Email</th>
+                          <th className="px-2 py-1.5 text-left">Program</th>
+                          <th className="px-2 py-1.5 text-left">Year</th>
+                          <th className="px-2 py-1.5 text-left">Contact</th>
+                          <th className="px-2 py-1.5 text-left">Credentials</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {importResult.importedRows.map((row) => (
+                          <tr key={`${row.rowNumber}-${row.alumniId}`}>
+                            <td className="px-2 py-1.5">{row.rowNumber}</td>
+                            <td className="px-2 py-1.5 font-semibold text-navy-dark">{row.alumniId}</td>
+                            <td className="px-2 py-1.5 font-medium text-navy-dark">{row.fullName}</td>
+                            <td className="px-2 py-1.5">{row.emailAddress}</td>
+                            <td className="px-2 py-1.5">{formatCourseCode(row.program, programOptions)}</td>
+                            <td className="px-2 py-1.5">{row.graduationYear}</td>
+                            <td className="px-2 py-1.5">{row.contactNumber || "-"}</td>
+                            <td className="px-2 py-1.5"><span className={`rounded-full px-2 py-0.5 font-semibold ${row.emailSent ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{row.emailSent ? "Email sent" : "Email failed"}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {importResult.failedRows.length > 0 && (
+                  <div className="max-h-32 overflow-auto rounded-lg border border-rose-200 bg-rose-50/60">
+                    {importResult.failedRows.map((row) => <div key={`${row.rowNumber}-${row.emailAddress}`} className="border-b border-rose-100 px-2.5 py-1.5 text-[11px] text-rose-700 last:border-0"><strong>Row {row.rowNumber}</strong> - {row.fullName || row.emailAddress || "Unknown row"} - {row.reason}</div>)}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}><DialogContent className="max-w-3xl overflow-hidden p-0">{previewImage && <div className="bg-card"><DialogHeader className="px-6 pb-2 pt-6"><DialogTitle>{previewImage.name}</DialogTitle><DialogDescription>Alumni profile photo preview</DialogDescription></DialogHeader><div className="p-6 pt-2"><div className="flex items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/30"><img src={previewImage.src} alt={previewImage.name} className="max-h-[70vh] w-full object-contain" /></div></div></div>}</DialogContent></Dialog>
+      <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}><DialogContent className="w-auto max-w-none gap-0 overflow-visible rounded-full border-0 bg-transparent p-0 shadow-none sm:w-auto sm:max-w-none sm:rounded-full sm:p-0 [&>button.absolute]:hidden">{previewImage && <><DialogTitle className="sr-only">{previewImage.name}</DialogTitle><button type="button" aria-label="Close photo preview" onClick={() => setPreviewImage(null)} className="rounded-full focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-transparent"><img src={previewImage.src} alt={previewImage.name} className="h-64 w-64 rounded-full object-cover" /></button></>}</DialogContent></Dialog>
     </AdminLayout>
   );
 }
@@ -1058,9 +1118,9 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
         : "border-border bg-muted/20 text-navy-dark";
 
   return (
-    <div className={`rounded-xl border px-4 py-3 ${toneClassName}`}>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
+    <div className={`rounded-lg border px-3 py-2 ${toneClassName}`}>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.1em]">{label}</p>
+      <p className="mt-0.5 text-base font-semibold leading-none">{value}</p>
     </div>
   );
 }

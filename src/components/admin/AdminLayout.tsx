@@ -15,7 +15,7 @@ import {
   Calendar,
   ChevronDown,
   FileText,
-  Heart,
+  HandHeart,
   ImagePlus,
   LayoutDashboard,
   LogOut,
@@ -39,7 +39,7 @@ const ALL_NAV_ITEMS = [
   { icon: Trophy, label: "Achievements", path: "/admin/achievements", module: "achievements" },
   { icon: MessageSquareText, label: "Freedom Wall", path: "/admin/community", module: "community" },
   { icon: Calendar, label: "Announcements", path: "/admin/announcements", module: "events" },
-  { icon: Heart, label: "Donations", path: "/admin/donations", module: "donations" },
+  { icon: HandHeart, label: "Contributions", path: "/admin/contributions", module: "donations" },
   { icon: Mail, label: "Mailing", path: "/admin/notifications", module: "notifications" },
 ] as const;
 
@@ -66,7 +66,7 @@ function canAccessNavItem(role: OfficerRole, module: AdminModule, path: string) 
 }
 
 const ROLE_LABELS: Partial<Record<AppRole, string>> = {
-  president: "President",
+  admin: "System Administrator",
   vice_president: "Vice President",
   secretary: "Secretary",
   assistant_secretary: "Asst. Secretary",
@@ -81,7 +81,7 @@ function isActivePath(currentPath: string, itemPath: string) {
   const normalizedItemPath = itemPath.split("?")[0];
 
   if (normalizedItemPath === "/admin") {
-    return currentPath === "/admin";
+    return currentPath === normalizedItemPath;
   }
 
   return currentPath === normalizedItemPath || currentPath.startsWith(`${normalizedItemPath}/`);
@@ -180,7 +180,7 @@ export default function AdminLayout({
         })}
       </nav>
 
-      {mobile && (
+      {mobile && role === "admin" && (
         <div className="hidden border-t border-white/20 p-3 max-[640px]:block">
           <button
             type="button"
@@ -228,7 +228,7 @@ export default function AdminLayout({
           <div className="flex items-center gap-2">
             <NotificationBell />
 
-            <button
+            {role === "admin" && <button
               type="button"
               onClick={() => openHomepageMediaDialog()}
               className="portal-header-button max-[640px]:hidden"
@@ -236,7 +236,7 @@ export default function AdminLayout({
               title="Post media"
             >
               <ImagePlus className="h-5 w-5" />
-            </button>
+            </button>}
 
             <div className="relative">
               <button
@@ -290,7 +290,7 @@ export default function AdminLayout({
                           <Shield className="h-4 w-4 text-muted-foreground" /> Officers
                         </button>
                       )}
-                      <button
+                      {role === "admin" && <button
                         onClick={() => {
                           navigate("/admin/account?section=settings");
                           setAccountMenuOpen(false);
@@ -298,7 +298,7 @@ export default function AdminLayout({
                         className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground transition-colors hover:bg-muted/50"
                       >
                         <Settings className="h-4 w-4 text-muted-foreground" /> Settings
-                      </button>
+                      </button>}
                       <div className="my-1 border-t border-border" />
                       <button
                         onClick={handleLogout}

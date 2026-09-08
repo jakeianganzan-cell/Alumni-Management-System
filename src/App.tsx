@@ -5,8 +5,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
-import { EventProvider } from "@/context/EventContext";
-import { AnnouncementProvider } from "@/context/AnnouncementContext";
 import { SystemSettingsProvider } from "@/context/SystemSettingsContext";
 import { canAccessModule, type OfficerRole } from "@/lib/rbac";
 import type { AdminModule } from "@/lib/rbac";
@@ -47,15 +45,17 @@ const ChairmanAnnouncements = lazy(() => import("./pages/chairman/Announcements"
 const ChairmanAchievements = lazy(() => import("./pages/chairman/Achievements"));
 const ChairmanCommunity = lazy(() => import("./pages/chairman/Community"));
 
-// Non-lazy component (small)
-import OfficerBundlesModule from "./components/admin/OfficerBundlesModule";
 import { CircularLoadingProgress } from "@/components/ui/loading-progress";
+
+const OfficerBundlesModule = lazy(() => import("./components/admin/OfficerBundlesModule"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutes
       gcTime: 1000 * 60 * 30, // 30 minutes
+      refetchOnWindowFocus: false,
+      retry: 1,
     },
   },
 });
@@ -139,6 +139,7 @@ function AppRoutes() {
       <Route path="/admin/announcements" element={<PageSuspense><AdminRoute module="dashboard"><AdminAnnouncements /></AdminRoute></PageSuspense>} />
       <Route path="/admin/surveys" element={<Navigate to="/admin/announcements" replace />} />
       <Route path="/admin/donations" element={<PageSuspense><AdminRoute module="donations"><AdminDonations /></AdminRoute></PageSuspense>} />
+      <Route path="/admin/contributions" element={<PageSuspense><AdminRoute module="donations"><AdminDonations /></AdminRoute></PageSuspense>} />
       <Route path="/admin/events" element={<Navigate to="/admin/announcements" replace />} />
       <Route path="/admin/reports" element={<PageSuspense><AdminRoute module="reports"><Navigate to="/admin/account?section=reports" replace /></AdminRoute></PageSuspense>} />
       <Route path="/admin/notifications" element={<PageSuspense><AdminRoute module="notifications"><AdminNotifications /></AdminRoute></PageSuspense>} />
@@ -181,19 +182,15 @@ function AppRoutes() {
 const App = () => (
   <SystemSettingsProvider>
     <AuthProvider>
-      <AnnouncementProvider>
-        <EventProvider>
-          <QueryClientProvider client={queryClient}>
-            <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-                <AppRoutes />
-              </BrowserRouter>
-            </TooltipProvider>
-          </QueryClientProvider>
-        </EventProvider>
-      </AnnouncementProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <AppRoutes />
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
     </AuthProvider>
   </SystemSettingsProvider>
 );

@@ -16,7 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import type { Announcement, AnnouncementApprovalStatus, AnnouncementAudienceScope, AnnouncementStatus, AnnouncementType } from "@/context/AnnouncementContext";
+import type { Announcement, AnnouncementApprovalStatus, AnnouncementAudienceScope, AnnouncementStatus, AnnouncementType, ContributionOpportunity } from "@/context/AnnouncementContext";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,10 @@ type AnnouncementForm = {
   end_date: string;
   end_time: string;
   interestEnabled: boolean;
+  contributionOpportunity: ContributionOpportunityForm | null;
 };
+
+type ContributionOpportunityForm = Omit<ContributionOpportunity, "id" | "registrationCount">;
 
 type ContentWorkspace = "announcement" | "event" | "survey";
 
@@ -110,6 +113,7 @@ const BLANK_FORM: AnnouncementForm = {
   end_date: "",
   end_time: "23:59",
   interestEnabled: false,
+  contributionOpportunity: null,
 };
 
 const EVENT_TYPE_OPTIONS = ["Donation", "Meeting", "Alumni", "Other"] as const;
@@ -292,19 +296,16 @@ export default function AdminAnnouncements() {
       {
         key: "announcement" as const,
         label: "Announcements",
-        description: "Official notices and alumni submissions.",
         count: announcements.filter((item) => item.type === "announcement").length,
       },
       {
         key: "event" as const,
         label: "Events",
-        description: "Activities and alumni interest tracking.",
         count: announcements.filter((item) => item.type === "event").length,
       },
       {
         key: "survey" as const,
         label: "Surveys",
-        description: "All surveys and survey creation.",
         count: 0,
       },
     ],
@@ -380,6 +381,20 @@ export default function AdminAnnouncements() {
       end_date: announcement.end_date || (announcement.end_datetime ? String(announcement.end_datetime).slice(0, 10) : announcement.date ? String(announcement.date).slice(0, 10) : ""),
       end_time: announcement.end_time || (announcement.end_datetime ? String(announcement.end_datetime).slice(11, 16) : "23:59"),
       interestEnabled: announcement.type === "event" || Boolean(announcement.interestEnabled),
+      contributionOpportunity: announcement.contributionOpportunity ? {
+        opportunityType: announcement.contributionOpportunity.opportunityType,
+        registrationDeadline: announcement.contributionOpportunity.registrationDeadline ? String(announcement.contributionOpportunity.registrationDeadline).slice(0, 16) : "",
+        capacity: announcement.contributionOpportunity.capacity ?? null,
+        requiredSkills: announcement.contributionOpportunity.requiredSkills || "",
+        availableRoles: announcement.contributionOpportunity.availableRoles || "",
+        instructions: announcement.contributionOpportunity.instructions || "",
+        objectives: announcement.contributionOpportunity.objectives || "",
+        targetDate: announcement.contributionOpportunity.targetDate ? String(announcement.contributionOpportunity.targetDate).slice(0, 10) : "",
+        supportTypes: announcement.contributionOpportunity.supportTypes || [],
+        targetQuantity: announcement.contributionOpportunity.targetQuantity || "",
+        contactInstructions: announcement.contributionOpportunity.contactInstructions || "",
+        status: announcement.contributionOpportunity.status,
+      } : null,
     });
     setFormOpen(true);
   };
@@ -461,6 +476,54 @@ export default function AdminAnnouncements() {
           </div>
         )}
 
+        {activeWorkspace !== "survey" && (
+          <Card className="border-slate-200 bg-white shadow-sm">
+            <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title or submitter" className="w-52 border-slate-300 bg-white pl-9" />
+                </div>
+                <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+                  {[
+                    { key: "all", label: "All" },
+                    { key: "pending_approval", label: "Pending" },
+                    { key: "approved", label: "Published" },
+                    { key: "rejected", label: "Rejected" },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setApprovalFilter(item.key as typeof approvalFilter)}
+                      className={cn(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        approvalFilter === item.key ? "bg-navy text-white" : "text-muted-foreground hover:text-navy-dark",
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+                  {(["all", "Upcoming", "Active", "Archived"] as const).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setDurationFilter(item)}
+                      className={cn(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        durationFilter === item ? "bg-navy text-white" : "text-muted-foreground hover:text-navy-dark",
+                      )}
+                    >
+                      {item === "all" ? "All Time" : item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid gap-3 md:grid-cols-3">
           {contentWorkspaces.map((workspace) => {
             const active = activeWorkspace === workspace.key;
@@ -477,7 +540,6 @@ export default function AdminAnnouncements() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className={cn("text-sm font-semibold", active ? "text-white" : "text-navy-dark")}>{workspace.label}</p>
-                    <p className={cn("mt-1 text-xs leading-5", active ? "text-white/75" : "text-muted-foreground")}>{workspace.description}</p>
                   </div>
                   {workspace.key !== "survey" && (
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", active ? "bg-white/15 text-white" : "bg-slate-100 text-slate-700")}>
@@ -494,52 +556,6 @@ export default function AdminAnnouncements() {
           <SurveyStudio />
         ) : (
           <>
-            <Card className="border-slate-200 bg-white shadow-sm">
-              <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title or submitter" className="w-52 border-slate-300 bg-white pl-9" />
-                  </div>
-                  <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                    {[
-                      { key: "all", label: "All" },
-                      { key: "pending_approval", label: "Pending" },
-                      { key: "approved", label: "Published" },
-                      { key: "rejected", label: "Rejected" },
-                    ].map((item) => (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setApprovalFilter(item.key as typeof approvalFilter)}
-                        className={cn(
-                          "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                          approvalFilter === item.key ? "bg-navy text-white" : "text-muted-foreground hover:text-navy-dark",
-                        )}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                    {(["all", "Upcoming", "Active", "Archived"] as const).map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setDurationFilter(item)}
-                        className={cn(
-                          "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                          durationFilter === item ? "bg-navy text-white" : "text-muted-foreground hover:text-navy-dark",
-                        )}
-                      >
-                        {item === "all" ? "All Time" : item}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
             <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
@@ -940,6 +956,82 @@ export default function AdminAnnouncements() {
                   </span>
                 </span>
               </label>
+
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <label className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.contributionOpportunity)}
+                    onChange={(event) => setFormData((current) => ({
+                      ...current,
+                      contributionOpportunity: event.target.checked ? {
+                        opportunityType: "Volunteer Service",
+                        registrationDeadline: "",
+                        capacity: null,
+                        requiredSkills: "",
+                        availableRoles: "",
+                        instructions: "",
+                        objectives: "",
+                        targetDate: "",
+                        supportTypes: [],
+                        targetQuantity: "",
+                        contactInstructions: "",
+                        status: "Open",
+                      } : null,
+                    }))}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="block font-semibold text-navy-dark">Enable contribution action</span>
+                    <span className="block text-xs text-muted-foreground">Let alumni register as volunteers or offer project support from this post.</span>
+                  </span>
+                </label>
+
+                {formData.contributionOpportunity && (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <Field label="Opportunity type">
+                      <select
+                        value={formData.contributionOpportunity.opportunityType}
+                        onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, opportunityType: event.target.value as ContributionOpportunityForm["opportunityType"] } }) : current)}
+                        className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                      >
+                        <option value="Volunteer Service">Volunteer Opportunity</option>
+                        <option value="Project Support">Project Support Opportunity</option>
+                      </select>
+                    </Field>
+                    <Field label="Registration deadline">
+                      <Input type="datetime-local" value={formData.contributionOpportunity.registrationDeadline || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, registrationDeadline: event.target.value } }) : current)} className="border-slate-300 bg-white" />
+                    </Field>
+                    <Field label="Opportunity status">
+                      <select value={formData.contributionOpportunity.status} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, status: event.target.value as ContributionOpportunityForm["status"] } }) : current)} className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm">
+                        <option value="Open">Open</option><option value="Closed">Closed</option><option value="Cancelled">Cancelled</option>
+                      </select>
+                    </Field>
+                    {formData.contributionOpportunity.opportunityType === "Volunteer Service" ? <>
+                      <Field label="Volunteers needed">
+                        <Input type="number" min="1" value={formData.contributionOpportunity.capacity ?? ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, capacity: event.target.value ? Number(event.target.value) : null } }) : current)} className="border-slate-300 bg-white" />
+                      </Field>
+                      <Field label="Available roles or tasks">
+                        <Input value={formData.contributionOpportunity.availableRoles || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, availableRoles: event.target.value } }) : current)} className="border-slate-300 bg-white" placeholder="Separate roles with commas" />
+                      </Field>
+                      <Field label="Required skills">
+                        <Input value={formData.contributionOpportunity.requiredSkills || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, requiredSkills: event.target.value } }) : current)} className="border-slate-300 bg-white" />
+                      </Field>
+                    </> : <>
+                      <Field label="Target date">
+                        <Input type="date" value={formData.contributionOpportunity.targetDate || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, targetDate: event.target.value } }) : current)} className="border-slate-300 bg-white" />
+                      </Field>
+                      <Field label="Target quantity or amount">
+                        <Input value={formData.contributionOpportunity.targetQuantity || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, targetQuantity: event.target.value } }) : current)} className="border-slate-300 bg-white" />
+                      </Field>
+                      <Field label="Project objectives">
+                        <Input value={formData.contributionOpportunity.objectives || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, objectives: event.target.value } }) : current)} className="border-slate-300 bg-white" />
+                      </Field>
+                    </>}
+                    <div className="md:col-span-2"><Field label="Coordination instructions"><Textarea rows={2} value={formData.contributionOpportunity.contactInstructions || formData.contributionOpportunity.instructions || ""} onChange={(event) => setFormData((current) => current.contributionOpportunity ? ({ ...current, contributionOpportunity: { ...current.contributionOpportunity, contactInstructions: event.target.value, instructions: event.target.value } }) : current)} className="border-slate-300 bg-white" /></Field></div>
+                  </div>
+                )}
+              </section>
 
               <Field label={formData.type === "survey" ? "Survey instructions" : "Full content"}>
                 <Textarea value={formData.description} onChange={(event) => setFormData((current) => ({ ...current, description: event.target.value }))} rows={6} className="border-slate-300 bg-white" />

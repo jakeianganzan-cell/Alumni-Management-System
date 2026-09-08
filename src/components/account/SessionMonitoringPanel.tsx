@@ -48,10 +48,11 @@ interface SessionsResponse {
     loggedInToday: number;
     loginsToday: number;
     activeSessions: number;
+    totalRegisteredUsers: number;
   };
 }
 
-const EMPTY_STATS = { onlineUsers: 0, onlineSessions: 0, loggedInToday: 0, loginsToday: 0, activeSessions: 0 };
+const EMPTY_STATS = { onlineUsers: 0, onlineSessions: 0, loggedInToday: 0, loginsToday: 0, activeSessions: 0, totalRegisteredUsers: 0 };
 
 const formatDateTime = (value: string | null) => {
   if (!value) return "-";
@@ -211,6 +212,7 @@ export default function SessionMonitoringPanel() {
               <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{stats.onlineUsers} online now</span>
               <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">{stats.loggedInToday} logged in today</span>
               <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-semibold text-muted-foreground">{stats.loginsToday} login sessions today</span>
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">{stats.totalRegisteredUsers.toLocaleString()} total registered users</span>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

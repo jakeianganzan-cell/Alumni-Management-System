@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Eye, EyeOff, Loader2, MessageSquareWarning, Send, Sparkles, UserCheck, X } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, MessageSquareWarning, Send, UserCheck, X } from "lucide-react";
 import { AppRole, RoleSelectionState, useAuth } from "@/hooks/useAuth";
 import { API_URL, fetchApi, getRememberedIdentifier, getRememberMePreference, readApiResponse, resolveAssetUrl, setRememberedIdentifier } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
@@ -33,7 +33,7 @@ export default function Login() {
   });
   const roleLabels: Partial<Record<AppRole, string>> = {
     alumni: "Alumni",
-    president: "Administrator",
+    admin: "System Administrator",
     vice_president: "Staff",
     secretary: "Staff",
     assistant_secretary: "Staff",
@@ -180,8 +180,6 @@ export default function Login() {
         className="absolute inset-0 bg-cover bg-center transition-all duration-700"
         style={{ backgroundImage: `url(${currentBackground})` }}
       />
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(24,24,24,0.82),rgba(85,0,0,0.80),rgba(48,48,48,0.78))]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.08),transparent_26%)]" />
 
       <button
         type="button"
@@ -245,15 +243,14 @@ export default function Login() {
       )}
       <div className="relative z-10 flex min-h-dvh items-center justify-center px-3 py-[max(1rem,env(safe-area-inset-top))] sm:px-4 max-[640px]:py-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="w-full max-w-lg max-[640px]:max-w-[20rem]">
-          <div className="overflow-hidden rounded-[30px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(248,246,247,0.98))] shadow-[0_30px_80px_rgba(0,0,0,0.36)] ring-1 ring-white/50 max-[640px]:rounded-[20px] max-[640px]:shadow-[0_18px_48px_rgba(0,0,0,0.32)]">
-            <div className="relative overflow-hidden border-b border-slate-200/90 px-4 pb-4 pt-5 sm:px-7 max-[640px]:px-2.5 max-[640px]:pb-2 max-[640px]:pt-2.5">
-              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(85,0,0,0.98),rgba(42,42,42,0.95))] max-[640px]:h-12" />
+          <div className="overflow-hidden rounded-[30px] border border-white/30 bg-[linear-gradient(135deg,rgba(85,0,0,0.88),rgba(42,0,0,0.84))] shadow-[0_30px_80px_rgba(0,0,0,0.36)] ring-1 ring-white/15 max-[640px]:rounded-[20px] max-[640px]:shadow-[0_18px_48px_rgba(0,0,0,0.32)]">
+            <div className="relative overflow-hidden border-b border-white/15 px-4 pb-4 pt-5 sm:px-7 max-[640px]:px-2.5 max-[640px]:pb-2 max-[640px]:pt-2.5">
+              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(85,0,0,0.62),rgba(20,20,20,0.42))] max-[640px]:h-12" />
               <div className="absolute -right-10 top-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
               <div className="absolute left-8 top-16 h-16 w-16 rounded-full bg-white/10 blur-xl" />
 
               <div className="relative z-10 text-center text-white">
-                <div className="mx-auto flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 backdrop-blur max-[640px]:gap-1.5 max-[640px]:px-2 max-[640px]:py-1">
-                  <Sparkles className="h-4 w-4 text-white/80 max-[640px]:h-3 max-[640px]:w-3" />
+                <div className="mx-auto flex w-fit items-center rounded-full border border-white/15 bg-white/10 px-3 py-1.5 max-[640px]:px-2 max-[640px]:py-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.2em] text-white/80 max-[640px]:text-[9px] max-[640px]:tracking-[0.14em]">
                     {settings.systemShortName}
                   </span>
@@ -265,11 +262,11 @@ export default function Login() {
 
             <div className="px-4 py-5 sm:px-7 max-[640px]:px-3 max-[640px]:py-3">
               <div className="mb-4 text-center max-[640px]:mb-2.5">
-                <h1 className="mx-auto max-w-[18rem] text-lg font-extrabold leading-snug text-black sm:max-w-xs sm:text-[1.45rem] max-[640px]:text-[15px]">
+                <h1 className="mx-auto max-w-[18rem] text-lg font-extrabold leading-snug text-white sm:max-w-xs sm:text-[1.45rem] max-[640px]:text-[15px]">
                   {settings.welcomeMessage}
                 </h1>
                 {settings.loginSubtitle && (
-                  <p className="mx-auto mt-2 max-w-sm text-xs font-medium leading-5 text-slate-600 max-[640px]:mt-1 max-[640px]:text-[11px] max-[640px]:leading-4">
+                  <p className="mx-auto mt-2 max-w-sm text-xs font-medium leading-5 text-white/75 max-[640px]:mt-1 max-[640px]:text-[11px] max-[640px]:leading-4">
                     {settings.loginSubtitle}
                   </p>
                 )}
@@ -277,9 +274,9 @@ export default function Login() {
 
               {roleSelection ? (
                 <div className="mx-auto max-w-md space-y-3.5 max-[640px]:space-y-2">
-                  <div className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 max-[640px]:text-[10px] max-[640px]:tracking-[0.12em]">Select Role</p>
-                    <p className="mt-1 break-words text-sm font-bold text-navy-dark max-[640px]:mt-0.5 max-[640px]:text-xs">{roleSelection.profile?.name || roleSelection.user.email}</p>
+                  <div className="rounded-xl border border-white/20 bg-black/20 px-4 py-3 max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60 max-[640px]:text-[10px] max-[640px]:tracking-[0.12em]">Select Role</p>
+                    <p className="mt-1 break-words text-sm font-bold text-white max-[640px]:mt-0.5 max-[640px]:text-xs">{roleSelection.profile?.name || roleSelection.user.email}</p>
                   </div>
 
                   <div className="grid gap-2">
@@ -291,8 +288,8 @@ export default function Login() {
                         disabled={loading}
                         className={`flex min-h-11 items-center justify-between rounded-xl border px-4 py-3 text-left transition max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 ${
                           selectedRole === item
-                            ? "border-navy bg-navy text-white shadow-card"
-                            : "border-slate-200 bg-white text-navy-dark hover:border-navy/40 hover:bg-slate-50"
+                            ? "border-white/50 bg-navy/85 text-white shadow-card"
+                            : "border-white/25 bg-white/10 text-white hover:border-white/45 hover:bg-white/15"
                         } disabled:cursor-not-allowed disabled:opacity-70`}
                       >
                         <span className="flex min-w-0 items-center gap-3">
@@ -310,7 +307,7 @@ export default function Login() {
                     type="button"
                     onClick={resetRoleSelection}
                     disabled={loading}
-                    className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-navy-dark transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 max-[640px]:text-xs"
+                    className="min-h-11 w-full rounded-xl border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:border-white/45 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-70 max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 max-[640px]:text-xs"
                   >
                     Use different account
                   </button>
@@ -318,24 +315,24 @@ export default function Login() {
               ) : (
                 <form onSubmit={handleLogin} className="mx-auto max-w-md space-y-3.5 max-[640px]:space-y-2">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-navy-dark max-[640px]:text-xs">Email or Alumni ID</label>
+                    <label className="mb-1 block text-sm font-medium text-white/90 max-[640px]:text-xs">Email or Alumni ID</label>
                     <input
                       type="text"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
-                      className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-base text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2"
+                      className="min-h-11 w-full rounded-xl border border-white/40 bg-white/90 px-4 py-2.5 text-base text-slate-900 shadow-sm transition-colors focus:border-white focus:outline-none focus:ring-2 focus:ring-white/25 sm:text-sm max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 max-[640px]:text-xs"
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-navy-dark max-[640px]:text-xs">Password</label>
+                    <label className="mb-1 block text-sm font-medium text-white/90 max-[640px]:text-xs">Password</label>
                     <div className="relative">
                       <input
                         type={showPassword ? "text" : "password"}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 pr-12 text-base text-slate-900 shadow-sm transition-colors focus:border-navy focus:outline-none focus:ring-2 focus:ring-navy/15 sm:text-sm max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 max-[640px]:pr-11"
+                        className="min-h-11 w-full rounded-xl border border-white/40 bg-white/90 px-4 py-2.5 pr-12 text-base text-slate-900 shadow-sm transition-colors focus:border-white focus:outline-none focus:ring-2 focus:ring-white/25 sm:text-sm max-[640px]:rounded-lg max-[640px]:px-3 max-[640px]:py-2 max-[640px]:pr-11 max-[640px]:text-xs"
                         required
                       />
 
@@ -349,10 +346,10 @@ export default function Login() {
                     </div>
                   </div>
 
-                  <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 max-[640px]:rounded-lg max-[640px]:px-2.5 max-[640px]:py-1.5">
+                  <div className="flex items-start justify-between gap-4 rounded-xl border border-white/20 bg-black/20 px-4 py-2.5 max-[640px]:rounded-lg max-[640px]:px-2.5 max-[640px]:py-1.5">
                     <div className="space-y-1 max-[640px]:space-y-0.5">
-                      <p className="text-sm font-semibold text-navy-dark max-[640px]:text-xs">Remember me</p>
-                      <p className="text-xs leading-4 text-slate-600 max-[640px]:text-[10px] max-[640px]:leading-3.5">Keep this account signed in on this device.</p>
+                      <p className="text-sm font-semibold text-white/90 max-[640px]:text-xs">Remember me</p>
+                      <p className="text-xs leading-4 text-white/60 max-[640px]:text-[10px] max-[640px]:leading-3.5">Keep this account signed in on this device.</p>
                     </div>
                     <input
                       type="checkbox"
@@ -375,7 +372,7 @@ export default function Login() {
                 </form>
               )}
 
-              <p className="mt-4 border-t border-slate-200 pt-3 text-center text-xs font-medium text-slate-600 max-[640px]:mt-2.5 max-[640px]:pt-1.5 max-[640px]:text-[10px]">Use your alumni ID or email.</p>
+              <p className="mt-4 border-t border-white/15 pt-3 text-center text-xs font-medium text-white/65 max-[640px]:mt-2.5 max-[640px]:pt-1.5 max-[640px]:text-[10px]">Use your alumni ID or email.</p>
             </div>
           </div>
         </div>

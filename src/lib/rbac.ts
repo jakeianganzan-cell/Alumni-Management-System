@@ -2,7 +2,7 @@ import type { CourseCode } from "@/lib/courseCatalog";
 import { COURSE_LABELS } from "@/lib/courseCatalog";
 
 export type OfficerRole =
-  | "president"
+  | "admin"
   | "vice_president"
   | "secretary"
   | "assistant_secretary"
@@ -29,7 +29,8 @@ export type AdminModule =
   | "events"
   | "notifications"
   | "reports"
-  | "officers";
+  | "officers"
+  | "projects";
 
 export type Permission =
   | "donations.approve"
@@ -49,7 +50,9 @@ export type Permission =
   | "community.moderate"
   | "achievements.moderate"
   | "surveys.manage"
-  | "settings.manage";
+  | "settings.manage"
+  | "projects.view"
+  | "projects.manage";
 
 export interface RoleDefinition {
   label: string;
@@ -61,32 +64,13 @@ export interface RoleDefinition {
 }
 
 export const ROLE_DEFINITIONS: Record<OfficerRole, RoleDefinition> = {
-  president: {
-    label: "President",
-    color: "bg-navy",
+  admin: {
+    label: "System Administrator",
+    color: "bg-slate-900",
     textColor: "text-white",
-    description: "Full system authority - Super Admin",
-    modules: ["dashboard", "alumni", "tracer", "engagement", "community", "achievements", "surveys", "donations", "events", "notifications", "reports", "officers"],
-    permissions: [
-      "donations.approve",
-      "donations.reject",
-      "donations.view",
-      "donations.verify",
-      "notifications.send",
-      "notifications.draft",
-      "officers.manage",
-      "alumni.edit",
-      "alumni.view",
-      "tracer.view",
-      "events.manage",
-      "events.view",
-      "reports.view",
-      "engagement.view",
-      "community.moderate",
-      "achievements.moderate",
-      "surveys.manage",
-      "settings.manage",
-    ],
+    description: "System accounts, configuration, security, and administrative operations",
+    modules: ["dashboard", "alumni", "tracer", "engagement", "community", "achievements", "surveys", "donations", "events", "notifications", "reports", "officers", "projects"],
+    permissions: ["donations.approve", "donations.reject", "donations.view", "donations.verify", "notifications.send", "notifications.draft", "officers.manage", "alumni.edit", "alumni.view", "tracer.view", "events.manage", "events.view", "reports.view", "engagement.view", "community.moderate", "achievements.moderate", "surveys.manage", "settings.manage", "projects.view", "projects.manage"],
   },
   vice_president: {
     label: "Vice President",
@@ -148,7 +132,7 @@ export const ROLE_DEFINITIONS: Record<OfficerRole, RoleDefinition> = {
     label: "Appointed",
     color: "bg-slate-500",
     textColor: "text-white",
-    description: "Limited access assigned by President",
+    description: "Limited access assigned by the System Administrator",
     modules: ["dashboard"],
     permissions: [],
   },
@@ -164,11 +148,13 @@ export const ROLE_DEFINITIONS: Record<OfficerRole, RoleDefinition> = {
 
 export function hasPermission(role: OfficerRole | undefined | null, permission: Permission): boolean {
   if (!role) return false;
+  if (role === "admin") return true;
   return ROLE_DEFINITIONS[role]?.permissions.includes(permission) ?? false;
 }
 
 export function canAccessModule(role: OfficerRole | undefined | null, module: AdminModule): boolean {
   if (!role) return false;
+  if (role === "admin") return true;
   return ROLE_DEFINITIONS[role]?.modules.includes(module) ?? false;
 }
 

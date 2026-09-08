@@ -10,6 +10,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: production
+      - key: DB_ENVIRONMENT
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: 1
       - key: HOST
         value: 0.0.0.0
       - key: FRONTEND_URL
@@ -47,6 +53,68 @@ services:
       - key: RUNTIME_SCHEMA_SYNC
         value: false
       - key: RESET_ADMIN_PASSWORD_ON_STARTUP
+        value: false
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/.cache/puppeteer
+
+  - type: web
+    name: alumni-management-api-staging
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run migrate && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: staging
+      - key: DB_ENVIRONMENT
+        value: staging
+      - key: TRUST_PROXY_HOPS
+        value: 1
+      - key: HOST
+        value: 0.0.0.0
+      - key: FRONTEND_URL
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_SSL
+        value: true
+      - key: DB_SSL_CA
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Salay Community College Staging
+      - key: ENABLE_SETUP_ADMIN
+        value: false
+      - key: ENABLE_TEST_ROUTE
+        value: false
+      - key: RUNTIME_SCHEMA_SYNC
+        value: false
+      - key: RESET_ADMIN_PASSWORD_ON_STARTUP
+        value: false
+      - key: QUEUE_PROCESSING_ENABLED
+        value: false
+      - key: AUTO_ARCHIVE_ENABLED
         value: false
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/.cache/puppeteer

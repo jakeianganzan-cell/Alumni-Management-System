@@ -9,7 +9,12 @@ import { getSessionAccessDecision, type SessionValidationResult } from "../utils
 
 const JWT_SECRET = config.jwtSecret;
 
-const getToken = (req: AuthenticatedRequest) => req.headers["authorization"]?.split(" ")[1];
+const getToken = (req: AuthenticatedRequest) => {
+    const authorization = req.headers.authorization;
+    if (!authorization) return null;
+    const match = authorization.match(/^Bearer\s+([^\s]+)$/i);
+    return match?.[1] || null;
+};
 
 const endExpiredSession = async (token: string) => {
     try {
@@ -81,15 +86,18 @@ export const authenticateToken = (
         }
 
         const payload = user as JwtPayload;
+        if (!payload.id || !payload.email || !payload.role) {
+            return res.sendStatus(403);
+        }
         const sessionId = payload.sessionId || payload.sid;
 
-        if (sessionId) {
-            const decision = getSessionAccessDecision(await isSessionActive(String(sessionId)));
-            if (!decision.allowed) {
-                return decision.status === 403
-                    ? res.status(403).json({ error: "Session ended" })
-                    : res.status(503).json({ error: "Authentication service temporarily unavailable" });
-            }
+        if (!sessionId) return res.sendStatus(403);
+
+        const decision = getSessionAccessDecision(await isSessionActive(String(sessionId)));
+        if (!decision.allowed) {
+            return decision.status === 403
+                ? res.status(403).json({ error: "Session ended" })
+                : res.status(503).json({ error: "Authentication service temporarily unavailable" });
         }
 
         req.user = {

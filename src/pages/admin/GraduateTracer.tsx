@@ -1,7 +1,7 @@
 import { clientLogger } from "@/lib/logger";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
-import { Download, Eye, FileSpreadsheet, FileText, Filter, Loader2, Search } from "lucide-react";
+import { Download, Eye, FileSpreadsheet, Filter, Loader2, Search } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
 
@@ -107,7 +107,7 @@ export default function AdminGraduateTracer() {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const fetchRows = useCallback(async (page = pagination.page) => {
+  const fetchRows = useCallback(async (page = pagination.page, signal?: AbortSignal) => {
     try {
       setLoading(true);
       const params = new URLSearchParams({
@@ -121,14 +121,14 @@ export default function AdminGraduateTracer() {
       if (employmentStatus !== "All Status") params.set("employmentStatus", employmentStatus);
       if (dateSubmitted) params.set("dateSubmitted", dateSubmitted);
 
-      const response = await fetch(`${API_URL}/admin/tracer?${params.toString()}`, { headers: getAuthHeaders() });
+      const response = await fetch(`${API_URL}/admin/tracer?${params.toString()}`, { headers: getAuthHeaders(), signal });
       const payload = await readApiResponse<{ rows: TracerRow[]; pagination: PaginationMeta }>(response);
       setRows(payload.rows ?? []);
       setSelectedIds(new Set());
       setPagination(payload.pagination ?? { page: 1, pageSize: 10, total: 0, totalPages: 1 });
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       clientLogger.error(error);
-      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -149,8 +149,14 @@ export default function AdminGraduateTracer() {
   }, []);
 
   useEffect(() => {
-    void fetchRows(1);
-  }, [fetchRows]);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void fetchRows(1, controller.signal), search.trim() ? 250 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [fetchRows, search]);
 
   useEffect(() => {
     void fetchAnalytics();
@@ -268,22 +274,7 @@ export default function AdminGraduateTracer() {
 
   return (
     <AdminLayout title="Graduate Tracer Management">
-      <div className="grid gap-3 lg:grid-cols-4">
-        {[
-          { label: "Total Alumni", value: analytics?.totals.totalAlumni, sub: "Eligible alumni accounts" },
-          { label: "Responded", value: analytics?.totals.totalResponded, sub: "Completed tracer forms" },
-          { label: "Completion Rate", value: analytics ? `${analytics.totals.completionRate}%` : undefined, sub: "Tracer response coverage" },
-          { label: "Employment Rate", value: analytics ? `${analytics.totals.employmentRate}%` : undefined, sub: "Respondents currently employed" },
-        ].map((stat) => (
-          <div key={stat.label} className="rounded-2xl border border-border bg-card p-4 shadow-card">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{stat.label}</p>
-            <p className="mt-2 text-2xl font-bold text-navy-dark sm:text-3xl">{loadingAnalytics ? "..." : stat.value ?? 0}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{stat.sub}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-5 rounded-2xl border border-border bg-card shadow-card">
+      <div className="rounded-2xl border border-border bg-card shadow-card">
         <div className="border-b border-border p-4">
           {actionMessage ? (
             <div className="mb-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -344,15 +335,6 @@ export default function AdminGraduateTracer() {
                 <span>{downloading === "report-excel" ? "Loading" : "Excel"}</span>
               </button>
               <button
-                onClick={() => void runFileDownload(`${API_URL}/tracer/admin/reports/export?format=pdf`, `graduate-tracer-report.html`, "report-pdf")}
-                disabled={downloading !== null}
-                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Printable PDF Report"
-              >
-                {downloading === "report-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                <span>{downloading === "report-pdf" ? "Loading" : "PDF Report"}</span>
-              </button>
-              <button
                 onClick={() => void runBulkPdfDownload()}
                 disabled={downloading !== null}
                 className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-navy hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
@@ -400,7 +382,7 @@ export default function AdminGraduateTracer() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading</td>
                 </tr>
@@ -493,6 +475,21 @@ export default function AdminGraduateTracer() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { label: "Total Alumni", value: analytics?.totals.totalAlumni, sub: "Eligible alumni accounts" },
+          { label: "Responded", value: analytics?.totals.totalResponded, sub: "Completed tracer forms" },
+          { label: "Completion Rate", value: analytics ? `${analytics.totals.completionRate}%` : undefined, sub: "Tracer response coverage" },
+          { label: "Employment Rate", value: analytics ? `${analytics.totals.employmentRate}%` : undefined, sub: "Respondents currently employed" },
+        ].map((stat) => (
+          <div key={stat.label} className="rounded-xl border border-border bg-card px-3 py-2.5 shadow-card">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{stat.label}</p>
+            <p className="mt-1 text-xl font-bold leading-none text-navy-dark">{loadingAnalytics ? "..." : stat.value ?? 0}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{stat.sub}</p>
+          </div>
+        ))}
       </div>
 
     </AdminLayout>

@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Bell, Camera, ChevronDown, Film, GripVertical, ImagePlus, Lock, LogOut, Mail, MessageSquareWarning, MonitorSmartphone, Palette, Pencil, Save, Shield, Trash2, User, Youtube } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,15 +15,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import ReportExportsPanel from "@/components/account/ReportExportsPanel";
 import ReportProblemPanel from "@/components/account/ReportProblemPanel";
 import MyPostsPanel from "@/components/account/MyPostsPanel";
-import SystemBrandingPanel from "@/components/account/SystemBrandingPanel";
-import SessionMonitoringPanel from "@/components/account/SessionMonitoringPanel";
-import EmailQueueSettingsPanel from "@/components/account/EmailQueueSettingsPanel";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LoadingProgress } from "@/components/ui/loading-progress";
+
+const ReportExportsPanel = lazy(() => import("@/components/account/ReportExportsPanel"));
+const SystemBrandingPanel = lazy(() => import("@/components/account/SystemBrandingPanel"));
+const SessionMonitoringPanel = lazy(() => import("@/components/account/SessionMonitoringPanel"));
+const EmailQueueSettingsPanel = lazy(() => import("@/components/account/EmailQueueSettingsPanel"));
 
 type ModuleMode = "alumni" | "admin";
 type SectionKey = "profile" | "security" | "notifications" | "problem" | "reports" | "settings";
@@ -700,7 +701,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
                   key={section.key}
                   type="button"
                   onClick={() => selectSection(section.key)}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+                  className={`${section.key === "notifications" ? "account-notifications-nav " : ""}flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
                     activeSection === section.key
                       ? "bg-navy text-white shadow-card"
                       : "bg-muted/30 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -878,7 +879,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
         )}
 
         {activeSection === "notifications" && (
-          <div className="rounded-3xl border border-border bg-card p-6 shadow-card">
+          <div className="account-notifications-panel rounded-3xl border border-border bg-card p-6 shadow-card">
             <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h3 className="font-display text-2xl font-bold text-navy-dark">Alerts & Preferences</h3>
@@ -973,29 +974,35 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
               </Popover>
             </div>
 
-            {settingsPanel === "branding" ? (
-              <SystemBrandingPanel />
-            ) : settingsPanel === "email" ? (
-              <EmailQueueSettingsPanel />
-            ) : settingsPanel === "media" ? (
-              <PostedMediaPanel
-                slides={homepageSlides}
-                loading={loadingHomepageSlides}
-                message={homepageSlideMessage}
-                draggedSlideId={draggedHomepageSlideId}
-                onRefresh={() => void loadHomepageSlides()}
-                onDragStart={handleHomepageSlideDragStart}
-                onDrop={(event, slideId) => void handleHomepageSlideDrop(event, slideId)}
-                onDragEnd={() => setDraggedHomepageSlideId(null)}
-                onEdit={editHomepageSlide}
-                onDelete={(slideId) => setHomepageSlideToDelete(homepageSlides.find((slide) => String(slide.id) === String(slideId)) ?? null)}
-              />
-            ) : (
-              <SessionMonitoringPanel />
-            )}
+            <Suspense fallback={<LoadingProgress compact />}>
+              {settingsPanel === "branding" ? (
+                <SystemBrandingPanel />
+              ) : settingsPanel === "email" ? (
+                <EmailQueueSettingsPanel />
+              ) : settingsPanel === "media" ? (
+                <PostedMediaPanel
+                  slides={homepageSlides}
+                  loading={loadingHomepageSlides}
+                  message={homepageSlideMessage}
+                  draggedSlideId={draggedHomepageSlideId}
+                  onRefresh={() => void loadHomepageSlides()}
+                  onDragStart={handleHomepageSlideDragStart}
+                  onDrop={(event, slideId) => void handleHomepageSlideDrop(event, slideId)}
+                  onDragEnd={() => setDraggedHomepageSlideId(null)}
+                  onEdit={editHomepageSlide}
+                  onDelete={(slideId) => setHomepageSlideToDelete(homepageSlides.find((slide) => String(slide.id) === String(slideId)) ?? null)}
+                />
+              ) : (
+                <SessionMonitoringPanel />
+              )}
+            </Suspense>
           </>
         )}
-        {activeSection === "reports" && canViewReports && <ReportExportsPanel showExports={false} />}
+        {activeSection === "reports" && canViewReports && (
+          <Suspense fallback={<LoadingProgress compact />}>
+            <ReportExportsPanel showExports={false} />
+          </Suspense>
+        )}
       </section>
     </div>
     <LogoutConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} onConfirm={confirmLogout} />

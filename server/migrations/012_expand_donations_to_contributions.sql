@@ -1,0 +1,14 @@
+ALTER TABLE donations ADD COLUMN contribution_type VARCHAR(60) NOT NULL DEFAULT 'Financial' AFTER user_id;
+ALTER TABLE donations ADD COLUMN contribution_date DATE NULL AFTER contribution_type;
+ALTER TABLE donations ADD COLUMN activity_name VARCHAR(255) NULL AFTER purpose;
+ALTER TABLE donations ADD COLUMN volunteer_hours DECIMAL(10,2) NULL AFTER activity_name;
+ALTER TABLE donations ADD COLUMN quantity_description VARCHAR(255) NULL AFTER volunteer_hours;
+ALTER TABLE donations ADD COLUMN estimated_value DECIMAL(12,2) NULL AFTER quantity_description;
+ALTER TABLE donations ADD COLUMN supporting_information TEXT NULL AFTER estimated_value;
+ALTER TABLE donations DROP CONSTRAINT chk_donations_amount_positive;
+ALTER TABLE donations ADD CONSTRAINT chk_contributions_amount_valid CHECK (amount >= 0 AND (contribution_type <> 'Financial' OR amount > 0));
+UPDATE donations SET contribution_type = 'Financial' WHERE contribution_type IS NULL OR TRIM(contribution_type) = '';
+UPDATE donations SET contribution_date = DATE(created_at) WHERE contribution_date IS NULL;
+ALTER TABLE donations ADD INDEX idx_donations_contribution_type (contribution_type);
+ALTER TABLE donations ADD INDEX idx_donations_contribution_date (contribution_date);
+ALTER TABLE donations ADD INDEX idx_donations_type_status_date (contribution_type, status, contribution_date);

@@ -392,14 +392,14 @@ export default function AdminDashboard() {
 
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Contribution by Course</h3>
+            <h3 className="font-bold text-sm text-navy-dark">Engagement by Course</h3>
           </div>
 
           <div className="p-4">
             {loading ? (
               <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">Loading</div>
             ) : !topCourseChartData.length || !hasCourseData ? (
-              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No course contribution activity found yet.</div>
+              <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">No course engagement activity found yet.</div>
             ) : (
               <div className="mobile-chart h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -415,7 +415,7 @@ export default function AdminDashboard() {
                         if (name === "contributionScore" && payload) {
                           return [
                             `${formatCompactNumber(Number(value))} score`,
-                            `${payload.events} events, ${payload.surveyResponses} surveys, ${payload.donations} donations`,
+                            `${payload.events} events, ${payload.surveyResponses} surveys, ${payload.freedomWall + payload.comments} platform interactions`,
                           ];
                         }
                         return [formatCompactNumber(Number(value)), String(name)];
@@ -425,7 +425,7 @@ export default function AdminDashboard() {
                         return match?.courseLabel || label;
                       }}
                     />
-                    <Bar dataKey="contributionScore" name="Contribution Score" fill={chartColors.accent} radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="contributionScore" name="Engagement Score" fill={chartColors.accent} radius={[0, 6, 6, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

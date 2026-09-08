@@ -34,7 +34,7 @@ if (process.env.LOAD_TEST_AUTH === "true") {
   }
 
   if (loginPayload.requiresRoleSelection) {
-    const selectedRole = loginPayload.roles.includes("president") ? "president" : loginPayload.roles[0];
+    const selectedRole = loginPayload.roles.includes("admin") ? "admin" : loginPayload.roles[0];
     const roleResponse = await fetch(new URL("/api/auth/select-role", target.origin), {
       method: "POST",
       headers: { "Content-Type": "application/json" },

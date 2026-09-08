@@ -6,6 +6,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { logger } from "./utils/logger";
+import { assertNonProductionOperation } from "./environment-policy.mjs";
+
+assertNonProductionOperation("Database seeding");
 
 type DbValue = string | number | boolean | Date | null;
 
@@ -25,7 +28,7 @@ type AdminSeed = {
   id: string;
   fullName: string;
   email: string;
-  role: "president" | "pio";
+  role: "admin" | "pio";
 };
 
 const currentFilePath = fileURLToPath(import.meta.url);
@@ -35,7 +38,6 @@ const DB_HOST = process.env.DB_HOST || process.env.MYSQL_HOST || "localhost";
 const DB_PORT = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
 const DB_USER = process.env.DB_USER || process.env.MYSQL_USER || "root";
 const DB_PASSWORD = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "";
-const DEFAULT_PASSWORD = process.env.SEED_PASSWORD || "Password123!";
 
 const parseBooleanEnv = (value: string | undefined) =>
   ["1", "true", "yes", "require", "required"].includes(String(value || "").trim().toLowerCase());
@@ -87,8 +89,8 @@ const adminUsers: AdminSeed[] = [
   {
     id: "11111111-1111-4111-8111-000000000001",
     fullName: "Atty. Marina Salcedo",
-    email: "admin.president@saccalumni.local",
-    role: "president",
+    email: "system.admin@saccalumni.local",
+    role: "admin",
   },
   {
     id: "11111111-1111-4111-8111-000000000002",
@@ -957,8 +959,36 @@ async function clearDemoData(conn: PoolConnection) {
   await conn.query("SET FOREIGN_KEY_CHECKS = 1");
 }
 
-async function insertUsers(conn: PoolConnection, passwordHash: string) {
+const getSeedPasswords = () => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(process.env.SEED_PASSWORDS_JSON || "{}");
+  } catch {
+    throw new Error("SEED_PASSWORDS_JSON must be a valid JSON object keyed by account email.");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("SEED_PASSWORDS_JSON must be a JSON object keyed by account email.");
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  const passwords = new Map(entries.map(([email, password]) => [email.trim().toLowerCase(), String(password || "")]));
+  const requiredEmails = [...adminUsers, ...alumni].map((user) => user.email.toLowerCase());
+  const values = requiredEmails.map((email) => passwords.get(email) || "");
+
+  if (values.some((password) => password.length < 12 || Buffer.byteLength(password, "utf8") > 72)) {
+    throw new Error("Every seeded account requires a 12+ character password (maximum 72 UTF-8 bytes) in SEED_PASSWORDS_JSON.");
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error("Every seeded account must have a unique password in SEED_PASSWORDS_JSON.");
+  }
+
+  return passwords;
+};
+
+async function insertUsers(conn: PoolConnection, seedPasswords: Map<string, string>) {
   for (const admin of adminUsers) {
+    const passwordHash = await bcrypt.hash(seedPasswords.get(admin.email.toLowerCase())!, 12);
     await execute(conn, "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)", [
       admin.id,
       admin.email,
@@ -986,6 +1016,7 @@ async function insertUsers(conn: PoolConnection, passwordHash: string) {
   }
 
   for (const item of alumni) {
+    const passwordHash = await bcrypt.hash(seedPasswords.get(item.email.toLowerCase())!, 12);
     await execute(conn, "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)", [
       item.id,
       item.email,
@@ -1673,14 +1704,13 @@ async function seed() {
   const conn = await pool.getConnection();
 
   try {
+    const seedPasswords = getSeedPasswords();
     logger.startup("Seeding SaCC demo data");
     await createTables(conn);
     await conn.beginTransaction();
     await clearDemoData(conn);
 
-    const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
-
-    await insertUsers(conn, passwordHash);
+    await insertUsers(conn, seedPasswords);
     await insertAnnouncementsAndEvents(conn);
     await insertEventRsvpsAndComments(conn);
     await insertAchievements(conn);

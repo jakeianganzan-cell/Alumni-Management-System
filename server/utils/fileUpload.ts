@@ -4,7 +4,6 @@ const FILE_EXTENSION_BY_MIME: Record<string, string> = {
     "image/jpg": "jpg",
     "image/gif": "gif",
     "image/webp": "webp",
-    "image/svg+xml": "svg",
     "image/x-icon": "ico",
     "image/vnd.microsoft.icon": "ico",
     "application/pdf": "pdf",
@@ -25,13 +24,24 @@ export const parseDataUrlUpload = (dataUrl: string, maxBytes = 8 * 1024 * 1024) 
         throw new Error("Only image, PDF, and Office document uploads are allowed.");
     }
 
-    const buffer = Buffer.from(match[2], "base64");
+    const encoded = match[2];
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+        throw new Error("Upload contains invalid base64 data.");
+    }
+    const buffer = Buffer.from(encoded, "base64");
     if (buffer.length > maxBytes) {
         throw new Error(`Uploads must be ${Math.floor(maxBytes / 1024 / 1024)}MB or smaller.`);
     }
 
     if (!hasValidFileSignature(buffer, mimeType)) {
         throw new Error("Uploaded file content does not match the declared file type.");
+    }
+
+    if (mimeType.startsWith("application/vnd.openxmlformats-officedocument.")) {
+        const archiveText = buffer.toString("latin1");
+        if (!archiveText.includes("[Content_Types].xml") || /vbaProject\.bin/i.test(archiveText)) {
+            throw new Error("Office uploads must be valid, macro-free OpenXML documents.");
+        }
     }
 
     return {
@@ -66,11 +76,6 @@ export const hasValidFileSignature = (buffer: Buffer, mimeType: string) => {
 
     if (mimeType === "image/webp") {
         return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
-    }
-
-    if (mimeType === "image/svg+xml") {
-        const text = buffer.subarray(0, 512).toString("utf8").trim().toLowerCase();
-        return text.startsWith("<svg") || text.includes("<svg");
     }
 
     if (mimeType === "image/x-icon" || mimeType === "image/vnd.microsoft.icon") {

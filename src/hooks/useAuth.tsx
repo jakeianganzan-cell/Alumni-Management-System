@@ -3,7 +3,8 @@ import { API_URL, clearAuthToken, getAuthToken, readApiResponse, setAuthToken } 
 
 export type AppRole =
     | "alumni"
-    | "president" | "vice_president" | "secretary" | "assistant_secretary"
+    | "admin"
+    | "vice_president" | "secretary" | "assistant_secretary"
     | "treasurer" | "assistant_treasurer" | "auditor" | "pio" | "appointed"
     | "chairman";
 

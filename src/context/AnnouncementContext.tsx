@@ -15,6 +15,23 @@ export type AnnouncementStatus =
 export type AnnouncementApprovalStatus = "pending_approval" | "approved" | "rejected";
 export type AnnouncementAudienceScope = "all" | "course" | "batch";
 
+export interface ContributionOpportunity {
+  id: number;
+  opportunityType: "Volunteer Service" | "Project Support";
+  registrationDeadline?: string | null;
+  capacity?: number | null;
+  requiredSkills?: string | null;
+  availableRoles?: string | null;
+  instructions?: string | null;
+  objectives?: string | null;
+  targetDate?: string | null;
+  supportTypes?: string[];
+  targetQuantity?: string | null;
+  contactInstructions?: string | null;
+  status: "Open" | "Closed" | "Cancelled";
+  registrationCount?: number;
+}
+
 export interface Announcement {
   id: string;
   title: string;
@@ -43,6 +60,7 @@ export interface Announcement {
   views: number;
   success_score?: number;
   registration_count?: number;
+  contributionOpportunity?: ContributionOpportunity | null;
   interestEnabled?: boolean;
   interestCount?: number;
   interestPercentage?: number;

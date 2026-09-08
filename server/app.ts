@@ -1,11 +1,12 @@
 import "./env";
 import cors from "cors";
 import type { CorsOptions } from "cors";
+import compression from "compression";
 import bcrypt from "bcrypt";
 import ExcelJS from "exceljs";
 import express from "express";
 import fs from "fs/promises";
-import jwt from "jsonwebtoken";
+import jwt, { type SignOptions } from "jsonwebtoken";
 import path from "path";
 import swaggerUi from "swagger-ui-express";
 import { v4 as uuidv4 } from "uuid";
@@ -33,10 +34,10 @@ import {
 } from "./controllers/tracer.controller";
 import { swaggerSpec } from "./swagger";
 import { COURSE_LABELS, COURSE_OPTIONS, normalizeCourseCode, normalizeCourseOptions, SYSTEM_COURSES, type CourseOption } from "./courseCatalog";
-import { securityHeaders, apiRateLimiter, authRateLimiter, importRateLimiter, requestSizeLimiter } from "./middleware/security";
+import { securityHeaders, apiRateLimiter, authRateLimiter, loginAccountRateLimiter, importRateLimiter, publicSubmissionRateLimiter, requestSizeLimiter } from "./middleware/security";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { auditLogger } from "./middleware/auditLogger";
-import { createRbacMiddleware } from "./middleware/rbac";
+import { createRbacMiddleware, roleHasPermission } from "./middleware/rbac";
 import { alumniImportFileParser } from "./middleware/upload";
 import { config, DEFAULT_LOCAL_FRONTEND_ORIGINS } from "./config";
 import { logger } from "./utils/logger";
@@ -44,11 +45,16 @@ import { getPublicErrorMessage } from "./utils/safeError";
 
 const app = express();
 
+if (config.trustProxyHops > 0) {
+    app.set("trust proxy", config.trustProxyHops);
+}
+
 const JWT_SECRET = config.jwtSecret;
 const ADMIN_EMAIL = config.adminEmail;
 const ADMIN_PASSWORD = config.adminPassword;
 const ADMIN_NAME = config.adminName;
 const APP_BASE_URL = config.appBaseUrl;
+const LOGIN_DUMMY_HASH = bcrypt.hashSync(uuidv4(), 10);
 
 const parseCsvEnv = (value: string | undefined) =>
     String(value || "")
@@ -75,7 +81,7 @@ const normalizeOrigin = (value: string) => {
 const allowedCorsOrigins = new Set(Array.from(configuredCorsOrigins).map(normalizeOrigin));
 
 const corsOptions: CorsOptions = {
-    credentials: true,
+    credentials: false,
     origin(origin, callback) {
         if (!origin) {
             callback(null, true);
@@ -96,6 +102,7 @@ const corsOptions: CorsOptions = {
 type DurationComputedStatus = "Upcoming" | "Active" | "Completed" | "Archived";
 
 interface AlumniImportInputRow {
+    rowNumber?: number;
     fullName?: string;
     name?: string;
     graduationYear?: string;
@@ -168,10 +175,17 @@ type EventVerificationStatus = "Pending" | "Verified" | "Not Verified";
 interface DonationListRow extends QueryRow {
     id: number;
     user_id: string | null;
+    contribution_type: string | null;
+    contribution_date: string | null;
     amount: number;
     method: string;
     status: string | null;
     purpose: string | null;
+    activity_name: string | null;
+    volunteer_hours: number | string | null;
+    quantity_description: string | null;
+    estimated_value: number | string | null;
+    supporting_information: string | null;
     ref_number: string | null;
     receipt_url: string | null;
     message: string | null;
@@ -193,11 +207,11 @@ interface DonationListRow extends QueryRow {
 }
 
 interface AlumniProjectRow extends QueryRow {
-    id: number | string; title: string; description: string | null; category: string; batch_year: string | null;
+    id: number | string; title: string; description: string | null; objectives: string | null; category: string; batch_year: string | null;
     lead_officer_id: string | null; lead_officer_name: string | null; lead_alumni_id: string | null; lead_alumni_name: string | null;
-    organization_name: string | null; alumni_group: string | null; start_date: string | null; end_date: string | null; status: string;
-    estimated_value: number | string | null; funding_source: string | null; beneficiaries: string | null; accomplishments: string | null;
-    remarks: string | null; related_contribution_id: string | null; contribution_record_id: string | null; created_by: string | null;
+    organization_name: string | null; alumni_group: string | null; responsible_person: string | null; start_date: string | null; end_date: string | null; status: string;
+    estimated_value: number | string | null; funding_source: string | null; beneficiaries: string | null; accomplishments: string | null; evidence_notes: string | null;
+    remarks: string | null; related_contribution_id: string | null; contribution_record_id: string | null; related_target_id: number | string | null; related_moa_id: number | string | null; created_by: string | null;
     created_at: string; updated_at: string; file_count: number | string | null;
 }
 interface AlumniProjectFileRow extends QueryRow {
@@ -554,7 +568,8 @@ const getRolesForUser = async (userId: string) => {
         `SELECT role
          FROM user_roles
          WHERE user_id = ? AND COALESCE(archived, 0) = 0
-         ORDER BY CASE WHEN role = 'alumni' THEN 99 WHEN role = 'chairman' THEN 20 WHEN role IN ('president', 'admin') THEN 1 ELSE 10 END, role ASC`,
+           AND role <> 'president'
+         ORDER BY CASE WHEN role = 'alumni' THEN 99 WHEN role = 'chairman' THEN 20 WHEN role = 'admin' THEN 1 ELSE 10 END, role ASC`,
         [userId]
     ));
 
@@ -571,6 +586,10 @@ const getRoleForUser = async (userId: string, selectedRole?: string | null) => {
 
     if (requestedRole && roles.includes(requestedRole)) {
         return requestedRole;
+    }
+
+    if (requestedRole) {
+        return "alumni";
     }
 
     return roles[0] || "alumni";
@@ -604,22 +623,33 @@ const getChairmanCourseForUser = async (userId: string) => {
     return normalizeSupportedCourse(profile?.course);
 };
 
+const existingTableCache = new Set<string>();
+const existingColumnCache = new Set<string>();
+
 const tableExists = async (tableName: string) => {
+    const cacheKey = tableName.toLowerCase();
+    if (existingTableCache.has(cacheKey)) return true;
+
     const table = await getSingleRow(
         "SHOW TABLES LIKE ?",
         [tableName]
     );
 
+    if (table) existingTableCache.add(cacheKey);
     return Boolean(table);
 };
 
 const columnExists = async (tableName: string, columnName: string) => {
+    const cacheKey = `${tableName.toLowerCase()}.${columnName.toLowerCase()}`;
+    if (existingColumnCache.has(cacheKey)) return true;
+
     try {
         const column = await getSingleRow(
             `SHOW COLUMNS FROM ${tableName} LIKE ?`,
             [columnName]
         );
 
+        if (column) existingColumnCache.add(cacheKey);
         return Boolean(column);
     } catch {
         return false;
@@ -712,10 +742,13 @@ const getAnnouncementTableName = async () => {
 app.disable("x-powered-by");
 app.use(cors(corsOptions));
 app.use(securityHeaders);
+app.use(compression({ threshold: 1024 }));
 app.use("/api", apiRateLimiter);
 app.use(requestSizeLimiter("20mb"));
 app.use(auditLogger);
-app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+if (config.nodeEnv !== "production") {
+    app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 const getTracerTableName = async () => {
     if (cachedTracerTableName) {
@@ -1557,7 +1590,6 @@ const SESSION_ENDED_STATUS = "Ended";
 
 const ROLE_LABELS: Record<string, string> = {
     admin: "Administrator",
-    president: "Administrator",
     vice_president: "Staff",
     secretary: "Staff",
     assistant_secretary: "Staff",
@@ -1572,7 +1604,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 const getRoleDisplayLabel = (role: unknown) => {
     const normalized = normalizeRoleValue(role);
-    if (normalized === "president" || normalized === "admin") return "Administrator";
+    if (normalized === "admin") return "System Administrator";
     if (normalized === "chairman") return "Chairman";
     if (normalized === "alumni") return "Alumni";
     if (ROLE_LABELS[normalized]) return ROLE_LABELS[normalized];
@@ -1773,7 +1805,7 @@ const createAuthenticatedSession = async ({
     const token = jwt.sign(
         { id: user.id, email: authPayload.user.email, role: selectedRole, sessionId: sessionToken },
         JWT_SECRET,
-        { expiresIn: "7d" }
+        { expiresIn: config.jwtExpiresIn as SignOptions["expiresIn"] }
     );
 
     await recordActivityLog({
@@ -2047,7 +2079,6 @@ const getAdminDashboardAnalytics = async () => {
             COALESCE(SUM(fw.freedom_wall_count), 0) AS freedom_wall_count,
             COALESCE(SUM(cm.comment_count), 0) AS comment_count,
             COALESCE(SUM(
-                COALESCE(d.donation_count, 0) * 15 +
                 COALESCE(ev.event_count, 0) * 10 +
                 COALESCE(sr.survey_count, 0) * 8 +
                 COALESCE(ach.achievement_count, 0) * 12 +
@@ -2116,7 +2147,6 @@ const getAdminDashboardAnalytics = async () => {
                 COALESCE(l.last_login_at, '1970-01-01'),
                 COALESCE(ev.last_event_at, '1970-01-01'),
                 COALESCE(sr.last_survey_at, '1970-01-01'),
-                COALESCE(d.last_donation_at, '1970-01-01'),
                 COALESCE(fw.last_freedom_wall_at, '1970-01-01'),
                 COALESCE(cm.last_comment_at, '1970-01-01'),
                 COALESCE(rx.last_reaction_at, '1970-01-01')
@@ -2174,7 +2204,6 @@ const getAdminDashboardAnalytics = async () => {
             Number(row.login_count || 0) * 2 +
             Number(row.event_count || 0) * 12 +
             Number(row.survey_count || 0) * 8 +
-            Number(row.donation_count || 0) * 18 +
             Number(row.freedom_wall_count || 0) * 5 +
             Number(row.comment_count || 0) * 4 +
             Number(row.reaction_count || 0) * 2;
@@ -2251,7 +2280,6 @@ const getAdminDashboardAnalytics = async () => {
                 UNION ALL SELECT created_at AS activity_at FROM freedom_wall_posts WHERE LOWER(COALESCE(status, 'published')) = 'published'
                 UNION ALL SELECT created_at AS activity_at FROM freedom_wall_comments WHERE LOWER(COALESCE(status, 'published')) = 'published'
                 UNION ALL SELECT created_at AS activity_at FROM reactions
-                UNION ALL SELECT created_at AS activity_at FROM donations
             ) activity
             WHERE activity_at IS NOT NULL
               AND activity_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
@@ -2306,7 +2334,7 @@ const getAdminDashboardAnalytics = async () => {
         : 0;
     const insightSummaries = [
         topCourse
-            ? `${topCourse.courseLabel} currently leads engagement with ${topCourse.contributionScore} contribution points across events, surveys, donations, and social activity.`
+            ? `${topCourse.courseLabel} currently leads engagement with ${topCourse.contributionScore} engagement points across events, surveys, and platform interactions.`
             : "No course engagement activity has been recorded yet.",
         currentMonth && previousMonth
             ? `${currentMonth.month} activity is ${currentMonth.total >= previousMonth.total ? "up" : "down"} by ${Math.abs(currentMonth.total - previousMonth.total)} interactions compared with ${previousMonth.month}.`
@@ -2591,8 +2619,104 @@ const normalizeAnnouncementApprovalStatus = (value: unknown, fallback = "approve
 };
 
 const canModerateAnnouncementContent = (role: string | null | undefined) => {
-    return ["admin", "president"].includes(normalizeStatus(role, "alumni"));
+    return roleHasPermission(normalizeStatus(role, "alumni"), "announcements.manage");
 };
+
+const CONTRIBUTION_TYPES = [
+    "Financial",
+    "Volunteer Service",
+    "Project Support",
+    "In-Kind"
+] as const;
+
+const parseContributionType = (value: unknown) => {
+    const requested = normalizeText(value || "Financial").toLowerCase().replace(/\s+/g, " ");
+    if (["project / program participation", "project involvement", "project support"].includes(requested)) return "Project Support";
+    return CONTRIBUTION_TYPES.find((type) => type.toLowerCase() === requested) || null;
+};
+
+const normalizeContributionType = (value: unknown) => parseContributionType(value) || "Financial";
+
+const CONTRIBUTION_OPPORTUNITY_TYPES = ["Volunteer Service", "Project Support"] as const;
+const CONTRIBUTION_OPPORTUNITY_STATUSES = ["Open", "Closed", "Cancelled"] as const;
+
+const parseContributionOpportunityType = (value: unknown) => {
+    const requested = normalizeText(value).toLowerCase();
+    return CONTRIBUTION_OPPORTUNITY_TYPES.find((type) => type.toLowerCase() === requested) || null;
+};
+
+const normalizeContributionOpportunityInput = (value: unknown) => {
+    if (!value || typeof value !== "object") return null;
+    const input = value as Record<string, unknown>;
+    const opportunityType = parseContributionOpportunityType(input.opportunityType ?? input.opportunity_type);
+    if (!opportunityType) return null;
+    const requestedStatus = normalizeText(input.status || "Open");
+    const status = CONTRIBUTION_OPPORTUNITY_STATUSES.find((item) => item.toLowerCase() === requestedStatus.toLowerCase()) || "Open";
+    const registrationDeadline = parseDateTimeValue(input.registrationDeadline ?? input.registration_deadline);
+    const capacityValue = input.capacity == null || input.capacity === "" ? null : Number(input.capacity);
+    if (capacityValue !== null && (!Number.isInteger(capacityValue) || capacityValue <= 0)) {
+        throw new Error("Opportunity capacity must be a positive whole number.");
+    }
+    const supportTypes = Array.isArray(input.supportTypes ?? input.support_types)
+        ? (input.supportTypes ?? input.support_types) as unknown[]
+        : [];
+    return {
+        opportunityType,
+        registrationDeadline: formatSqlDateTime(registrationDeadline),
+        capacity: capacityValue,
+        requiredSkills: normalizeText(input.requiredSkills ?? input.required_skills) || null,
+        availableRoles: normalizeText(input.availableRoles ?? input.available_roles) || null,
+        instructions: normalizeText(input.instructions) || null,
+        objectives: normalizeText(input.objectives) || null,
+        targetDate: normalizeDateOnly(input.targetDate ?? input.target_date) || null,
+        supportTypes: supportTypes.length ? JSON.stringify(supportTypes.map(normalizeText).filter(Boolean).slice(0, 10)) : null,
+        targetQuantity: normalizeText(input.targetQuantity ?? input.target_quantity) || null,
+        contactInstructions: normalizeText(input.contactInstructions ?? input.contact_instructions) || null,
+        status
+    };
+};
+
+const saveContributionOpportunity = async (announcementId: number, rawValue: unknown, userId: string | null | undefined) => {
+    if (rawValue === undefined) return;
+    if (rawValue === null || rawValue === false) {
+        await db.execute("DELETE FROM contribution_opportunities WHERE announcement_id = ?", [announcementId]);
+        return;
+    }
+    const value = normalizeContributionOpportunityInput(rawValue);
+    if (!value) throw new Error("Select a valid contribution opportunity type.");
+    await db.execute(
+        `INSERT INTO contribution_opportunities
+            (announcement_id, opportunity_type, registration_deadline, capacity, required_skills, available_roles,
+             instructions, objectives, target_date, support_types, target_quantity, contact_instructions, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+            opportunity_type = VALUES(opportunity_type), registration_deadline = VALUES(registration_deadline),
+            capacity = VALUES(capacity), required_skills = VALUES(required_skills), available_roles = VALUES(available_roles),
+            instructions = VALUES(instructions), objectives = VALUES(objectives), target_date = VALUES(target_date),
+            support_types = VALUES(support_types), target_quantity = VALUES(target_quantity),
+            contact_instructions = VALUES(contact_instructions), status = VALUES(status)`,
+        [announcementId, value.opportunityType, value.registrationDeadline, value.capacity, value.requiredSkills,
+            value.availableRoles, value.instructions, value.objectives, value.targetDate, value.supportTypes,
+            value.targetQuantity, value.contactInstructions, value.status, userId || null]
+    );
+};
+
+const mapContributionOpportunity = (row: QueryRow) => row.opportunity_id ? {
+    id: Number(row.opportunity_id),
+    opportunityType: row.opportunity_type,
+    registrationDeadline: row.registration_deadline || null,
+    capacity: row.opportunity_capacity === null ? null : Number(row.opportunity_capacity),
+    requiredSkills: row.required_skills || null,
+    availableRoles: row.available_roles || null,
+    instructions: row.opportunity_instructions || null,
+    objectives: row.opportunity_objectives || null,
+    targetDate: row.opportunity_target_date || null,
+    supportTypes: (() => { try { return JSON.parse(String(row.support_types || "[]")); } catch { return []; } })(),
+    targetQuantity: row.target_quantity || null,
+    contactInstructions: row.contact_instructions || null,
+    status: row.opportunity_status || "Open",
+    registrationCount: Number(row.opportunity_registration_count || 0)
+} : null;
 
 const normalizeAchievementReactionType = (value: unknown): AchievementReactionType | null => {
     const normalized = normalizeStatus(String(value || ""), "");
@@ -2607,15 +2731,33 @@ const normalizeStoredMedia = (value: string | null | undefined) => {
     const trimmed = value.trim();
 
     if (!trimmed) return null;
-    if (trimmed.startsWith("data:")) return trimmed;
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+    if (/^data:image\/(png|jpe?g|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/=]+$/i.test(trimmed)) return trimmed;
+    if (trimmed.startsWith("https://")) return trimmed;
+    if (/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\//i.test(trimmed)) return trimmed;
     if (trimmed.startsWith("//")) return `https:${trimmed}`;
     if (trimmed.startsWith("/")) return APP_BASE_URL ? `${APP_BASE_URL}${trimmed}` : trimmed;
     if (/^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length > 80) {
         return `data:image/jpeg;base64,${trimmed}`;
     }
 
-    return trimmed;
+    return null;
+};
+
+const normalizeSubmittedImage = (value: unknown, maxBytes = 8 * 1024 * 1024) => {
+    const dataUrl = String(value || "").trim();
+    if (!dataUrl) return null;
+    parseImageDataUrl(dataUrl, maxBytes);
+    return dataUrl;
+};
+
+const normalizeSubmittedEvidence = (value: unknown, maxBytes = 5 * 1024 * 1024) => {
+    const dataUrl = String(value || "").trim();
+    if (!dataUrl) return null;
+    if (dataUrl.startsWith("data:image/")) return normalizeSubmittedImage(dataUrl, maxBytes);
+    const pdfMatch = dataUrl.match(/^data:application\/pdf;base64,([A-Za-z0-9+/=\r\n]+)$/i);
+    if (!pdfMatch) throw new Error("Supporting evidence must be an image or PDF file.");
+    if (Buffer.from(pdfMatch[1], "base64").byteLength > maxBytes) throw new Error("Supporting evidence must be 5 MB or smaller.");
+    return dataUrl;
 };
 
 const DEFAULT_SYSTEM_SETTINGS = {
@@ -3461,7 +3603,9 @@ const validateImportRow = (row: AlumniImportInputRow, rowNumber: number, program
 const normalizeImportHeader = (value: unknown) =>
     normalizeText(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-const IMPORT_HEADER_MAP: Record<string, keyof AlumniImportInputRow> = {
+type AlumniImportColumn = Exclude<keyof AlumniImportInputRow, "rowNumber">;
+
+const IMPORT_HEADER_MAP: Record<string, AlumniImportColumn> = {
     name: "name",
     fullname: "fullName",
     alumniname: "fullName",
@@ -3530,7 +3674,7 @@ const getCellText = (cell: ExcelJS.Cell) => {
 
 const worksheetToImportRows = (worksheet: ExcelJS.Worksheet): AlumniImportInputRow[] => {
     let headerRowNumber = 0;
-    const headerIndexes = new Map<number, keyof AlumniImportInputRow>();
+    const headerIndexes = new Map<number, AlumniImportColumn>();
 
     worksheet.eachRow((row, rowNumber) => {
         if (headerRowNumber > 0) {
@@ -3556,6 +3700,16 @@ const worksheetToImportRows = (worksheet: ExcelJS.Worksheet): AlumniImportInputR
         throw new Error("Import file must include headers: name, email, and program.");
     }
 
+    const mappedHeaders = new Set(headerIndexes.values());
+    const hasName = mappedHeaders.has("name") || mappedHeaders.has("fullName");
+    const hasEmail = mappedHeaders.has("email") || mappedHeaders.has("emailAddress");
+    const hasProgram = mappedHeaders.has("course") || mappedHeaders.has("program");
+    const missingHeaders = [!hasName ? "Name" : "", !hasEmail ? "Email" : "", !hasProgram ? "Program" : ""].filter(Boolean);
+
+    if (missingHeaders.length > 0) {
+        throw new Error(`Missing required import column${missingHeaders.length === 1 ? "" : "s"}: ${missingHeaders.join(", ")}.`);
+    }
+
     const rows: AlumniImportInputRow[] = [];
 
     worksheet.eachRow((row, rowNumber) => {
@@ -3563,7 +3717,7 @@ const worksheetToImportRows = (worksheet: ExcelJS.Worksheet): AlumniImportInputR
             return;
         }
 
-        const parsedRow: AlumniImportInputRow = {};
+        const parsedRow: AlumniImportInputRow = { rowNumber };
         let hasValue = false;
 
         headerIndexes.forEach((key, columnNumber) => {
@@ -3607,8 +3761,7 @@ const parseAlumniImportFile = async (buffer: Buffer, fileName = "", contentType 
 };
 
 const getSafeEmailError = (error: unknown) => {
-    const message = getErrorMessage(error);
-    return message.length > 300 ? `${message.slice(0, 300)}...` : message;
+    return getPublicErrorMessage(error, "Email delivery failed. Please try again later.");
 };
 
 const MAILING_PURPOSES: Record<TargetedEmailPurpose, string> = {
@@ -3643,27 +3796,7 @@ const isMailingReminderReason = (value: unknown): value is MailingReminderReason
 };
 
 const getSafeMailingError = (error: unknown) => {
-    const message = getSafeEmailError(error);
-    const lowerMessage = message.toLowerCase();
-
-    if (lowerMessage.includes("missing:")) {
-        return "Email service is missing required environment variables in the running backend. Check the Brevo API key, sender email, sender name, and frontend URL.";
-    }
-
-    if (
-        lowerMessage.includes("key not found") ||
-        lowerMessage.includes("invalid api key") ||
-        lowerMessage.includes("api key is invalid") ||
-        lowerMessage.includes("unauthorized")
-    ) {
-        return "Brevo rejected the configured API key. Update the Brevo API key in the running backend environment.";
-    }
-
-    if (/api[-_ ]?key|secret|token|password/i.test(message)) {
-        return "Email service is not configured correctly. Ask the system administrator to check the email settings.";
-    }
-
-    return message;
+    return getPublicErrorMessage(error, "Email delivery is unavailable. Please try again later.");
 };
 
 const getAvailableColumnExpression = async (tableName: string, alias: string, columns: string[], fallback = "NULL") => {
@@ -4299,7 +4432,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
 }) => {
     const alumniId = normalizeText(studentId) || await generateUniqueAlumniId(conn, batch);
     const userId = uuidv4();
-    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 12);
 
     await conn.query(
         "INSERT INTO users (id, email, password_hash, email_status) VALUES (?, ?, ?, ?)",
@@ -5184,7 +5317,7 @@ const getContentModeratorUserIds = async () => {
     const rows = parseRows(await db.query(
         `SELECT DISTINCT user_id
          FROM user_roles
-         WHERE role IN ('president', 'admin')
+         WHERE role = 'admin'
            AND COALESCE(archived, 0) = 0`
     ));
 
@@ -5467,7 +5600,7 @@ const getAchievementSocialData = async (achievementIds: number[], userId: string
     return { reactionCounts, currentReactions, commentCounts };
 };
 
-const getAchievementAccess = async (achievementId: number, userId: string) => {
+const getAchievementAccess = async (achievementId: number, userId: string, selectedRole?: string | null) => {
     const achievement = await getSingleRow(
         `SELECT id, alumni_id, title, status
          FROM achievements
@@ -5479,7 +5612,7 @@ const getAchievementAccess = async (achievementId: number, userId: string) => {
         return { achievement: null, canAccess: false, canModerate: false };
     }
 
-    const role = await getRoleForUser(userId);
+    const role = await getRoleForUser(userId, selectedRole);
     const canModerate = canModerateAnnouncementContent(role);
     const canAccess = canModerate || normalizeStatus(achievement.status, "pending") === "approved";
 
@@ -5527,13 +5660,13 @@ const ensureDefaultAdmin = async () => {
 
     const existingRole = await getSingleRow(
         "SELECT user_id FROM user_roles WHERE user_id = ? AND role = ?",
-        [adminId, "president"]
+        [adminId, "admin"]
     );
 
     if (!existingRole) {
         await db.execute(
             "INSERT INTO user_roles (user_id, role) VALUES (?, ?)",
-            [adminId, "president"]
+            [adminId, "admin"]
         );
     }
 
@@ -5565,7 +5698,7 @@ const ensureChairmanAccounts = async () => {
         }
 
         const chairmanId = existingUser?.id ? String(existingUser.id) : uuidv4();
-        const passwordHash = await bcrypt.hash(courseOption.chairmanPassword, 10);
+        const passwordHash = await bcrypt.hash(courseOption.chairmanPassword, 12);
 
         if (!existingUser) {
             await db.execute(
@@ -5616,11 +5749,17 @@ app.use("/uploads/branding", express.static(brandingUploadDir(), {
     dotfiles: "deny",
     fallthrough: false,
     immutable: true,
-    maxAge: "1d"
+    maxAge: "1d",
+    setHeaders: (res) => {
+        res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+    }
 }));
 
 const {
     requireAdmin,
+    requireOfficer,
+    requirePermission,
     requireProjectWriteAccess,
     requireProjectDirectoryAccess,
     requireChairman
@@ -5629,6 +5768,7 @@ const {
     getChairmanCourseForUser,
     getPublicErrorMessage
 });
+
 
 // System branding settings
 app.get("/api/system-settings", async (_req, res) => {
@@ -5649,7 +5789,7 @@ app.post("/api/admin/system-settings/upload", authenticateToken, requireAdmin, i
         res.status(201).json({ path });
     } catch (err: unknown) {
         logger.error("SYSTEM BRANDING UPLOAD ERROR:", err);
-        res.status(400).json({ error: getErrorMessage(err) });
+        res.status(400).json({ error: "Unable to upload this image. Use a supported image file and try again." });
     }
 });
 
@@ -5747,7 +5887,7 @@ app.post("/api/admin/about/:contentType", authenticateToken, requireAdmin, async
         const created = await getSingleRow<InstitutionContentRow>("SELECT * FROM institution_content_items WHERE id = ?", [result.insertId]);
         res.status(201).json(created ? mapInstitutionContentRow(created) : { id: result.insertId });
     } catch (error: unknown) {
-        res.status(400).json({ error: getErrorMessage(error) });
+        res.status(400).json({ error: "Unable to save this About Us content. Check the fields and try again." });
     }
 });
 
@@ -5768,7 +5908,7 @@ app.put("/api/admin/about/:contentType/:id", authenticateToken, requireAdmin, as
         const updated = await getSingleRow<InstitutionContentRow>("SELECT * FROM institution_content_items WHERE id = ?", [id]);
         res.json(updated ? mapInstitutionContentRow(updated) : { success: true });
     } catch (error: unknown) {
-        res.status(400).json({ error: getErrorMessage(error) });
+        res.status(400).json({ error: "Unable to update this About Us content. Check the fields and try again." });
     }
 });
 
@@ -5819,7 +5959,7 @@ app.post("/api/admin/about/services/:serviceId/items", authenticateToken, requir
         const created = await getSingleRow<InstitutionServiceItemRow>("SELECT * FROM institution_service_items WHERE id = ?", [result.insertId]);
         res.status(201).json(created ? mapInstitutionServiceItemRow(created) : { id: result.insertId });
     } catch (error: unknown) {
-        res.status(400).json({ error: getErrorMessage(error) });
+        res.status(400).json({ error: "Unable to save this service item. Check the fields and try again." });
     }
 });
 
@@ -5842,7 +5982,7 @@ app.put("/api/admin/about/services/:serviceId/items/:itemId", authenticateToken,
         const updated = await getSingleRow<InstitutionServiceItemRow>("SELECT * FROM institution_service_items WHERE id = ?", [itemId]);
         res.json(updated ? mapInstitutionServiceItemRow(updated) : { success: true });
     } catch (error: unknown) {
-        res.status(400).json({ error: getErrorMessage(error) });
+        res.status(400).json({ error: "Unable to update this service item. Check the fields and try again." });
     }
 });
 
@@ -6101,13 +6241,19 @@ app.post("/api/auth/setup-admin", authRateLimiter, async (req, res) => {
     try {
         const { name, email, password } = req.body || {};
 
-        if (!name || !email || !password) {
-            return res.status(400).json({ error: "Missing fields" });
+        const normalizedEmail = normalizeEmail(email);
+        const normalizedName = normalizeText(name);
+        const normalizedPassword = String(password || "");
+        if (!normalizedName || !EMAIL_REGEX.test(normalizedEmail)) {
+            return res.status(400).json({ error: "A valid name and email address are required." });
+        }
+        if (normalizedPassword.length < 12 || Buffer.byteLength(normalizedPassword, "utf8") > 72) {
+            return res.status(400).json({ error: "Password must be at least 12 characters and no more than 72 UTF-8 bytes." });
         }
 
         const existing = await getSingleRow(
             "SELECT id FROM users WHERE email = ?",
-            [email]
+            [normalizedEmail]
         );
 
         if (existing) {
@@ -6115,21 +6261,21 @@ app.post("/api/auth/setup-admin", authRateLimiter, async (req, res) => {
         }
 
         const id = uuidv4();
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(normalizedPassword, 12);
 
         await db.execute(
             "INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
-            [id, email, hash]
+            [id, normalizedEmail, hash]
         );
 
         await db.execute(
             "INSERT INTO profiles (id, name, email) VALUES (?, ?, ?)",
-            [id, name, email]
+            [id, normalizedName, normalizedEmail]
         );
 
         await db.execute(
             "INSERT INTO user_roles (user_id, role) VALUES (?, ?)",
-            [id, "president"]
+            [id, "admin"]
         );
 
         res.json({ success: true, userId: id });
@@ -6140,13 +6286,15 @@ app.post("/api/auth/setup-admin", authRateLimiter, async (req, res) => {
 });
 
 // Authentication
-app.post("/api/auth/login", authRateLimiter, async (req, res) => {
+app.post("/api/auth/login", loginAccountRateLimiter, async (req, res) => {
     try {
         const { email, password } = req.body || {};
         const identifier = String(email || "").trim();
+        const normalizedPassword = String(password || "");
 
-        if (!identifier || !password) {
-            return res.status(400).json({ error: "Missing credentials" });
+        if (!identifier || !normalizedPassword || identifier.length > 254 || normalizedPassword.length > 128) {
+            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+            return res.status(401).json({ error: "Invalid credentials." });
         }
 
         const users = parseRows(await db.query(
@@ -6159,19 +6307,21 @@ app.post("/api/auth/login", authRateLimiter, async (req, res) => {
         ));
 
         if (!users.length) {
-            return res.status(400).json({ error: "User not found" });
+            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+            return res.status(401).json({ error: "Invalid credentials." });
         }
 
         const user = users[0];
 
         if (!user?.password_hash) {
-            return res.status(500).json({ error: "Invalid database: missing password_hash" });
+            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+            return res.status(401).json({ error: "Invalid credentials." });
         }
 
-        const match = await bcrypt.compare(password, user.password_hash);
+        const match = await bcrypt.compare(normalizedPassword, user.password_hash);
 
         if (!match) {
-            return res.status(400).json({ error: "Wrong password" });
+            return res.status(401).json({ error: "Invalid credentials." });
         }
 
         const roles = await getRolesForUser(String(user.id));
@@ -6242,7 +6392,7 @@ app.post("/api/auth/select-role", authRateLimiter, async (req, res) => {
         res.json(payload);
     } catch (err: unknown) {
         logger.error("SELECT ROLE ERROR:", err);
-        res.status(401).json({ error: err instanceof Error ? err.message : "Role selection expired." });
+        res.status(401).json({ error: "Role selection expired or is invalid." });
     }
 });
 
@@ -6284,7 +6434,7 @@ app.post("/api/auth/logout", authenticateToken, async (req: AuthenticatedRequest
         res.json({ success: true });
     } catch (err: unknown) {
         logger.error("LOGOUT ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to sign out. Please try again.") });
     }
 });
 
@@ -6303,7 +6453,7 @@ app.get("/api/auth/session", authenticateToken, async (req: AuthenticatedRequest
         res.json(authPayload);
     } catch (err: unknown) {
         logger.error("SESSION ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to restore your session. Please sign in again.") });
     }
 });
 
@@ -6335,7 +6485,7 @@ app.get("/api/auth/tracer-status", authenticateToken, async (req: AuthenticatedR
         res.json({ isTracerCompleted });
     } catch (err: unknown) {
         logger.error("TRACER STATUS ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to load your tracer status. Please try again.") });
     }
 });
 
@@ -6349,7 +6499,7 @@ app.get("/api/account/settings", authenticateToken, async (req: AuthenticatedReq
         res.json({ settings });
     } catch (err: unknown) {
         logger.error("GET ACCOUNT SETTINGS ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to load your account settings. Please try again.") });
     }
 });
 
@@ -6406,27 +6556,37 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
             return res.status(400).json({ error: "Email address is already in use." });
         }
 
-        await db.execute(
-            `UPDATE users
-             SET email = ?
-             WHERE id = ?`,
-            [normalizedEmail, req.user.id]
-        );
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            await conn.execute(
+                `UPDATE users
+                 SET email = ?
+                 WHERE id = ?`,
+                [normalizedEmail, req.user.id]
+            );
 
-        await db.execute(
-            `UPDATE profiles
-             SET name = ?, email = ?, contact_number = ?, course = ?, batch = ?, photo = ?
-             WHERE id = ?`,
-            [
-                normalizedName,
-                normalizedEmail,
-                normalizedContactNumber,
-                normalizedCourse ? normalizeSupportedCourse(normalizedCourse) : null,
-                normalizedYearGraduated,
-                normalizedPhoto,
-                req.user.id
-            ]
-        );
+            await conn.execute(
+                `UPDATE profiles
+                 SET name = ?, email = ?, contact_number = ?, course = ?, batch = ?, photo = ?
+                 WHERE id = ?`,
+                [
+                    normalizedName,
+                    normalizedEmail,
+                    normalizedContactNumber,
+                    normalizedCourse ? normalizeSupportedCourse(normalizedCourse) : null,
+                    normalizedYearGraduated,
+                    normalizedPhoto,
+                    req.user.id
+                ]
+            );
+            await conn.commit();
+        } catch (error) {
+            await conn.rollback();
+            throw error;
+        } finally {
+            conn.release();
+        }
 
         const authPayload = await buildAuthPayload({
             id: req.user.id,
@@ -6440,7 +6600,7 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
         });
     } catch (err: unknown) {
         logger.error("UPDATE ACCOUNT PROFILE ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to save your profile. Please try again.") });
     }
 });
 
@@ -6456,8 +6616,8 @@ app.patch("/api/account/password", authenticateToken, async (req: AuthenticatedR
             return res.status(400).json({ error: "Current password and new password are required." });
         }
 
-        if (String(newPassword).length < 8) {
-            return res.status(400).json({ error: "New password must be at least 8 characters." });
+        if (String(newPassword).length < 12 || Buffer.byteLength(String(newPassword), "utf8") > 72) {
+            return res.status(400).json({ error: "New password must be at least 12 characters and no more than 72 UTF-8 bytes." });
         }
 
         const account = await getSingleRow(
@@ -6476,12 +6636,18 @@ app.patch("/api/account/password", authenticateToken, async (req: AuthenticatedR
             return res.status(400).json({ error: "Current password is incorrect." });
         }
 
-        const passwordHash = await bcrypt.hash(String(newPassword), 10);
+        const passwordHash = await bcrypt.hash(String(newPassword), 12);
         await db.execute(
             `UPDATE users
              SET password_hash = ?
              WHERE id = ?`,
             [passwordHash, req.user.id]
+        );
+        await db.execute(
+            `UPDATE user_sessions
+             SET status = 'Ended', logout_time = COALESCE(logout_time, NOW()), last_activity = NOW()
+             WHERE user_id = ? AND status = 'Active' AND session_token <> ?`,
+            [req.user.id, req.user.sessionId || ""]
         );
 
         res.json({
@@ -6490,7 +6656,7 @@ app.patch("/api/account/password", authenticateToken, async (req: AuthenticatedR
         });
     } catch (err: unknown) {
         logger.error("UPDATE ACCOUNT PASSWORD ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to update your password. Please try again.") });
     }
 });
 
@@ -6537,7 +6703,7 @@ app.patch("/api/account/notifications", authenticateToken, async (req: Authentic
     }
 });
 
-app.post("/api/concerns/public", async (req, res) => {
+app.post("/api/concerns/public", publicSubmissionRateLimiter, async (req, res) => {
     try {
         const reporterName = normalizeText(req.body?.reporterName || req.body?.reporter_name) || "Login page reporter";
         const reporterEmail = normalizeEmail(req.body?.reporterEmail || req.body?.reporter_email) || null;
@@ -6546,12 +6712,20 @@ app.post("/api/concerns/public", async (req, res) => {
         const category = normalizeConcernCategory(req.body?.category) || "Login Issue";
         const rawMessage = normalizeConcernDetails(req.body?.message);
 
+        if (normalizeText(req.body?.website)) {
+            return res.status(202).json({ success: true, message: "Concern submitted successfully." });
+        }
+
         if (reporterEmail && !EMAIL_REGEX.test(reporterEmail)) {
             return res.status(400).json({ error: "Enter a valid email address." });
         }
 
         if (!subject || !category || !rawMessage) {
             return res.status(400).json({ error: "Subject, category, and concern details are required." });
+        }
+
+        if (reporterName.length > 120 || (reporterEmail?.length || 0) > 254 || identifier.length > 254 || subject.length > 160 || rawMessage.length > 5000) {
+            return res.status(400).json({ error: "One or more fields exceed the allowed length." });
         }
 
         const message = identifier ? `${rawMessage}\n\nLogin identifier: ${identifier}` : rawMessage;
@@ -7005,10 +7179,13 @@ app.patch("/api/account/my-posts/announcements/:id", authenticateToken, async (r
         const description = String(req.body?.description || "").trim();
         const date = normalizeDateOnly(req.body?.date);
         const organizer = normalizeText(req.body?.organizer);
-        const imageUrl = normalizeStoredMedia(typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null) || null;
+        const imageUrl = normalizeSubmittedImage(req.body?.imageUrl) || null;
 
         if (!title || !date) {
             return res.status(400).json({ error: "Title and date are required." });
+        }
+        if (title.length > 160 || description.length > 5000 || organizer.length > 160) {
+            return res.status(400).json({ error: "One or more fields exceed the allowed length." });
         }
 
         await db.execute(
@@ -7056,10 +7233,13 @@ app.patch("/api/account/my-posts/achievements/:id", authenticateToken, async (re
         const date = normalizeDateOnly(req.body?.date);
         const category = normalizeText(req.body?.category);
         const organization = normalizeText(req.body?.organization);
-        const proofImage = normalizeStoredMedia(typeof req.body?.proofImage === "string" ? req.body.proofImage : null) || null;
+        const proofImage = normalizeSubmittedImage(req.body?.proofImage) || null;
 
         if (!title || !category || !date) {
             return res.status(400).json({ error: "Title, category, and date are required." });
+        }
+        if (title.length > 160 || description.length > 5000 || category.length > 80 || organization.length > 160) {
+            return res.status(400).json({ error: "One or more fields exceed the allowed length." });
         }
 
         await db.execute(
@@ -7105,10 +7285,13 @@ app.patch("/api/account/my-posts/freedom-wall/:id", authenticateToken, async (re
 
         const content = String(req.body?.content || "").trim();
         const category = normalizeText(req.body?.category) || "Discussion";
-        const imageUrl = normalizeStoredMedia(typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null) || null;
+        const imageUrl = normalizeSubmittedImage(req.body?.imageUrl) || null;
 
         if (!content) {
             return res.status(400).json({ error: "Post content is required." });
+        }
+        if (content.length > 5000 || category.length > 80) {
+            return res.status(400).json({ error: "One or more fields exceed the allowed length." });
         }
 
         await db.execute(
@@ -7178,7 +7361,7 @@ app.delete("/api/account/my-posts/:type/:id", authenticateToken, async (req: Aut
 });
 
 // Profiles and alumni
-app.get("/api/profiles", authenticateToken, async (req, res) => {
+app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), async (req, res) => {
     try {
         await ensureAlumniProfileColumns();
 
@@ -7319,7 +7502,7 @@ app.get("/api/profiles", authenticateToken, async (req, res) => {
     }
 });
 
-app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: AuthenticatedRequest, res) => {
+app.post("/api/profiles", authenticateToken, requirePermission("alumni.edit"), async (_req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
@@ -7454,7 +7637,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
                 await updateCredentialEmailStatus(userId, "sent");
             } catch (emailSendError: unknown) {
                 emailError = getSafeEmailError(emailSendError);
-                logger.warn("[Email] Alumni credential delivery failed", { error: emailError });
+                logger.warn("[Email] Alumni credential delivery failed", emailSendError);
                 await updateCredentialEmailStatus(userId, "failed", emailError);
             }
         }
@@ -7480,7 +7663,7 @@ app.post("/api/profiles", authenticateToken, requireAdmin, async (_req: Authenti
     }
 });
 
-app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimiter, alumniImportFileParser, async (req: AuthenticatedRequest, res) => {
+app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.edit"), importRateLimiter, alumniImportFileParser, async (req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
@@ -7513,7 +7696,12 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimi
         const seenEmails = new Set<string>();
 
         rows.forEach((row, index) => {
-            const result = validateImportRow(row, index + 1, programOptions);
+            const sourceRowNumber = Number(row.rowNumber);
+            const result = validateImportRow(
+                row,
+                Number.isInteger(sourceRowNumber) && sourceRowNumber > 0 ? sourceRowNumber : index + 1,
+                programOptions
+            );
 
             if (!result.ok) {
                 failedRows.push(result.failure);
@@ -7571,6 +7759,12 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimi
             alumniId: string;
             emailAddress: string;
             fullName: string;
+            graduationYear: string;
+            program: string;
+            contactNumber: string;
+            borNumber: string | null;
+            advancedStudiesLevel: string | null;
+            advancedStudiesStatus: string | null;
             emailSent: boolean;
             emailStatus: "sent" | "failed";
         }> = [];
@@ -7632,7 +7826,7 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimi
                     rowNumber: row.rowNumber,
                     fullName: row.name,
                     emailAddress: row.email,
-                    reason: `Database insert failed: ${getSafeEmailError(insertError)}`,
+                    reason: getPublicErrorMessage(insertError, "Unable to create this account. Please try again."),
                     category: "database"
                 });
                 continue;
@@ -7680,6 +7874,12 @@ app.post("/api/profiles/import", authenticateToken, requireAdmin, importRateLimi
                 alumniId,
                 emailAddress: row.email,
                 fullName: row.name,
+                graduationYear: row.batch,
+                program: row.course,
+                contactNumber: row.contactNumber,
+                borNumber: row.borNumber,
+                advancedStudiesLevel: row.advancedStudiesLevel,
+                advancedStudiesStatus: row.advancedStudiesStatus,
                 emailSent,
                 emailStatus
             });
@@ -7740,9 +7940,9 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
         }
 
         if (role === "administrator") {
-            where.push("us.role_id IN ('admin', 'president')");
+            where.push("us.role_id = 'admin'");
         } else if (role === "staff") {
-            where.push("us.role_id NOT IN ('admin', 'president', 'chairman', 'alumni')");
+            where.push("us.role_id NOT IN ('admin', 'chairman', 'alumni')");
         } else if (role) {
             where.push("us.role_id = ?");
             params.push(role);
@@ -7804,9 +8004,9 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
         }
 
         if (role === "administrator") {
-            activityWhere.push("al.role_used IN ('admin', 'president')");
+            activityWhere.push("al.role_used = 'admin'");
         } else if (role === "staff") {
-            activityWhere.push("al.role_used NOT IN ('admin', 'president', 'chairman', 'alumni')");
+            activityWhere.push("al.role_used NOT IN ('admin', 'chairman', 'alumni')");
         } else if (role) {
             activityWhere.push("al.role_used = ?");
             activityParams.push(role);
@@ -7852,9 +8052,10 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 SUM(CASE WHEN login_time >= CURRENT_DATE() AND login_time < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY) THEN 1 ELSE 0 END) AS loginsToday,
                 COUNT(DISTINCT CASE WHEN status = 'Active' THEN user_id END) AS activeUsers,
                 SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) AS activeSessions,
-                SUM(CASE WHEN status = 'Active' AND role_id IN ('admin', 'president') THEN 1 ELSE 0 END) AS loggedInAdministrators,
-                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'president', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
-                SUM(CASE WHEN status = 'Active' AND role_id = 'chairman' THEN 1 ELSE 0 END) AS loggedInChairmen
+                SUM(CASE WHEN status = 'Active' AND role_id = 'admin' THEN 1 ELSE 0 END) AS loggedInAdministrators,
+                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
+                SUM(CASE WHEN status = 'Active' AND role_id = 'chairman' THEN 1 ELSE 0 END) AS loggedInChairmen,
+                (SELECT COUNT(*) FROM users) AS totalRegisteredUsers
              FROM user_sessions`
         );
 
@@ -7866,7 +8067,6 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 email: session.email ? String(session.email) : null,
                 role: String(session.role_id || ""),
                 roleLabel: getRoleDisplayLabel(session.role_id),
-                sessionToken: String(session.session_token || ""),
                 ipAddress: session.ip_address ? String(session.ip_address) : null,
                 browser: session.browser ? String(session.browser) : null,
                 operatingSystem: session.operating_system ? String(session.operating_system) : null,
@@ -7901,7 +8101,8 @@ app.get("/api/admin/sessions", authenticateToken, requireAdmin, async (req: Auth
                 activeSessions: Number(stats?.activeSessions || 0),
                 loggedInAdministrators: Number(stats?.loggedInAdministrators || 0),
                 loggedInStaff: Number(stats?.loggedInStaff || 0),
-                loggedInChairmen: Number(stats?.loggedInChairmen || 0)
+                loggedInChairmen: Number(stats?.loggedInChairmen || 0),
+                totalRegisteredUsers: Number(stats?.totalRegisteredUsers || 0)
             }
         });
     } catch (err: unknown) {
@@ -7950,7 +8151,7 @@ app.post("/api/admin/sessions/user/:userId/terminate", authenticateToken, requir
         res.json({ success: true, terminated: activeSessions.length });
     } catch (err: unknown) {
         logger.error("TERMINATE USER SESSIONS ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to terminate these sessions. Please try again.") });
     }
 });
 
@@ -8031,7 +8232,7 @@ app.post("/api/admin/sessions/terminate-all", authenticateToken, requireAdmin, a
     }
 });
 // Admin dashboard
-app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/dashboard", authenticateToken, requireOfficer, async (_req, res) => {
     try {
         await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
@@ -8066,7 +8267,8 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
 
         const totalDonationsRow = await getSingleRow(
             `SELECT COALESCE(SUM(CASE WHEN ${donationStatusSql("status")} IN ('approved', 'approve') THEN amount ELSE 0 END), 0) AS totalDonations
-             FROM donations`
+             FROM donations
+             WHERE contribution_type = 'Financial'`
         );
 
         const pendingDonations = parseRows<PendingDonationRow>(await db.query<PendingDonationRow>(
@@ -8141,8 +8343,8 @@ app.get("/api/admin/dashboard", authenticateToken, requireAdmin, async (_req, re
             `SELECT
                 COUNT(DISTINCT CASE WHEN status = 'Active' THEN user_id END) AS activeUsers,
                 SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END) AS activeSessions,
-                SUM(CASE WHEN status = 'Active' AND role_id IN ('admin', 'president') THEN 1 ELSE 0 END) AS loggedInAdministrators,
-                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'president', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
+                SUM(CASE WHEN status = 'Active' AND role_id = 'admin' THEN 1 ELSE 0 END) AS loggedInAdministrators,
+                SUM(CASE WHEN status = 'Active' AND role_id NOT IN ('admin', 'chairman', 'alumni') THEN 1 ELSE 0 END) AS loggedInStaff,
                 SUM(CASE WHEN status = 'Active' AND role_id = 'chairman' THEN 1 ELSE 0 END) AS loggedInChairmen
              FROM user_sessions`
         );
@@ -8672,7 +8874,6 @@ app.get("/api/chairman/engagement", authenticateToken, requireChairman, async (r
 app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
-        await autoArchiveExpiredContent();
         const announcementTable = await getAnnouncementTableName();
         const hasAnnouncementApprovalStatus = await columnExists(announcementTable, "approval_status");
         const hasAudienceScope = await columnExists(announcementTable, "audience_scope");
@@ -8741,20 +8942,44 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             ))
             : [];
 
-        const surveys = (await Promise.all(surveyRows.map(async (row) => {
-            const questions = parseRows(await db.query(
-                `SELECT *
-                 FROM survey_questions
-                 WHERE survey_id = ?
-                 ORDER BY question_order ASC, id ASC`,
-                [row.id]
-            ));
-            const userAnswers = parseRows(await db.query(
-                `SELECT question_id, answer_text, answer_value, answer_json, rating_value
-                 FROM survey_answers
-                 WHERE survey_id = ? AND respondent_id = ?`,
-                [row.id, req.user?.id || null]
-            ));
+        const surveyIds = surveyRows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+        const surveyPlaceholders = surveyIds.map(() => "?").join(", ");
+        const [allSurveyQuestions, allUserAnswers] = surveyIds.length > 0
+            ? await Promise.all([
+                db.query(
+                    `SELECT id, survey_id, question_text, question_type, question_order, is_required,
+                            options_json, min_rating, max_rating, placeholder
+                     FROM survey_questions
+                     WHERE survey_id IN (${surveyPlaceholders})
+                     ORDER BY survey_id ASC, question_order ASC, id ASC`,
+                    surveyIds
+                ),
+                db.query(
+                    `SELECT survey_id, question_id, answer_text, answer_value, answer_json, rating_value
+                     FROM survey_answers
+                     WHERE survey_id IN (${surveyPlaceholders}) AND respondent_id = ?`,
+                    [...surveyIds, req.user.id]
+                )
+            ])
+            : [[], []];
+        const questionsBySurvey = new Map<number, QueryRow[]>();
+        const answersBySurvey = new Map<number, QueryRow[]>();
+        parseRows(allSurveyQuestions).forEach((question) => {
+            const surveyId = Number(question.survey_id);
+            const items = questionsBySurvey.get(surveyId) || [];
+            items.push(question);
+            questionsBySurvey.set(surveyId, items);
+        });
+        parseRows(allUserAnswers).forEach((answer) => {
+            const surveyId = Number(answer.survey_id);
+            const items = answersBySurvey.get(surveyId) || [];
+            items.push(answer);
+            answersBySurvey.set(surveyId, items);
+        });
+
+        const surveys = surveyRows.map((row) => {
+            const questions = questionsBySurvey.get(Number(row.id)) || [];
+            const userAnswers = answersBySurvey.get(Number(row.id)) || [];
             const duration = withDurationFields({
                 ...row,
                 start_datetime: row.start_datetime || row.opens_at,
@@ -8796,7 +9021,7 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
                     ratingValue: answer.rating_value
                 }))
             };
-        }))).filter((survey) => survey.questions.length > 0);
+        }).filter((survey) => survey.questions.length > 0);
 
         await ensureDashboardSlideTable();
         const slides = parseRows(await db.query(
@@ -8813,12 +9038,18 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             [req.user.id]
         ));
 
-        const comments = parseRows(await db.query(
-            `SELECT ec.id, ec.event_id, ec.content AS text, ec.created_at, p.name AS profile_name
-             FROM event_comments ec
-             LEFT JOIN profiles p ON p.id = ec.alumni_id
-             ORDER BY ec.created_at DESC`
-        ));
+        const dashboardEventIds = events.map((event) => Number(event.id)).filter((id) => Number.isInteger(id) && id > 0);
+        const comments = dashboardEventIds.length > 0
+            ? parseRows(await db.query(
+                `SELECT ec.id, ec.event_id, ec.content AS text, ec.created_at, p.name AS profile_name
+                 FROM event_comments ec
+                 LEFT JOIN profiles p ON p.id = ec.alumni_id
+                 WHERE ec.event_id IN (${dashboardEventIds.map(() => "?").join(", ")})
+                 ORDER BY ec.created_at DESC
+                 LIMIT 200`,
+                dashboardEventIds
+            ))
+            : [];
 
         const activeSchoolYear = await getActiveOfficerSchoolYear();
         const legacyOfficers = activeSchoolYear
@@ -8947,7 +9178,7 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
 });
 
 // Graduate tracer administration
-app.get("/api/graduate-tracer", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/graduate-tracer", authenticateToken, requirePermission("tracer.view"), async (_req, res) => {
     try {
         const tracerTable = await getTracerTableName();
         const tracerColumns = getTracerColumnNames(tracerTable);
@@ -8991,7 +9222,7 @@ app.get("/api/admin/tracer", authenticateToken, assertTracerAdminAccess, listTra
 app.use("/api/tracer", tracerRoutes);
 
 // Engagement metrics
-app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/engagement", authenticateToken, requirePermission("engagement.view"), async (_req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const totalAlumniRow = await getSingleRow(
@@ -9001,10 +9232,6 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
         await ensureEventRsvpTables();
         const registeredEventUsersRow = await getSingleRow(
             "SELECT COUNT(DISTINCT alumni_id) AS engagedAlumni FROM event_rsvps WHERE attendance_status = 'Attended'"
-        );
-
-        const donationUsersRow = await getSingleRow(
-            "SELECT COUNT(DISTINCT user_id) AS donorAlumni FROM donations"
         );
 
         const tracerTable = await getTracerTableName();
@@ -9031,25 +9258,13 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
             LIMIT 10`
         ));
 
-        const donationBreakdown = parseRows(await db.query(
-            `SELECT
-                ${donationStatusSql("status")} AS status,
-                COUNT(*) AS count,
-                COALESCE(SUM(amount), 0) AS totalAmount
-            FROM donations
-            GROUP BY ${donationStatusSql("status")}
-            ORDER BY count DESC`
-        ));
-
         res.json({
             overview: {
                 totalAlumni: Number(totalAlumniRow?.totalAlumni || 0),
                 engagedAlumni: Number(registeredEventUsersRow?.engagedAlumni || 0),
-                donorAlumni: Number(donationUsersRow?.donorAlumni || 0),
                 tracerRespondents: Number(tracerUsersRow?.tracerRespondents || 0)
             },
-            eventMetrics,
-            donationBreakdown
+            eventMetrics
         });
     } catch (err: unknown) {
         logger.error("GET ENGAGEMENT ERROR:", err);
@@ -9058,16 +9273,13 @@ app.get("/api/engagement", authenticateToken, requireAdmin, async (_req, res) =>
 });
 
 // Engagement metrics endpoint used by the admin frontend
-app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/engagement-metrics", authenticateToken, requirePermission("engagement.view"), async (_req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventCountRow = await getSingleRow(`SELECT COUNT(*) AS cnt FROM ${announcementTable}`);
         await ensureEventRsvpTables();
         const regCountRow = await getSingleRow("SELECT COUNT(*) AS cnt FROM event_rsvps WHERE attendance_status = 'Attended'");
         const commentCountRow = await getSingleRow("SELECT COUNT(*) AS cnt FROM event_comments");
-        const donationCountRow = await getSingleRow(
-            `SELECT COUNT(*) AS cnt FROM donations WHERE ${donationStatusSql("status")} IN ('approved', 'approve')`
-        );
         const totalAlumniRow = await getSingleRow(
             "SELECT COUNT(*) AS cnt FROM user_roles WHERE role = 'alumni'"
         );
@@ -9090,10 +9302,6 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
             `SELECT ec.alumni_id AS user_id FROM event_comments ec`
         ));
 
-        const donations = parseRows(await db.query(
-            `SELECT d.user_id FROM donations d`
-        ));
-
         const eventMetrics = parseRows(await db.query(
             `SELECT
                 e.id,
@@ -9103,12 +9311,10 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
                 e.date,
                 e.venue,
                 COUNT(DISTINCT er.id) AS registrations,
-                COUNT(DISTINCT ec.id) AS comments,
-                COALESCE(SUM(CASE WHEN ${donationStatusSql("d.status")} IN ('approved', 'approve') THEN d.amount ELSE 0 END), 0) AS approvedDonations
+                COUNT(DISTINCT ec.id) AS comments
             FROM ${announcementTable} e
             LEFT JOIN event_rsvps er ON er.event_id = e.id AND er.attendance_status = 'Attended'
             LEFT JOIN event_comments ec ON ec.event_id = e.id
-            LEFT JOIN donations d ON LOWER(d.purpose) = LOWER(e.title)
             GROUP BY e.id
             ORDER BY e.date DESC, e.created_at DESC
             LIMIT 10`
@@ -9118,7 +9324,6 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
             eventCount: Number(eventCountRow?.cnt || 0),
             regCount: Number(regCountRow?.cnt || 0),
             commentCount: Number(commentCountRow?.cnt || 0),
-            donationCount: Number(donationCountRow?.cnt || 0),
             overview: {
                 totalAlumni: Number(totalAlumniRow?.cnt || 0),
                 tracerRespondents: Number(tracerCountRow?.cnt || 0)
@@ -9126,7 +9331,6 @@ app.get("/api/admin/engagement-metrics", authenticateToken, requireAdmin, async 
             profiles,
             regs,
             comments,
-            donations,
             eventMetrics
         });
     } catch (err: unknown) {
@@ -9143,13 +9347,14 @@ const projectOption = (value: unknown, options: readonly string[], fallback: str
     return options.find((item) => item.toLowerCase() === normalized) || aliases[normalized] || fallback;
 };
 const mapAlumniProject = (row: AlumniProjectRow) => ({
-    id: Number(row.id), title: row.title, description: row.description || "", category: projectOption(row.category, PROJECT_CATEGORIES, "Other"),
+    id: Number(row.id), title: row.title, description: row.description || "", objectives: row.objectives || "", category: projectOption(row.category, PROJECT_CATEGORIES, "Other"),
     batchYear: row.batch_year || "", leadOfficerId: row.lead_officer_id || "", leadOfficer: row.lead_officer_name || "",
     leadAlumniId: row.lead_alumni_id || "", leadAlumni: row.lead_alumni_name || "",
-    organizationName: row.organization_name || row.alumni_group || "", alumniGroup: row.organization_name || row.alumni_group || "",
+    organizationName: row.organization_name || row.alumni_group || "", alumniGroup: row.organization_name || row.alumni_group || "", responsiblePerson: row.responsible_person || "",
     startDate: row.start_date || "", endDate: row.end_date || "", status: projectOption(row.status, PROJECT_STATUSES, "Planned"),
     estimatedValue: Number(row.estimated_value || 0), fundingSource: row.funding_source || "", beneficiaries: row.beneficiaries || "",
-    accomplishments: row.accomplishments || "", remarks: row.remarks || "",
+    accomplishments: row.accomplishments || "", evidenceNotes: row.evidence_notes || "", remarks: row.remarks || "",
+    relatedTargetId: row.related_target_id ? Number(row.related_target_id) : null, relatedMoaId: row.related_moa_id ? Number(row.related_moa_id) : null,
     relatedContributionId: row.related_contribution_id || row.contribution_record_id || "", contributionRecordId: row.related_contribution_id || row.contribution_record_id || "",
     createdAt: row.created_at, updatedAt: row.updated_at, fileCount: Number(row.file_count || 0)
 });
@@ -9177,17 +9382,26 @@ const listAlumniProjects = async (query: Record<string, unknown> = {}) => {
 };
 const normalizeProjectInput = (body: Record<string, unknown>) => {
     const title = normalizeText(body.title), category = projectOption(body.category, PROJECT_CATEGORIES, "Other");
+    const description = normalizeText(body.description), objectives = normalizeText(body.objectives), responsiblePerson = normalizeText(body.responsiblePerson);
     const startDate = normalizeDateOnly(body.startDate), endDate = normalizeDateOnly(body.endDate);
     if (!title) throw new Error("Project title is required.");
+    if (!description) throw new Error("Project description is required.");
+    if (!objectives) throw new Error("Project objectives are required.");
+    if (!responsiblePerson) throw new Error("Responsible person or office is required.");
+    if (!startDate || !endDate) throw new Error("Project start and end dates are required.");
     if (startDate && endDate && startDate > endDate) throw new Error("End date cannot be earlier than the start date.");
+    const estimatedValue = body.estimatedValue == null || body.estimatedValue === "" ? null : Number(body.estimatedValue);
+    if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) throw new Error("Estimated value cannot be negative.");
     return {
-        title, description: normalizeText(body.description) || null, category, batchYear: normalizeText(body.batchYear) || null,
+        title, description, objectives, category, batchYear: normalizeText(body.batchYear) || null,
         leadOfficerId: normalizeText(body.leadOfficerId) || null, leadAlumniId: normalizeText(body.leadAlumniId) || null,
-        organizationName: normalizeText(body.organizationName ?? body.alumniGroup) || null, startDate: startDate || null, endDate: endDate || null,
-        status: projectOption(body.status, PROJECT_STATUSES, "Planned"), estimatedValue: Number(body.estimatedValue) || null,
+        organizationName: normalizeText(body.organizationName ?? body.alumniGroup) || null, responsiblePerson, startDate, endDate,
+        status: projectOption(body.status, PROJECT_STATUSES, "Planned"), estimatedValue,
         fundingSource: normalizeText(body.fundingSource) || null, beneficiaries: normalizeText(body.beneficiaries) || null,
-        accomplishments: normalizeText(body.accomplishments) || null, remarks: normalizeText(body.remarks) || null,
-        relatedContributionId: normalizeText(body.relatedContributionId ?? body.contributionRecordId) || null
+        accomplishments: normalizeText(body.accomplishments) || null, evidenceNotes: normalizeText(body.evidenceNotes) || null, remarks: normalizeText(body.remarks) || null,
+        relatedContributionId: normalizeText(body.relatedContributionId ?? body.contributionRecordId) || null,
+        relatedTargetId: Number(body.relatedTargetId) > 0 ? Number(body.relatedTargetId) : null,
+        relatedMoaId: Number(body.relatedMoaId) > 0 ? Number(body.relatedMoaId) : null
     };
 };
 const getAlumniProjectSummary = async (query: Record<string, unknown> = {}) => {
@@ -9237,20 +9451,16 @@ const sendAlumniProjectsPdf = (res: express.Response, rows: AlumniProjectRow[]) 
     pdf += "trailer\n<< /Size " + String(objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + String(xref) + "\n%%EOF";
     res.setHeader("Content-Type", "application/pdf"); res.attachment("alumni-projects-report.pdf"); res.send(Buffer.from(pdf, "utf8"));
 };
-app.use("/api/admin/alumni-projects", authenticateToken, requireAdmin, (_req, res) => {
-    res.status(410).json({ error: "Alumni Projects has been removed." });
-});
-
-app.get("/api/admin/alumni-projects/reports/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/summary", authenticateToken, requireAdmin, async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/pdf", authenticateToken, requireAdmin, async (req, res) => { try { sendAlumniProjectsPdf(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/excel", authenticateToken, requireAdmin, async (req, res) => { try { await sendAlumniProjectsExcel(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/export/:format", authenticateToken, requireAdmin, async (req, res) => { try { res.json({ format: req.params.format, projects: (await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { res.json((await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.get("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectDirectoryAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); await ensureAlumniProjectTables(); const row = await getSingleRow<AlumniProjectRow>(`SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name, 0 AS file_count FROM alumni_projects p LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id WHERE p.id = ?`, [id]); if (!row) return res.status(404).json({ error: "Project not found." }); const files = parseRows<AlumniProjectFileRow>(await db.query<AlumniProjectFileRow>("SELECT * FROM alumni_project_files WHERE project_id = ? ORDER BY uploaded_at DESC, created_at DESC", [id])); res.json({ ...mapAlumniProject(row), files: files.map((file) => ({ id: Number(file.id), name: file.file_name, type: file.file_type || "", path: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", url: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", category: file.file_category || "File", uploadedAt: file.uploaded_at || file.created_at, createdAt: file.created_at })) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
-app.post("/api/admin/alumni-projects", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req: AuthenticatedRequest, res) => { try { const project = normalizeProjectInput(req.body || {}); const result = await db.execute("INSERT INTO alumni_projects (title, description, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, start_date, end_date, status, estimated_value, funding_source, beneficiaries, related_contribution_id, accomplishments, remarks, contribution_record_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
-app.put("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id), project = normalizeProjectInput(req.body || {}); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET title=?, description=?, category=?, batch_year=?, lead_officer_id=?, lead_alumni_id=?, organization_name=?, alumni_group=?, start_date=?, end_date=?, status=?, estimated_value=?, funding_source=?, beneficiaries=?, related_contribution_id=?, accomplishments=?, remarks=?, contribution_record_id=? WHERE id=?", [project.title, project.description, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.accomplishments, project.remarks, project.relatedContributionId, id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Project not found." }); res.json({ success: true }); } catch (e: unknown) { res.status(400).json({ error: getErrorMessage(e) }); } });
-app.delete("/api/admin/alumni-projects/:id", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET status = 'Archived' WHERE id = ? AND status <> 'Archived'", [id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Active project not found." }); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/reports/summary", authenticateToken, requirePermission("projects.view"), async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/summary", authenticateToken, requirePermission("projects.view"), async (req, res) => { try { res.json(await getAlumniProjectSummary(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/pdf", authenticateToken, requirePermission("projects.view"), async (req, res) => { try { sendAlumniProjectsPdf(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/excel", authenticateToken, requirePermission("projects.view"), async (req, res) => { try { await sendAlumniProjectsExcel(res, await listAlumniProjects(req.query as Record<string, unknown>)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/export/:format", authenticateToken, requirePermission("projects.view"), async (req, res) => { try { res.json({ format: req.params.format, projects: (await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects", authenticateToken, requirePermission("projects.view"), requireProjectDirectoryAccess, async (req, res) => { try { res.json((await listAlumniProjects(req.query as Record<string, unknown>)).map(mapAlumniProject)); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.get("/api/admin/alumni-projects/:id", authenticateToken, requirePermission("projects.view"), requireProjectDirectoryAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); await ensureAlumniProjectTables(); const row = await getSingleRow<AlumniProjectRow>(`SELECT p.*, officer_profile.name AS lead_officer_name, alumni_profile.name AS lead_alumni_name, 0 AS file_count FROM alumni_projects p LEFT JOIN profiles officer_profile ON officer_profile.id = p.lead_officer_id LEFT JOIN profiles alumni_profile ON alumni_profile.id = p.lead_alumni_id WHERE p.id = ?`, [id]); if (!row) return res.status(404).json({ error: "Project not found." }); const files = parseRows<AlumniProjectFileRow>(await db.query<AlumniProjectFileRow>("SELECT * FROM alumni_project_files WHERE project_id = ? ORDER BY uploaded_at DESC, created_at DESC", [id])); res.json({ ...mapAlumniProject(row), files: files.map((file) => ({ id: Number(file.id), name: file.file_name, type: file.file_type || "", path: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", url: normalizeStoredMedia(file.file_path || file.file_url || "") || file.file_path || file.file_url || "", category: file.file_category || "File", uploadedAt: file.uploaded_at || file.created_at, createdAt: file.created_at })) }); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
+app.post("/api/admin/alumni-projects", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, async (req: AuthenticatedRequest, res) => { try { const project = normalizeProjectInput(req.body || {}); const result = await db.execute("INSERT INTO alumni_projects (title, description, objectives, category, batch_year, lead_officer_id, lead_alumni_id, organization_name, alumni_group, responsible_person, start_date, end_date, status, estimated_value, funding_source, beneficiaries, related_contribution_id, related_target_id, related_moa_id, accomplishments, evidence_notes, remarks, contribution_record_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [project.title, project.description, project.objectives, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.responsiblePerson, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.relatedTargetId, project.relatedMoaId, project.accomplishments, project.evidenceNotes, project.remarks, project.relatedContributionId, req.user?.id || null]) as ResultSetHeader; res.status(201).json({ id: result.insertId }); } catch (e: unknown) { res.status(400).json({ error: getPublicErrorMessage(e, "Unable to create project.") }); } });
+app.put("/api/admin/alumni-projects/:id", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id), project = normalizeProjectInput(req.body || {}); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET title=?, description=?, objectives=?, category=?, batch_year=?, lead_officer_id=?, lead_alumni_id=?, organization_name=?, alumni_group=?, responsible_person=?, start_date=?, end_date=?, status=?, estimated_value=?, funding_source=?, beneficiaries=?, related_contribution_id=?, related_target_id=?, related_moa_id=?, accomplishments=?, evidence_notes=?, remarks=?, contribution_record_id=? WHERE id=?", [project.title, project.description, project.objectives, project.category, project.batchYear, project.leadOfficerId, project.leadAlumniId, project.organizationName, project.organizationName, project.responsiblePerson, project.startDate, project.endDate, project.status, project.estimatedValue, project.fundingSource, project.beneficiaries, project.relatedContributionId, project.relatedTargetId, project.relatedMoaId, project.accomplishments, project.evidenceNotes, project.remarks, project.relatedContributionId, id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Project not found." }); res.json({ success: true }); } catch (e: unknown) { logger.error("UPDATE ALUMNI PROJECT ERROR:", e); res.status(400).json({ error: "Unable to update this project. Check the fields and try again." }); } });
+app.delete("/api/admin/alumni-projects/:id", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, async (req, res) => { try { const id = Number(req.params.id); if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid project id." }); const result = await db.execute("UPDATE alumni_projects SET status = 'Archived' WHERE id = ? AND status <> 'Archived'", [id]) as ResultSetHeader; if (!result.affectedRows) return res.status(404).json({ error: "Active project not found." }); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } });
 const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.Response) => {
     try {
         const id = Number(req.params.id);
@@ -9258,7 +9468,7 @@ const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.R
         const category = normalizeText(req.body?.category) || "Project File";
         const dataUrl = String(req.body?.dataUrl || "");
         const { mimeType } = parseDataUrlUpload(dataUrl, 8 * 1024 * 1024);
-        const path = normalizeStoredMedia(dataUrl);
+        const path = dataUrl;
 
         if (!Number.isInteger(id) || id <= 0 || !path) {
             return res.status(400).json({ error: "A valid project attachment is required." });
@@ -9274,12 +9484,13 @@ const uploadAlumniProjectFile = async (req: AuthenticatedRequest, res: express.R
 
         res.status(201).json({ id: result.insertId });
     } catch (e: unknown) {
-        res.status(400).json({ error: getErrorMessage(e) });
+        logger.error("UPLOAD ALUMNI PROJECT FILE ERROR:", e);
+        res.status(400).json({ error: "Unable to upload this file. Use a supported file and try again." });
     }
 };
-app.post("/api/admin/alumni-projects/:id/upload-file", authenticateToken, requireAdmin, requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
-app.post("/api/admin/alumni-projects/:id/files", authenticateToken, requireAdmin, requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
-app.delete("/api/admin/alumni-projects/:projectId/files/:fileId", authenticateToken, requireAdmin, requireProjectWriteAccess, async (req, res) => { try { await db.execute("DELETE FROM alumni_project_files WHERE id = ? AND project_id = ?", [Number(req.params.fileId), Number(req.params.projectId)]); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } })
+app.post("/api/admin/alumni-projects/:id/upload-file", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
+app.post("/api/admin/alumni-projects/:id/files", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, importRateLimiter, uploadAlumniProjectFile);
+app.delete("/api/admin/alumni-projects/:projectId/files/:fileId", authenticateToken, requirePermission("projects.manage"), requireProjectWriteAccess, async (req, res) => { try { await db.execute("DELETE FROM alumni_project_files WHERE id = ? AND project_id = ?", [Number(req.params.fileId), Number(req.params.projectId)]); res.status(204).send(); } catch (e: unknown) { res.status(500).json({ error: getPublicErrorMessage(e) }); } })
 const ALUMNI_FEE_TYPE_STATUSES = ["Active", "Archived"] as const;
 const ALUMNI_PAYMENT_STATUSES = ["Paid", "Unpaid"] as const;
 const ALUMNI_COMPLETION_STATUSES = ["Complete", "Incomplete"] as const;
@@ -9471,11 +9682,11 @@ app.use("/api/alumni/fee-records", authenticateToken, (_req, res) => {
     res.status(410).json({ error: "Alumni Fee Records has been removed." });
 });
 
-app.get("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/donations/fee-records/types", authenticateToken, requirePermission("donations.view"), async (req, res) => {
     try { res.json((await getAlumniFeeTypeRows(req.query as Record<string, unknown>)).map(mapAlumniFeeType)); }
     catch (err: unknown) { logger.error("GET FEE TYPES ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
-app.post("/api/admin/donations/fee-records/types", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/donations/fee-records/types", authenticateToken, requirePermission("donations.approve"), async (req: AuthenticatedRequest, res) => {
     try {
         const fee = normalizeAlumniFeeTypeInput(req.body || {});
         const result = await db.execute(
@@ -9483,9 +9694,9 @@ app.post("/api/admin/donations/fee-records/types", authenticateToken, requireAdm
             [fee.feeName, fee.amount, fee.description, fee.applicableBatchYear, fee.applicableProgramId, fee.dueDate, fee.assignedOfficerId, fee.isRequired ? 1 : 0, fee.status, req.user?.id || null]
         ) as ResultSetHeader;
         res.status(201).json({ id: result.insertId });
-    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { logger.error("CREATE FEE TYPE ERROR:", err); res.status(400).json({ error: "Unable to create this fee. Check the fields and try again." }); }
 });
-app.put("/api/admin/donations/fee-records/types/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.put("/api/admin/donations/fee-records/types/:id", authenticateToken, requirePermission("donations.approve"), async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid fee type id." });
@@ -9496,9 +9707,9 @@ app.put("/api/admin/donations/fee-records/types/:id", authenticateToken, require
         ) as ResultSetHeader;
         if (!result.affectedRows) return res.status(404).json({ error: "Fee type not found." });
         res.json({ success: true });
-    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { logger.error("UPDATE FEE TYPE ERROR:", err); res.status(400).json({ error: "Unable to update this fee. Check the fields and try again." }); }
 });
-app.delete("/api/admin/donations/fee-records/types/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/admin/donations/fee-records/types/:id", authenticateToken, requirePermission("donations.approve"), async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid fee type id." });
@@ -9507,19 +9718,19 @@ app.delete("/api/admin/donations/fee-records/types/:id", authenticateToken, requ
         res.status(204).send();
     } catch (err: unknown) { res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
-app.get("/api/admin/donations/fee-records/reports/summary", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/donations/fee-records/reports/summary", authenticateToken, requirePermission("donations.view"), async (req, res) => {
     try { res.json(summarizeAlumniFeeRecords(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>))); }
     catch (err: unknown) { logger.error("GET FEE RECORD SUMMARY ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
-app.get("/api/admin/donations/fee-records/export/:format", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/donations/fee-records/export/:format", authenticateToken, requirePermission("reports.view"), async (req, res) => {
     try { res.json({ format: req.params.format, records: await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>) }); }
     catch (err: unknown) { res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
-app.get("/api/admin/donations/fee-records", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/donations/fee-records", authenticateToken, requirePermission("donations.view"), async (req, res) => {
     try { res.json(await getAlumniFeeCompletionRecords(req.query as Record<string, unknown>)); }
     catch (err: unknown) { logger.error("GET FEE RECORDS ERROR:", err); res.status(500).json({ error: getPublicErrorMessage(err) }); }
 });
-app.post("/api/admin/donations/fee-records/payments/mark-paid", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/donations/fee-records/payments/mark-paid", authenticateToken, requirePermission("donations.verify"), async (req: AuthenticatedRequest, res) => {
     try {
         await ensureAlumniFeeRecordsTable();
         const alumniId = normalizeText(req.body?.alumniId), feeTypeId = Number(req.body?.feeTypeId), paidDate = normalizeDateOnly(req.body?.paidDate) || new Date().toISOString().slice(0, 10);
@@ -9537,15 +9748,15 @@ app.post("/api/admin/donations/fee-records/payments/mark-paid", authenticateToke
             [alumniId, feeTypeId, amountPaid, paidDate, req.user?.id || null, note]
         ) as ResultSetHeader;
         res.status(201).json({ id: result.insertId, success: true });
-    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { logger.error("MARK FEE PAID ERROR:", err); res.status(400).json({ error: "Unable to mark this fee as paid. Check the details and try again." }); }
 });
-app.post("/api/admin/donations/fee-records/payments/mark-unpaid", authenticateToken, requireAdmin, async (req, res) => {
+app.post("/api/admin/donations/fee-records/payments/mark-unpaid", authenticateToken, requirePermission("donations.verify"), async (req, res) => {
     try {
         const alumniId = normalizeText(req.body?.alumniId), feeTypeId = Number(req.body?.feeTypeId);
         if (!alumniId || !Number.isInteger(feeTypeId) || feeTypeId <= 0) return res.status(400).json({ error: "Select a valid alumni and fee." });
         await db.execute("UPDATE alumni_fee_payments SET status = 'Unpaid', updated_at = CURRENT_TIMESTAMP WHERE alumni_id = ? AND fee_type_id = ?", [alumniId, feeTypeId]);
         res.json({ success: true });
-    } catch (err: unknown) { res.status(400).json({ error: getErrorMessage(err) }); }
+    } catch (err: unknown) { logger.error("MARK FEE UNPAID ERROR:", err); res.status(400).json({ error: "Unable to update this payment. Please try again." }); }
 });
 app.get("/api/alumni/fee-records/me", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
@@ -9563,12 +9774,14 @@ app.get("/api/alumni/fee-records/me", authenticateToken, async (req: Authenticat
 });/* =========================
    DONATIONS
 ========================= */
-app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/donations", authenticateToken, requirePermission("donations.view"), async (_req, res) => {
     try {
         const rows = parseRows<DonationListRow>(await db.query<DonationListRow>(
             `SELECT
                 d.id,
                 d.user_id,
+                d.contribution_type,
+                d.contribution_date,
                 p.name,
                 p.email,
                 p.course,
@@ -9578,9 +9791,11 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
                 d.method,
                 d.status,
                 d.purpose,
+                d.activity_name,
+                d.volunteer_hours,
+                d.quantity_description,
+                d.estimated_value,
                 d.ref_number,
-                d.receipt_url,
-                d.message,
                 d.is_anonymous,
                 d.donor_name,
                 d.donor_email,
@@ -9590,9 +9805,13 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
                 d.created_at,
                 d.reviewed_at,
                 d.reviewed_by,
-                d.review_notes
+                NULL AS supporting_information,
+                NULL AS receipt_url,
+                NULL AS message,
+                NULL AS review_notes
             FROM donations d
             LEFT JOIN profiles p ON p.id = d.user_id
+            WHERE d.contribution_type IN ('Financial', 'In-Kind', 'Volunteer Service', 'Project Support')
             ORDER BY d.created_at DESC`
         ));
 
@@ -9600,10 +9819,17 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
         const shaped = rows.map((r) => ({
             id: r.id,
             user_id: r.user_id,
+            contribution_type: normalizeContributionType(r.contribution_type),
+            contribution_date: r.contribution_date,
             amount: Number(r.amount || 0),
             method: r.method,
             status: formatStatusLabel(normalizeDonationStatus(r.status), "pending_review"),
             purpose: r.purpose,
+            activity_name: r.activity_name,
+            volunteer_hours: r.volunteer_hours === null ? null : Number(r.volunteer_hours || 0),
+            quantity_description: r.quantity_description,
+            estimated_value: r.estimated_value === null ? null : Number(r.estimated_value || 0),
+            supporting_information: r.supporting_information,
             ref_number: r.ref_number,
             receipt_url: normalizeStoredMedia(r.receipt_url),
             message: r.message,
@@ -9628,7 +9854,7 @@ app.get("/api/donations", authenticateToken, requireAdmin, async (_req, res) => 
     }
 });
 
-app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/donations/summary", authenticateToken, requirePermission("donations.view"), async (_req, res) => {
     try {
         const statusSql = donationStatusSql("status");
         const summary = await getSingleRow(
@@ -9642,7 +9868,8 @@ app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, 
                     ELSE CONCAT('walkin:', LOWER(COALESCE(donor_email, donor_student_id, donor_name, id)))
                 END) AS donorCount,
                 COUNT(*) AS totalDonations
-             FROM donations`
+             FROM donations
+             WHERE contribution_type IN ('Financial', 'In-Kind')`
         );
 
         res.json({
@@ -9659,7 +9886,7 @@ app.get("/api/donations/summary", authenticateToken, requireAdmin, async (_req, 
     }
 });
 
-app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/donations/:id", authenticateToken, requirePermission("donations.view"), async (req, res) => {
     try {
         const donationId = Number(req.params.id);
         if (!donationId) {
@@ -9670,10 +9897,17 @@ app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) 
             `SELECT
                 d.id,
                 d.user_id,
+                d.contribution_type,
+                d.contribution_date,
                 d.amount,
                 d.method,
                 d.status,
                 d.purpose,
+                d.activity_name,
+                d.volunteer_hours,
+                d.quantity_description,
+                d.estimated_value,
+                d.supporting_information,
                 d.ref_number,
                 d.receipt_url,
                 d.message,
@@ -9705,10 +9939,17 @@ app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) 
         res.json({
             id: donation.id,
             user_id: donation.user_id,
+            contribution_type: normalizeContributionType(donation.contribution_type),
+            contribution_date: donation.contribution_date,
             amount: Number(donation.amount || 0),
             method: donation.method,
             status: formatStatusLabel(normalizeDonationStatus(donation.status), "pending_review"),
             purpose: donation.purpose,
+            activity_name: donation.activity_name,
+            volunteer_hours: donation.volunteer_hours === null ? null : Number(donation.volunteer_hours || 0),
+            quantity_description: donation.quantity_description,
+            estimated_value: donation.estimated_value === null ? null : Number(donation.estimated_value || 0),
+            supporting_information: donation.supporting_information,
             ref_number: donation.ref_number,
             receipt_url: normalizeStoredMedia(donation.receipt_url ? String(donation.receipt_url) : null),
             message: donation.message,
@@ -9731,7 +9972,7 @@ app.get("/api/donations/:id", authenticateToken, requireAdmin, async (req, res) 
     }
 });
 
-app.post("/api/donations/:id/review", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/donations/:id/review", authenticateToken, requirePermission("donations.approve"), async (req: AuthenticatedRequest, res) => {
     try {
         const donationId = Number(req.params.id);
         if (!donationId) {
@@ -9753,7 +9994,7 @@ app.post("/api/donations/:id/review", authenticateToken, requireAdmin, async (re
     }
 });
 
-app.post("/api/donations/:id/request-info", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/donations/:id/request-info", authenticateToken, requirePermission("donations.verify"), async (req: AuthenticatedRequest, res) => {
     try {
         const donationId = Number(req.params.id);
         const notes = normalizeText(req.body?.notes);
@@ -9767,7 +10008,7 @@ app.post("/api/donations/:id/request-info", authenticateToken, requireAdmin, asy
         }
 
         const donation = await getSingleRow(
-            `SELECT id, user_id, status
+            `SELECT id, user_id, status, contribution_type
              FROM donations
              WHERE id = ?`,
             [donationId]
@@ -9790,10 +10031,10 @@ app.post("/api/donations/:id/request-info", authenticateToken, requireAdmin, asy
         if (donation.user_id) {
             await createUserNotification({
                 userId: String(donation.user_id),
-                title: "More donation information requested",
+                title: "More contribution information requested",
                 message: notes,
                 category: "donation",
-                linkUrl: "/alumni/donate",
+                linkUrl: ["Financial", "In-Kind"].includes(normalizeContributionType(donation.contribution_type)) ? "/alumni/donate" : "/alumni",
                 actorId: req.user?.id || null
             });
         }
@@ -9844,6 +10085,7 @@ const updateDonationStatus = async (req: express.Request, res: express.Response)
             `SELECT
                 d.id,
                 d.user_id,
+                d.contribution_type,
                 d.amount,
                 d.method,
                 d.status,
@@ -9876,10 +10118,10 @@ const updateDonationStatus = async (req: express.Request, res: express.Response)
         if (updatedDonation?.user_id) {
             await createUserNotification({
                 userId: String(updatedDonation.user_id),
-                title: "Donation status updated",
-                message: `Your donation status is now ${formatStatusLabel(normalizeDonationStatus(updatedDonation.status), "pending_review")}.`,
+                title: "Contribution status updated",
+                message: `Your ${normalizeContributionType(updatedDonation.contribution_type).toLowerCase()} contribution status is now ${formatStatusLabel(normalizeDonationStatus(updatedDonation.status), "pending_review")}.`,
                 category: "donation",
-                linkUrl: "/alumni/donate"
+                linkUrl: ["Financial", "In-Kind"].includes(normalizeContributionType(updatedDonation.contribution_type)) ? "/alumni/donate" : "/alumni"
             });
         }
     } catch (err: unknown) {
@@ -9888,10 +10130,10 @@ const updateDonationStatus = async (req: express.Request, res: express.Response)
     }
 };
 
-app.patch("/api/donations/:id/status", authenticateToken, requireAdmin, updateDonationStatus);
-app.put("/api/donations/:id/status", authenticateToken, requireAdmin, updateDonationStatus);
+app.patch("/api/donations/:id/status", authenticateToken, requirePermission("donations.approve"), updateDonationStatus);
+app.put("/api/donations/:id/status", authenticateToken, requirePermission("donations.approve"), updateDonationStatus);
 
-app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/donations/walk-in", authenticateToken, requirePermission("donations.verify"), async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
@@ -9902,20 +10144,53 @@ app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async 
         const donorCourse = normalizeText(req.body?.donorCourse);
         const purpose = normalizeText(req.body?.purpose);
         const message = normalizeText(req.body?.message);
-        const amount = Number(req.body?.amount);
+        const contributionType = parseContributionType(req.body?.contributionType ?? req.body?.contribution_type);
+        if (!contributionType) {
+            return res.status(400).json({ error: "Select a valid donation or contribution type." });
+        }
+        const contributionDate = normalizeText(req.body?.contributionDate ?? req.body?.contribution_date) || new Date().toISOString().slice(0, 10);
+        const activityName = normalizeText(req.body?.activityName ?? req.body?.activity_name);
+        const quantityDescription = normalizeText(req.body?.quantityDescription ?? req.body?.quantity_description);
+        const supportingInformation = normalizeText(req.body?.supportingInformation ?? req.body?.supporting_information);
+        let supportingEvidence: string | null = null;
+        try {
+            supportingEvidence = req.body?.evidenceUrl || req.body?.receipt_url
+                ? normalizeSubmittedEvidence(req.body?.evidenceUrl ?? req.body?.receipt_url)
+                : null;
+        } catch (error: unknown) {
+            return res.status(400).json({ error: getPublicErrorMessage(error, "Supporting evidence must be a valid image or PDF up to 5 MB.") });
+        }
+        const volunteerHours = req.body?.volunteerHours === "" || req.body?.volunteerHours == null ? null : Number(req.body.volunteerHours);
+        const estimatedValue = req.body?.estimatedValue === "" || req.body?.estimatedValue == null ? null : Number(req.body.estimatedValue);
+        const amount = req.body?.amount === "" || req.body?.amount == null ? 0 : Number(req.body.amount);
         const isAnonymous = normalizeBoolean(req.body?.isAnonymous ?? req.body?.is_anonymous);
 
         if (!donorName) {
             return res.status(400).json({ error: "Enter the walk-in donor's name." });
         }
-        if (!Number.isFinite(amount) || amount <= 0) {
+        if (contributionType === "Financial" && (!Number.isFinite(amount) || amount <= 0)) {
             return res.status(400).json({ error: "Enter a valid donation amount." });
         }
         if (!purpose) {
             return res.status(400).json({ error: "Enter a donation purpose." });
         }
-        if (donorName.length > 255 || donorEmail.length > 255 || donorStudentId.length > 100 || donorBatch.length > 100 || donorCourse.length > 255 || purpose.length > 255) {
+        if (donorName.length > 255 || donorEmail.length > 255 || donorStudentId.length > 100 || donorBatch.length > 100 || donorCourse.length > 255 || purpose.length > 255 || activityName.length > 255 || quantityDescription.length > 255 || supportingInformation.length > 2000) {
             return res.status(400).json({ error: "One or more donor fields are too long." });
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(contributionDate) || Number.isNaN(Date.parse(`${contributionDate}T00:00:00Z`))) {
+            return res.status(400).json({ error: "Enter a valid contribution date." });
+        }
+        if (contributionType === "Volunteer Service" && (volunteerHours === null || !Number.isFinite(volunteerHours) || volunteerHours <= 0)) {
+            return res.status(400).json({ error: "Enter the number of volunteer service hours." });
+        }
+        if (contributionType === "In-Kind" && !quantityDescription) {
+            return res.status(400).json({ error: "Describe the donated items and quantity." });
+        }
+        if (contributionType === "Project Support" && !activityName) {
+            return res.status(400).json({ error: "Enter the related project or program." });
+        }
+        if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) {
+            return res.status(400).json({ error: "Estimated value cannot be negative." });
         }
 
         let matchedUserId: string | null = null;
@@ -9940,15 +10215,26 @@ app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async 
 
         const result = await db.execute(
             `INSERT INTO donations (
-                user_id, amount, method, status, purpose, ref_number, message, receipt_url,
+                user_id, contribution_type, contribution_date, amount, method, status, purpose,
+                activity_name, volunteer_hours, quantity_description, estimated_value, supporting_information,
+                ref_number, message, receipt_url,
                 is_anonymous, donor_name, donor_email, donor_student_id, donor_batch, donor_course,
                 reviewed_at, reviewed_by, review_notes
-             ) VALUES (?, ?, 'Personal', 'approved', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
             [
                 matchedUserId,
-                amount,
+                contributionType,
+                contributionDate,
+                contributionType === "Financial" ? amount : 0,
+                contributionType === "Financial" ? "Personal" : "Non-Monetary",
                 purpose,
+                activityName || null,
+                volunteerHours,
+                quantityDescription || null,
+                estimatedValue,
+                supportingInformation || null,
                 message || null,
+                supportingEvidence,
                 isAnonymous ? 1 : 0,
                 donorName,
                 donorEmail || null,
@@ -9956,17 +10242,17 @@ app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async 
                 donorBatch || null,
                 donorCourse || null,
                 req.user.id,
-                "Walk-in donation recorded and approved by an administrator."
+                "Contribution recorded and approved by an administrator."
             ]
         ) as ResultSetHeader;
 
         if (matchedUserId) {
             await createUserNotification({
                 userId: matchedUserId,
-                title: "Walk-in donation recorded",
-                message: `Your PHP ${amount.toLocaleString()} walk-in donation was recorded and approved.`,
+                title: "Contribution recorded",
+                message: `Your ${contributionType.toLowerCase()} contribution was recorded and approved.`,
                 category: "donation",
-                linkUrl: "/alumni/donate",
+                linkUrl: ["Financial", "In-Kind"].includes(contributionType) ? "/alumni/donate" : "/alumni",
                 actorId: req.user.id
             });
         }
@@ -9974,7 +10260,103 @@ app.post("/api/admin/donations/walk-in", authenticateToken, requireAdmin, async 
         res.status(201).json({ success: true, id: Number(result.insertId), linkedUser: Boolean(matchedUserId) });
     } catch (err: unknown) {
         logger.error("POST ADMIN WALK-IN DONATION ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to record this contribution. Please try again.") });
+    }
+});
+
+app.get("/api/contributions/analytics", authenticateToken, requirePermission("donations.view"), async (req, res) => {
+    try {
+        const type = normalizeText(req.query.type);
+        const program = normalizeText(req.query.program);
+        const batch = normalizeText(req.query.batch);
+        const activity = normalizeText(req.query.activity);
+        const dateFrom = normalizeText(req.query.dateFrom);
+        const dateTo = normalizeText(req.query.dateTo);
+        const where: string[] = [
+            `${donationStatusSql("d.status")} IN ('approved', 'approve')`,
+            "d.contribution_type IN ('Financial', 'In-Kind', 'Volunteer Service', 'Project Support')"
+        ];
+        const params: DbParam[] = [];
+
+        if (type && type !== "All") {
+            if (type === "Donation") {
+                where.push("d.contribution_type IN ('Financial', 'In-Kind')");
+            } else {
+                const contributionType = parseContributionType(type);
+                if (!contributionType) return res.status(400).json({ error: "Select a valid contribution type." });
+                where.push("d.contribution_type = ?");
+                params.push(contributionType);
+            }
+        }
+        if (program) { where.push("LOWER(COALESCE(p.course, d.donor_course, '')) = LOWER(?)"); params.push(program); }
+        if (batch) { where.push("LOWER(COALESCE(p.batch, d.donor_batch, '')) = LOWER(?)"); params.push(batch); }
+        if (activity) { where.push("LOWER(COALESCE(d.activity_name, '')) LIKE ?"); params.push(`%${activity.toLowerCase()}%`); }
+        if (dateFrom) { where.push("COALESCE(d.contribution_date, DATE(d.created_at)) >= ?"); params.push(dateFrom); }
+        if (dateTo) { where.push("COALESCE(d.contribution_date, DATE(d.created_at)) <= ?"); params.push(dateTo); }
+
+        const predicate = where.join(" AND ");
+        const [totals, byType, byProgram, byBatch, byPeriod, byActivity] = await Promise.all([
+            getSingleRow(
+                `SELECT COUNT(*) AS totalContributions,
+                        COUNT(DISTINCT CASE
+                            WHEN d.user_id IS NOT NULL THEN CONCAT('user:', d.user_id)
+                            ELSE CONCAT('walkin:', LOWER(COALESCE(d.donor_email, d.donor_student_id, d.donor_name, d.id)))
+                        END) AS activeContributors,
+                        COALESCE(SUM(CASE WHEN d.contribution_type = 'Financial' THEN d.amount ELSE COALESCE(d.estimated_value, 0) END), 0) AS totalValue,
+                        COALESCE(SUM(CASE WHEN d.contribution_type = 'Financial' THEN d.amount ELSE 0 END), 0) AS financialAmount,
+                        COALESCE(SUM(d.volunteer_hours), 0) AS volunteerHours,
+                        COUNT(CASE WHEN d.contribution_type = 'In-Kind' THEN 1 END) AS inKindContributions,
+                        COUNT(CASE WHEN d.contribution_type = 'Project Support' THEN 1 END) AS projectInvolvements
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}`,
+                params
+            ),
+            parseRows(await db.query(
+                `SELECT d.contribution_type AS label, COUNT(*) AS count,
+                        COALESCE(SUM(CASE WHEN d.contribution_type = 'Financial' THEN d.amount ELSE COALESCE(d.estimated_value, 0) END), 0) AS value
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}
+                 GROUP BY d.contribution_type ORDER BY count DESC`, params
+            )),
+            parseRows(await db.query(
+                `SELECT COALESCE(p.course, d.donor_course, 'Unspecified') AS label, COUNT(*) AS count
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}
+                 GROUP BY COALESCE(p.course, d.donor_course, 'Unspecified') ORDER BY count DESC`, params
+            )),
+            parseRows(await db.query(
+                `SELECT COALESCE(p.batch, d.donor_batch, 'Unspecified') AS label, COUNT(*) AS count
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}
+                 GROUP BY COALESCE(p.batch, d.donor_batch, 'Unspecified') ORDER BY count DESC`, params
+            )),
+            parseRows(await db.query(
+                `SELECT DATE_FORMAT(COALESCE(d.contribution_date, DATE(d.created_at)), '%Y-%m') AS label, COUNT(*) AS count
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}
+                 GROUP BY label ORDER BY label DESC LIMIT 24`, params
+            )),
+            parseRows(await db.query(
+                `SELECT COALESCE(NULLIF(d.activity_name, ''), 'General Support') AS label, COUNT(*) AS count
+                 FROM donations d LEFT JOIN profiles p ON p.id = d.user_id WHERE ${predicate}
+                 GROUP BY COALESCE(NULLIF(d.activity_name, ''), 'General Support') ORDER BY count DESC LIMIT 20`, params
+            ))
+        ]);
+
+        res.json({
+            totals: {
+                totalContributions: Number(totals?.totalContributions || 0),
+                activeContributors: Number(totals?.activeContributors || 0),
+                totalValue: Number(totals?.totalValue || 0),
+                financialAmount: Number(totals?.financialAmount || 0),
+                volunteerHours: Number(totals?.volunteerHours || 0),
+                inKindContributions: Number(totals?.inKindContributions || 0),
+                projectInvolvements: Number(totals?.projectInvolvements || 0)
+            },
+            byType,
+            byProgram,
+            byBatch,
+            byPeriod,
+            byActivity
+        });
+    } catch (err: unknown) {
+        logger.error("GET CONTRIBUTION ANALYTICS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to load contribution analytics.") });
     }
 });
 
@@ -9985,7 +10367,7 @@ app.get("/api/settings/donation", authenticateToken, async (_req, res) => {
         res.json(row || {});
     } catch (err: unknown) {
         logger.error("GET DONATION SETTINGS ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to load donation settings. Please try again.") });
     }
 });
 
@@ -10021,7 +10403,7 @@ app.post("/api/settings/donation/verify-password", authenticateToken, requireAdm
         res.json({ success: true });
     } catch (err: unknown) {
         logger.error("VERIFY DONATION SETTINGS PASSWORD ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to verify your password. Please try again.") });
     }
 });
 
@@ -10057,50 +10439,126 @@ app.post("/api/settings/donation", authenticateToken, requireAdmin, async (req, 
         res.json({ success: true });
     } catch (err: unknown) {
         logger.error("SAVE DONATION SETTINGS ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to save donation settings. Please try again.") });
     }
 });
 
-// Alumni donations
+app.get("/api/alumni/donations", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const rows = parseRows(await db.query(
+            `SELECT id, contribution_type, contribution_date, amount, method, status, purpose,
+                    activity_name, volunteer_hours, quantity_description, estimated_value,
+                    supporting_information, review_notes, created_at
+             FROM donations
+             WHERE user_id = ?
+               AND contribution_type IN ('Financial', 'In-Kind')
+             ORDER BY COALESCE(contribution_date, DATE(created_at)) DESC, created_at DESC`,
+            [req.user.id]
+        ));
+        res.json(rows.map((row) => ({
+            ...row,
+            contribution_type: normalizeContributionType(row.contribution_type),
+            amount: Number(row.amount || 0),
+            volunteer_hours: row.volunteer_hours === null ? null : Number(row.volunteer_hours || 0),
+            estimated_value: row.estimated_value === null ? null : Number(row.estimated_value || 0),
+            status: formatStatusLabel(normalizeDonationStatus(row.status), "pending_review")
+        })));
+    } catch (err: unknown) {
+        logger.error("GET ALUMNI DONATIONS ERROR:", err);
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to load your donations.") });
+    }
+});
+
+// Alumni financial and in-kind donations
 app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
         if (!req.user?.id) return res.sendStatus(401);
 
         const { amount, method, purpose, ref_number, message, receipt_url } = req.body || {};
+        const contributionType = parseContributionType(req.body?.contribution_type);
+        if (!contributionType || !["Financial", "In-Kind"].includes(contributionType)) {
+            return res.status(400).json({ error: "Select Financial Donation or In-Kind Donation." });
+        }
+        const contributionDate = normalizeText(req.body?.contribution_date) || new Date().toISOString().slice(0, 10);
+        const activityName = normalizeText(req.body?.activity_name);
+        const quantityDescription = normalizeText(req.body?.quantity_description);
+        const supportingInformation = normalizeText(req.body?.supporting_information);
+        const volunteerHours = req.body?.volunteer_hours === "" || req.body?.volunteer_hours == null ? null : Number(req.body.volunteer_hours);
+        const estimatedValue = req.body?.estimated_value === "" || req.body?.estimated_value == null ? null : Number(req.body.estimated_value);
         const donationAmount = Number(amount);
-        const normalizedMethod = normalizeText(method);
-        const normalizedReceipt = normalizeStoredMedia(receipt_url);
+        const normalizedMethod = contributionType === "Financial" ? normalizeText(method) : "Non-Monetary";
+        let normalizedReceipt: string | null = null;
+        try {
+            normalizedReceipt = receipt_url
+                ? contributionType === "Financial"
+                    ? normalizeSubmittedImage(receipt_url, 5 * 1024 * 1024)
+                    : normalizeSubmittedEvidence(receipt_url)
+                : null;
+        } catch (error: unknown) {
+            return res.status(400).json({ error: getPublicErrorMessage(error, "Supporting evidence must be a valid image or PDF up to 5 MB.") });
+        }
         const normalizedPurpose = normalizeText(purpose);
         const isAnonymous = normalizeBoolean(req.body?.isAnonymous ?? req.body?.is_anonymous);
 
-        if (!Number.isFinite(donationAmount) || donationAmount <= 0) {
+        if (contributionType === "Financial" && (!Number.isFinite(donationAmount) || donationAmount <= 0)) {
             return res.status(400).json({ error: "Enter a valid donation amount." });
         }
 
         if (!normalizedPurpose) {
             return res.status(400).json({ error: "Enter a donation purpose." });
         }
+        if (normalizedPurpose.length > 255 || activityName.length > 255 || quantityDescription.length > 255 || supportingInformation.length > 2000 || normalizeText(ref_number).length > 120 || normalizeText(message).length > 1000) {
+            return res.status(400).json({ error: "One or more contribution fields exceed the allowed length." });
+        }
 
-        if (!["GCash", "Personal"].includes(normalizedMethod)) {
+        if (contributionType === "Financial" && !["GCash", "Personal"].includes(normalizedMethod)) {
             return res.status(400).json({ error: "Amount and method are required" });
         }
 
-        if (normalizedMethod === "GCash" && !normalizeText(ref_number)) {
+        if (contributionType === "Financial" && normalizedMethod === "GCash" && !normalizeText(ref_number)) {
             return res.status(400).json({ error: "GCash reference number is required." });
         }
 
-        if (normalizedMethod === "GCash" && !normalizedReceipt) {
+        if (contributionType === "Financial" && normalizedMethod === "GCash" && !normalizedReceipt) {
             return res.status(400).json({ error: "Receipt image is required." });
         }
 
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(contributionDate) || Number.isNaN(Date.parse(`${contributionDate}T00:00:00Z`))) {
+            return res.status(400).json({ error: "Enter a valid contribution date." });
+        }
+        if (contributionType === "Volunteer Service" && (!Number.isFinite(volunteerHours) || Number(volunteerHours) <= 0)) {
+            return res.status(400).json({ error: "Enter the number of volunteer service hours." });
+        }
+        if (contributionType === "In-Kind" && !quantityDescription) {
+            return res.status(400).json({ error: "Describe the donated items and quantity." });
+        }
+        if (contributionType === "Project Support" && !activityName) {
+            return res.status(400).json({ error: "Enter the related project or program." });
+        }
+        if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) {
+            return res.status(400).json({ error: "Estimated value cannot be negative." });
+        }
+
         const result = await db.execute(
-            `INSERT INTO donations (user_id, amount, method, status, purpose, ref_number, message, receipt_url, is_anonymous)
-             VALUES (?, ?, ?, 'pending_review', ?, ?, ?, ?, ?)`,
-            [req.user.id, donationAmount, normalizedMethod, normalizedPurpose, normalizeText(ref_number) || null, normalizeText(message) || null, normalizedReceipt, isAnonymous ? 1 : 0]
+            `INSERT INTO donations (
+                user_id, contribution_type, contribution_date, amount, method, status, purpose,
+                activity_name, volunteer_hours, quantity_description, estimated_value, supporting_information,
+                ref_number, message, receipt_url, is_anonymous
+             ) VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                req.user.id, contributionType, contributionDate,
+                contributionType === "Financial" ? donationAmount : 0, normalizedMethod, normalizedPurpose,
+                activityName || null, volunteerHours, quantityDescription || null, estimatedValue,
+                supportingInformation || null, normalizeText(ref_number) || null, normalizeText(message) || null,
+                normalizedReceipt, isAnonymous ? 1 : 0
+            ]
         ) as ResultSetHeader;
 
         const savedDonation = await getSingleRow(
-            `SELECT id, amount, method, status, purpose, ref_number, message, is_anonymous, created_at
+            `SELECT id, contribution_type, contribution_date, amount, method, status, purpose, activity_name,
+                    volunteer_hours, quantity_description, estimated_value, supporting_information,
+                    ref_number, message, is_anonymous, created_at
              FROM donations
              WHERE id = ? AND user_id = ?`,
             [result.insertId, req.user.id]
@@ -10109,10 +10567,10 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
         const adminUserIds = await getAdminUserIds();
         await createUserNotifications({
             userIds: adminUserIds,
-            title: "New donation submitted",
-            message: `${donationAmount.toLocaleString()} donation submitted for review.`,
+            title: "New contribution submitted",
+            message: `${contributionType} contribution submitted for review.`,
             category: "donation",
-            linkUrl: "/admin/donations",
+            linkUrl: "/admin/contributions",
             actorId: req.user.id
         });
 
@@ -10121,10 +10579,17 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
             donation: savedDonation
                 ? {
                     id: Number(savedDonation.id),
+                    contributionType: normalizeContributionType(savedDonation.contribution_type),
+                    contributionDate: savedDonation.contribution_date,
                     amount: Number(savedDonation.amount || 0),
                     method: savedDonation.method,
                     status: formatStatusLabel(normalizeDonationStatus(savedDonation.status), "pending_review"),
                     purpose: savedDonation.purpose,
+                    activityName: savedDonation.activity_name || null,
+                    volunteerHours: savedDonation.volunteer_hours === null ? null : Number(savedDonation.volunteer_hours || 0),
+                    quantityDescription: savedDonation.quantity_description || null,
+                    estimatedValue: savedDonation.estimated_value === null ? null : Number(savedDonation.estimated_value || 0),
+                    supportingInformation: savedDonation.supporting_information || null,
                     refNumber: savedDonation.ref_number || null,
                     message: savedDonation.message || null,
                     isAnonymous: Boolean(savedDonation.is_anonymous),
@@ -10134,7 +10599,324 @@ app.post("/api/donations", authenticateToken, async (req: AuthenticatedRequest, 
         });
     } catch (err: unknown) {
         logger.error("POST DONATION ERROR:", err);
-        res.status(500).json({ error: getPublicErrorMessage(err) });
+        res.status(500).json({ error: getPublicErrorMessage(err, "Unable to submit your donation. Please try again.") });
+    }
+});
+
+const mapContributionSubmissionRow = (row: QueryRow) => ({
+    id: Number(row.id),
+    opportunityId: Number(row.opportunity_id),
+    announcementId: Number(row.announcement_id),
+    announcementTitle: row.announcement_title || "Contribution opportunity",
+    opportunityType: row.opportunity_type,
+    submissionType: row.submission_type,
+    availability: row.availability || null,
+    preferredRole: row.preferred_role || null,
+    skills: row.skills || null,
+    contactInfo: row.contact_info || null,
+    description: row.description || null,
+    quantity: row.quantity === null ? null : Number(row.quantity),
+    unit: row.unit || null,
+    estimatedValue: row.estimated_value === null ? null : Number(row.estimated_value),
+    proposedDate: row.proposed_date || null,
+    message: row.message || null,
+    evidenceUrl: normalizeStoredMedia(row.evidence_url) || (String(row.evidence_url || "").startsWith("data:application/pdf") ? row.evidence_url : null),
+    status: row.status,
+    assignedRole: row.assigned_role || null,
+    attendanceStatus: row.attendance_status || null,
+    actualHours: row.actual_hours === null ? null : Number(row.actual_hours),
+    fulfilledQuantity: row.fulfilled_quantity === null ? null : Number(row.fulfilled_quantity),
+    fulfilledValue: row.fulfilled_value === null ? null : Number(row.fulfilled_value),
+    adminNotes: row.admin_notes || null,
+    verifiedAt: row.verified_at || null,
+    contributionId: row.contribution_id === null ? null : Number(row.contribution_id),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    profile: {
+        id: row.user_id,
+        name: row.name || "Alumni",
+        email: row.email || null,
+        studentId: row.student_id || null,
+        course: row.course || null,
+        batch: row.batch || null
+    }
+});
+
+const CONTRIBUTION_SUBMISSION_SELECT = `
+    SELECT cs.*, co.opportunity_type, co.registration_deadline, co.capacity,
+           co.status AS opportunity_status, a.title AS announcement_title,
+           p.name, COALESCE(p.email, u.email) AS email, p.student_id, p.course, p.batch
+    FROM contribution_submissions cs
+    JOIN contribution_opportunities co ON co.id = cs.opportunity_id
+    JOIN announcements a ON a.id = cs.announcement_id
+    JOIN users u ON u.id = cs.user_id
+    LEFT JOIN profiles p ON p.id = cs.user_id`;
+
+app.use(
+    [
+        "/api/alumni/contribution-submissions",
+        "/api/contribution-opportunities/:id/submissions",
+        "/api/contribution-submissions/:id/withdraw"
+    ],
+    authenticateToken,
+    (_req, res) => res.sendStatus(404)
+);
+
+app.get("/api/alumni/contribution-submissions", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const rows = parseRows(await db.query(
+            `${CONTRIBUTION_SUBMISSION_SELECT} WHERE cs.user_id = ? ORDER BY cs.updated_at DESC`,
+            [req.user.id]
+        ));
+        res.json(rows.map(mapContributionSubmissionRow));
+    } catch (error: unknown) {
+        logger.error("GET ALUMNI CONTRIBUTION SUBMISSIONS ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to load your contribution activity.") });
+    }
+});
+
+app.post("/api/contribution-opportunities/:id/submissions", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const opportunityId = Number(req.params.id);
+        if (!Number.isInteger(opportunityId) || opportunityId <= 0) return res.status(400).json({ error: "Invalid contribution opportunity." });
+
+        const opportunity = await getSingleRow(
+            `SELECT co.*, a.title, a.approval_status, a.status AS announcement_status
+             FROM contribution_opportunities co JOIN announcements a ON a.id = co.announcement_id
+             WHERE co.id = ?`,
+            [opportunityId]
+        );
+        if (!opportunity || normalizeText(opportunity.approval_status).toLowerCase() !== "approved") {
+            return res.status(404).json({ error: "Contribution opportunity not found." });
+        }
+        if (normalizeText(opportunity.status).toLowerCase() !== "open") {
+            return res.status(409).json({ error: "This contribution opportunity is not open." });
+        }
+        const deadline = parseDateTimeValue(opportunity.registration_deadline);
+        if (deadline && deadline.getTime() < Date.now()) return res.status(409).json({ error: "The registration deadline has passed." });
+
+        const existing = await getSingleRow("SELECT id, status FROM contribution_submissions WHERE opportunity_id = ? AND user_id = ?", [opportunityId, req.user.id]);
+        const terminalStatuses = ["rejected", "withdrawn", "cancelled"];
+        if (existing && !terminalStatuses.includes(normalizeText(existing.status).toLowerCase())) {
+            return res.status(409).json({ error: "You already have an active submission for this opportunity." });
+        }
+
+        const capacity = opportunity.capacity === null ? null : Number(opportunity.capacity);
+        if (capacity) {
+            const count = await getSingleRow(
+                "SELECT COUNT(*) AS total FROM contribution_submissions WHERE opportunity_id = ? AND LOWER(status) NOT IN ('rejected', 'withdrawn', 'cancelled')",
+                [opportunityId]
+            );
+            if (Number(count?.total || 0) >= capacity) return res.status(409).json({ error: "This opportunity has reached capacity." });
+        }
+
+        const opportunityType = parseContributionOpportunityType(opportunity.opportunity_type);
+        if (!opportunityType) return res.status(400).json({ error: "Invalid contribution opportunity type." });
+        const availability = normalizeText(req.body?.availability);
+        const preferredRole = normalizeText(req.body?.preferredRole ?? req.body?.preferred_role);
+        const skills = normalizeText(req.body?.skills);
+        const contactInfo = normalizeText(req.body?.contactInfo ?? req.body?.contact_info);
+        const description = normalizeText(req.body?.description);
+        const unit = normalizeText(req.body?.unit);
+        const message = normalizeText(req.body?.message);
+        const proposedDate = normalizeDateOnly(req.body?.proposedDate ?? req.body?.proposed_date) || null;
+        const quantity = req.body?.quantity === "" || req.body?.quantity == null ? null : Number(req.body.quantity);
+        const estimatedValue = req.body?.estimatedValue === "" || req.body?.estimatedValue == null ? null : Number(req.body.estimatedValue);
+        let evidenceUrl: string | null = null;
+        if (req.body?.evidenceUrl) {
+            try { evidenceUrl = normalizeSubmittedEvidence(req.body.evidenceUrl); }
+            catch (error: unknown) { return res.status(400).json({ error: getPublicErrorMessage(error, "Evidence must be an image or PDF up to 5 MB.") }); }
+        }
+        if (opportunityType === "Volunteer Service" && !availability) return res.status(400).json({ error: "Enter your availability." });
+        if (opportunityType === "Project Support" && !description) return res.status(400).json({ error: "Describe the support you are offering." });
+        if (quantity !== null && (!Number.isFinite(quantity) || quantity <= 0)) return res.status(400).json({ error: "Quantity must be greater than zero." });
+        if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) return res.status(400).json({ error: "Estimated value cannot be negative." });
+        if ([availability, preferredRole, contactInfo, unit].some((value) => value.length > 255) || [skills, description, message].some((value) => value.length > 2000)) {
+            return res.status(400).json({ error: "One or more submission fields are too long." });
+        }
+
+        const initialStatus = opportunityType === "Volunteer Service" ? "Registered" : "Offered";
+        let submissionId: number;
+        if (existing) {
+            await db.execute(
+                `UPDATE contribution_submissions SET submission_type=?, availability=?, preferred_role=?, skills=?, contact_info=?,
+                    description=?, quantity=?, unit=?, estimated_value=?, proposed_date=?, message=?, evidence_url=?, status=?,
+                    assigned_role=NULL, attendance_status=NULL, actual_hours=NULL, fulfilled_quantity=NULL, fulfilled_value=NULL,
+                    admin_notes=NULL, verified_by=NULL, verified_at=NULL, withdrawn_at=NULL, contribution_id=NULL
+                 WHERE id=? AND user_id=?`,
+                [opportunityType, availability || null, preferredRole || null, skills || null, contactInfo || null,
+                    description || null, quantity, unit || null, estimatedValue, proposedDate, message || null, evidenceUrl,
+                    initialStatus, existing.id, req.user.id]
+            );
+            submissionId = Number(existing.id);
+        } else {
+            const result = await db.execute(
+                `INSERT INTO contribution_submissions
+                    (opportunity_id, announcement_id, user_id, submission_type, availability, preferred_role, skills,
+                     contact_info, description, quantity, unit, estimated_value, proposed_date, message, evidence_url, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [opportunityId, opportunity.announcement_id, req.user.id, opportunityType, availability || null,
+                    preferredRole || null, skills || null, contactInfo || null, description || null, quantity, unit || null,
+                    estimatedValue, proposedDate, message || null, evidenceUrl, initialStatus]
+            ) as ResultSetHeader;
+            submissionId = Number(result.insertId);
+        }
+
+        const adminUserIds = await getAdminUserIds();
+        await createUserNotifications({
+            userIds: adminUserIds,
+            title: opportunityType === "Volunteer Service" ? "New volunteer registration" : "New project support offer",
+            message: `${normalizeText(opportunity.title) || "A contribution opportunity"} received a new alumni submission.`,
+            category: "donation",
+            linkUrl: "/admin/contributions",
+            actorId: req.user.id
+        });
+        const saved = await getSingleRow(`${CONTRIBUTION_SUBMISSION_SELECT} WHERE cs.id = ?`, [submissionId]);
+        res.status(existing ? 200 : 201).json(saved ? mapContributionSubmissionRow(saved) : { id: submissionId, status: initialStatus });
+    } catch (error: unknown) {
+        logger.error("CREATE CONTRIBUTION SUBMISSION ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to submit your contribution interest.") });
+    }
+});
+
+app.patch("/api/contribution-submissions/:id/withdraw", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const id = Number(req.params.id);
+        const current = await getSingleRow(
+            `SELECT cs.id, cs.status, co.registration_deadline
+             FROM contribution_submissions cs JOIN contribution_opportunities co ON co.id = cs.opportunity_id
+             WHERE cs.id = ? AND cs.user_id = ?`,
+            [id, req.user.id]
+        );
+        if (!current) return res.status(404).json({ error: "Contribution submission not found." });
+        if (!["registered", "offered", "accepted"].includes(normalizeText(current.status).toLowerCase())) {
+            return res.status(409).json({ error: "This submission can no longer be withdrawn." });
+        }
+        const deadline = parseDateTimeValue(current.registration_deadline);
+        if (deadline && deadline.getTime() < Date.now()) return res.status(409).json({ error: "The withdrawal deadline has passed." });
+        await db.execute("UPDATE contribution_submissions SET status='Withdrawn', withdrawn_at=NOW() WHERE id=? AND user_id=?", [id, req.user.id]);
+        res.json({ success: true });
+    } catch (error: unknown) {
+        logger.error("WITHDRAW CONTRIBUTION SUBMISSION ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to withdraw this submission.") });
+    }
+});
+
+app.get("/api/admin/contribution-submissions", authenticateToken, requirePermission("donations.view"), async (req, res) => {
+    try {
+        const type = parseContributionOpportunityType(req.query.type);
+        const status = normalizeText(req.query.status);
+        const search = normalizeText(req.query.search).toLowerCase();
+        const where: string[] = [];
+        const params: DbParam[] = [];
+        if (type) { where.push("co.opportunity_type = ?"); params.push(type); }
+        if (status && status.toLowerCase() !== "all") { where.push("LOWER(cs.status) = LOWER(?)"); params.push(status); }
+        if (search) {
+            where.push("(LOWER(COALESCE(p.name, '')) LIKE ? OR LOWER(COALESCE(p.student_id, '')) LIKE ? OR LOWER(a.title) LIKE ?)");
+            params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        const rows = parseRows(await db.query(
+            `${CONTRIBUTION_SUBMISSION_SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY cs.updated_at DESC`,
+            params
+        ));
+        res.json(rows.map(mapContributionSubmissionRow));
+    } catch (error: unknown) {
+        logger.error("GET ADMIN CONTRIBUTION SUBMISSIONS ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to load contribution submissions.") });
+    }
+});
+
+app.patch("/api/admin/contribution-submissions/:id/status", authenticateToken, requirePermission("donations.verify"), async (req: AuthenticatedRequest, res) => {
+    const conn = await db.getConnection();
+    try {
+        if (!req.user?.id) return res.sendStatus(401);
+        const id = Number(req.params.id);
+        const current = await getSingleRow(`${CONTRIBUTION_SUBMISSION_SELECT} WHERE cs.id = ?`, [id]);
+        if (!current) return res.status(404).json({ error: "Contribution submission not found." });
+        const type = parseContributionOpportunityType(current.opportunity_type);
+        if (!type) return res.status(400).json({ error: "Invalid contribution submission type." });
+        const volunteerStatuses = ["Registered", "Accepted", "Rejected", "Withdrawn", "Attended", "Completed", "Verified", "Cancelled"];
+        const projectStatuses = ["Offered", "Accepted", "In Progress", "Fulfilled", "Verified", "Rejected", "Cancelled"];
+        const requestedStatus = normalizeText(req.body?.status);
+        const allowed = (type === "Volunteer Service" ? volunteerStatuses : projectStatuses).find((item) => item.toLowerCase() === requestedStatus.toLowerCase());
+        if (!allowed) return res.status(400).json({ error: "Select a valid lifecycle status." });
+
+        const assignedRole = normalizeText(req.body?.assignedRole ?? current.assigned_role) || null;
+        const attendanceStatus = normalizeText(req.body?.attendanceStatus ?? current.attendance_status) || null;
+        const adminNotes = normalizeText(req.body?.adminNotes ?? current.admin_notes) || null;
+        const actualHours = req.body?.actualHours === "" || req.body?.actualHours == null ? (current.actual_hours === null ? null : Number(current.actual_hours)) : Number(req.body.actualHours);
+        const fulfilledQuantity = req.body?.fulfilledQuantity === "" || req.body?.fulfilledQuantity == null ? (current.fulfilled_quantity === null ? null : Number(current.fulfilled_quantity)) : Number(req.body.fulfilledQuantity);
+        const fulfilledValue = req.body?.fulfilledValue === "" || req.body?.fulfilledValue == null ? (current.fulfilled_value === null ? null : Number(current.fulfilled_value)) : Number(req.body.fulfilledValue);
+        if (actualHours !== null && (!Number.isFinite(actualHours) || actualHours < 0)) return res.status(400).json({ error: "Actual hours cannot be negative." });
+        if (fulfilledQuantity !== null && (!Number.isFinite(fulfilledQuantity) || fulfilledQuantity < 0)) return res.status(400).json({ error: "Fulfilled quantity cannot be negative." });
+        if (fulfilledValue !== null && (!Number.isFinite(fulfilledValue) || fulfilledValue < 0)) return res.status(400).json({ error: "Fulfilled value cannot be negative." });
+        if (allowed === "Verified" && type === "Volunteer Service" && (normalizeText(current.status).toLowerCase() !== "completed" || !actualHours || actualHours <= 0)) {
+            return res.status(409).json({ error: "Mark volunteer service as Completed and record actual hours before verification." });
+        }
+        if (allowed === "Verified" && type === "Project Support" && normalizeText(current.status).toLowerCase() !== "fulfilled") {
+            return res.status(409).json({ error: "Mark project support as Fulfilled before verification." });
+        }
+
+        await conn.beginTransaction();
+        await conn.execute(
+            `UPDATE contribution_submissions SET status=?, assigned_role=?, attendance_status=?, actual_hours=?,
+                fulfilled_quantity=?, fulfilled_value=?, admin_notes=?, verified_by=?, verified_at=? WHERE id=?`,
+            [allowed, assignedRole, attendanceStatus, actualHours, fulfilledQuantity, fulfilledValue, adminNotes,
+                allowed === "Verified" ? req.user.id : null, allowed === "Verified" ? formatSqlDateTime(new Date()) : null, id]
+        );
+
+        let contributionId = current.contribution_id === null ? null : Number(current.contribution_id);
+        if (allowed === "Verified") {
+            const quantityDescription = type === "Project Support" && fulfilledQuantity
+                ? `${fulfilledQuantity.toLocaleString()}${current.unit ? ` ${current.unit}` : ""}`
+                : null;
+            const [result] = await conn.execute(
+                `INSERT INTO donations
+                    (user_id, contribution_type, contribution_date, amount, method, status, purpose, activity_name,
+                     volunteer_hours, quantity_description, estimated_value, supporting_information, source_module,
+                     source_record_id, receipt_url, reviewed_at, reviewed_by, review_notes)
+                 VALUES (?, ?, CURDATE(), 0, 'Non-Monetary', 'approved', ?, ?, ?, ?, ?, ?, 'contribution_submission', ?, ?, NOW(), ?, ?)
+                 ON DUPLICATE KEY UPDATE contribution_type=VALUES(contribution_type), contribution_date=VALUES(contribution_date),
+                    status='approved', purpose=VALUES(purpose), activity_name=VALUES(activity_name), volunteer_hours=VALUES(volunteer_hours),
+                    quantity_description=VALUES(quantity_description), estimated_value=VALUES(estimated_value),
+                    supporting_information=VALUES(supporting_information), receipt_url=VALUES(receipt_url), reviewed_at=NOW(),
+                    reviewed_by=VALUES(reviewed_by), review_notes=VALUES(review_notes), id=LAST_INSERT_ID(id)`,
+                [current.user_id, type, current.description || current.announcement_title || type, current.announcement_title,
+                    type === "Volunteer Service" ? actualHours : null, quantityDescription,
+                    type === "Project Support" ? (fulfilledValue ?? current.estimated_value) : current.estimated_value,
+                    current.message || null, id, current.evidence_url || null, req.user.id, adminNotes]
+            ) as unknown as [ResultSetHeader, unknown];
+            contributionId = Number(result.insertId);
+            await conn.execute("UPDATE contribution_submissions SET contribution_id=? WHERE id=?", [contributionId, id]);
+        }
+        await conn.commit();
+
+        await createUserNotification({
+            userId: String(current.user_id),
+            title: `${type} status updated`,
+            message: `${current.announcement_title || "Your contribution submission"} is now ${allowed}.`,
+            category: "donation",
+            linkUrl: "/alumni",
+            actorId: req.user.id
+        });
+        await recordActivityLog({
+            userId: req.user.id,
+            action: "contribution_submission_status_updated",
+            description: `Updated contribution submission ${id} to ${allowed}.`,
+            roleUsed: req.user.role || null,
+            metadata: { submissionId: id, status: allowed, contributionId }
+        });
+        const updated = await getSingleRow(`${CONTRIBUTION_SUBMISSION_SELECT} WHERE cs.id = ?`, [id]);
+        res.json(updated ? mapContributionSubmissionRow(updated) : { success: true, contributionId });
+    } catch (error: unknown) {
+        await conn.rollback();
+        logger.error("UPDATE CONTRIBUTION SUBMISSION STATUS ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to update the contribution submission.") });
+    } finally {
+        conn.release();
     }
 });
 
@@ -10157,7 +10939,7 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
         const hasArchivedAt = await columnExists(announcementTable, "archived_at");
         const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
         await ensureAnnouncementInterestTable();
-        const role = req.user?.id ? await getRoleForUser(req.user.id) : "alumni";
+        const role = req.user?.id ? await getRoleForUser(req.user.id, req.user.role) : "alumni";
         const canModerate = canModerateAnnouncementContent(role);
         const params: DbParam[] = [];
         const profile = !canModerate && req.user?.id
@@ -10214,10 +10996,26 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
                 ${hasAudienceValue ? "e.audience_value" : "NULL AS audience_value"},
                 ${hasCreatedBy ? "creator.name AS created_by_name" : "NULL AS created_by_name"},
                 COUNT(DISTINCT CASE WHEN ai.status = 'interested' THEN ai.id END) AS interest_count,
-                COUNT(DISTINCT ac.id) AS comment_count
+                COUNT(DISTINCT ac.id) AS comment_count,
+                MAX(co.id) AS opportunity_id,
+                MAX(co.opportunity_type) AS opportunity_type,
+                MAX(co.registration_deadline) AS registration_deadline,
+                MAX(co.capacity) AS opportunity_capacity,
+                MAX(co.required_skills) AS required_skills,
+                MAX(co.available_roles) AS available_roles,
+                MAX(co.instructions) AS opportunity_instructions,
+                MAX(co.objectives) AS opportunity_objectives,
+                MAX(co.target_date) AS opportunity_target_date,
+                MAX(co.support_types) AS support_types,
+                MAX(co.target_quantity) AS target_quantity,
+                MAX(co.contact_instructions) AS contact_instructions,
+                MAX(co.status) AS opportunity_status,
+                COUNT(DISTINCT CASE WHEN cs.status NOT IN ('Rejected', 'Withdrawn', 'Cancelled') THEN cs.id END) AS opportunity_registration_count
             FROM ${announcementTable} e
             LEFT JOIN announcement_interests ai ON ai.announcement_id = e.id
             LEFT JOIN announcement_comments ac ON ac.announcement_id = e.id AND ac.status = 'visible'
+            LEFT JOIN contribution_opportunities co ON co.announcement_id = e.id
+            LEFT JOIN contribution_submissions cs ON cs.opportunity_id = co.id
             ${hasCreatedBy ? "LEFT JOIN profiles creator ON creator.id = e.created_by" : ""}
             ${visibilityClause}
             GROUP BY e.id
@@ -10253,7 +11051,8 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
             createdByName: (row as QueryRow).created_by_name || null,
             interestEnabled: normalizeAnnouncementType(String(row.type || "")) === "event" || normalizeBoolean((row as QueryRow).interest_enabled),
             interestCount: Number((row as QueryRow).interest_count || 0),
-            registration_count: Number((row as QueryRow).interest_count || 0)
+            registration_count: Number((row as QueryRow).interest_count || 0),
+            contributionOpportunity: mapContributionOpportunity(row as QueryRow)
         };
         });
 
@@ -10365,6 +11164,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
         );
 
         const insertResult = result as ResultSetHeader;
+        await saveContributionOpportunity(insertResult.insertId, req.body?.contributionOpportunity, req.user.id);
         const newEvent = await getSingleRow(`SELECT * FROM ${announcementTable} WHERE id = ?`, [insertResult.insertId]);
 
         res.json({
@@ -10476,10 +11276,26 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
                 ${hasAudienceValue ? "e.audience_value" : "NULL AS audience_value"},
                 ${hasCreatedBy ? "creator.name AS created_by_name" : "NULL AS created_by_name"},
                 COUNT(DISTINCT CASE WHEN ai.status = 'interested' THEN ai.id END) AS interest_count,
-                COUNT(DISTINCT ac.id) AS comment_count
+                COUNT(DISTINCT ac.id) AS comment_count,
+                MAX(co.id) AS opportunity_id,
+                MAX(co.opportunity_type) AS opportunity_type,
+                MAX(co.registration_deadline) AS registration_deadline,
+                MAX(co.capacity) AS opportunity_capacity,
+                MAX(co.required_skills) AS required_skills,
+                MAX(co.available_roles) AS available_roles,
+                MAX(co.instructions) AS opportunity_instructions,
+                MAX(co.objectives) AS opportunity_objectives,
+                MAX(co.target_date) AS opportunity_target_date,
+                MAX(co.support_types) AS support_types,
+                MAX(co.target_quantity) AS target_quantity,
+                MAX(co.contact_instructions) AS contact_instructions,
+                MAX(co.status) AS opportunity_status,
+                COUNT(DISTINCT CASE WHEN cs.status NOT IN ('Rejected', 'Withdrawn', 'Cancelled') THEN cs.id END) AS opportunity_registration_count
             FROM ${announcementTable} e
             LEFT JOIN announcement_interests ai ON ai.announcement_id = e.id
             LEFT JOIN announcement_comments ac ON ac.announcement_id = e.id AND ac.status = 'visible'
+            LEFT JOIN contribution_opportunities co ON co.announcement_id = e.id
+            LEFT JOIN contribution_submissions cs ON cs.opportunity_id = co.id
             ${hasCreatedBy ? "LEFT JOIN profiles creator ON creator.id = e.created_by" : ""}
             WHERE e.id = ?
             GROUP BY e.id`,
@@ -10525,7 +11341,8 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
             createdByName: event.created_by_name || null,
             interestEnabled: normalizeAnnouncementType(String(event.type || "")) === "event" || normalizeBoolean(event.interest_enabled),
             interestCount: Number(event.interest_count || 0),
-            registration_count: Number(event.interest_count || 0)
+            registration_count: Number(event.interest_count || 0),
+            contributionOpportunity: mapContributionOpportunity(event)
         });
     } catch (err: unknown) {
         logger.error("GET ANNOUNCEMENT DETAIL ERROR:", err);
@@ -10642,7 +11459,7 @@ app.post("/api/announcements/:id/interest", authenticateToken, async (req: Authe
     }
 });
 
-app.get("/api/admin/announcements/:id/interests", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/announcements/:id/interests", authenticateToken, requirePermission("announcements.manage"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const announcementId = Number(req.params.id);
@@ -10672,7 +11489,7 @@ app.get("/api/admin/announcements/:id/interests", authenticateToken, requireAdmi
     }
 });
 
-app.get("/api/admin/events/:eventId/interests", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/events/:eventId/interests", authenticateToken, requirePermission("events.view"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventId = Number(req.params.eventId);
@@ -10883,7 +11700,7 @@ app.post("/api/announcements/:id/comments/:commentId/replies", authenticateToken
     }
 });
 
-app.patch("/api/admin/announcement-comments/:commentId", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/admin/announcement-comments/:commentId", authenticateToken, requirePermission("community.moderate"), async (req: AuthenticatedRequest, res) => {
     try {
         await ensureAnnouncementEventSurveyEngagementTables();
         const commentId = Number(req.params.commentId);
@@ -10901,7 +11718,7 @@ app.patch("/api/admin/announcement-comments/:commentId", authenticateToken, requ
     }
 });
 
-app.patch("/api/admin/announcement-comment-replies/:replyId", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/admin/announcement-comment-replies/:replyId", authenticateToken, requirePermission("community.moderate"), async (req: AuthenticatedRequest, res) => {
     try {
         await ensureAnnouncementEventSurveyEngagementTables();
         const replyId = Number(req.params.replyId);
@@ -10919,7 +11736,7 @@ app.patch("/api/admin/announcement-comment-replies/:replyId", authenticateToken,
     }
 });
 
-app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.put("/api/announcements/:id", authenticateToken, requirePermission("announcements.manage"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const hasGoogleFormLink = await columnExists(announcementTable, "google_form_link");
@@ -11011,6 +11828,8 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
                 ]
         );
 
+        await saveContributionOpportunity(eventId, req.body?.contributionOpportunity, (req as AuthenticatedRequest).user?.id);
+
         const updated = await getSingleRow(`SELECT * FROM ${announcementTable} WHERE id = ?`, [eventId]);
         res.json({
             success: true,
@@ -11034,7 +11853,7 @@ app.put("/api/announcements/:id", authenticateToken, requireAdmin, async (req, r
     }
 });
 
-app.patch("/api/announcements/:id/approval", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/announcements/:id/approval", authenticateToken, requirePermission("announcements.manage"), async (req: AuthenticatedRequest, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const hasApprovalStatus = await columnExists(announcementTable, "approval_status");
@@ -11124,7 +11943,7 @@ app.patch("/api/announcements/:id/approval", authenticateToken, requireAdmin, as
     }
 });
 
-app.patch("/api/announcements/:id/archive", authenticateToken, requireAdmin, async (req, res) => {
+app.patch("/api/announcements/:id/archive", authenticateToken, requirePermission("announcements.manage"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventId = Number(req.params.id);
@@ -11152,7 +11971,7 @@ app.patch("/api/announcements/:id/archive", authenticateToken, requireAdmin, asy
     }
 });
 
-app.patch("/api/announcements/:id/restore", authenticateToken, requireAdmin, async (req, res) => {
+app.patch("/api/announcements/:id/restore", authenticateToken, requirePermission("announcements.manage"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventId = Number(req.params.id);
@@ -11190,7 +12009,7 @@ app.patch("/api/announcements/:id/restore", authenticateToken, requireAdmin, asy
     }
 });
 
-app.delete("/api/announcements/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/announcements/:id", authenticateToken, requirePermission("announcements.manage"), async (req, res) => {
     try {
         const announcementTable = await getAnnouncementTableName();
         const eventId = Number(req.params.id);
@@ -11532,7 +12351,7 @@ app.post("/api/events/:eventId/check-in", authenticateToken, async (req: Authent
     }
 });
 
-app.get("/api/admin/events/:eventId/rsvps", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/events/:eventId/rsvps", authenticateToken, requirePermission("events.view"), async (req, res) => {
     try {
         const eventId = Number(req.params.eventId);
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
@@ -11548,7 +12367,7 @@ app.get("/api/admin/events/:eventId/rsvps", authenticateToken, requireAdmin, asy
     }
 });
 
-app.post("/api/admin/events/:eventId/mark-attendance", authenticateToken, requireAdmin, async (req, res) => {
+app.post("/api/admin/events/:eventId/mark-attendance", authenticateToken, requirePermission("events.manage"), async (req, res) => {
     let conn: PoolConnection | null = null;
     try {
         await ensureEventRsvpTables();
@@ -11621,7 +12440,7 @@ app.post("/api/admin/events/:eventId/mark-attendance", authenticateToken, requir
     }
 });
 
-app.post("/api/admin/events/:eventId/verify-interest", authenticateToken, requireAdmin, async (req, res) => {
+app.post("/api/admin/events/:eventId/verify-interest", authenticateToken, requirePermission("events.manage"), async (req, res) => {
     try {
         await ensureEventRsvpTables();
         const eventId = Number(req.params.eventId);
@@ -11665,7 +12484,7 @@ app.post("/api/admin/events/:eventId/verify-interest", authenticateToken, requir
     }
 });
 
-app.delete("/api/admin/events/:eventId/interests/:alumniId", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/admin/events/:eventId/interests/:alumniId", authenticateToken, requirePermission("events.manage"), async (req, res) => {
     try {
         await ensureEventRsvpTables();
         await ensureAnnouncementEventSurveyEngagementTables();
@@ -11692,7 +12511,7 @@ app.delete("/api/admin/events/:eventId/interests/:alumniId", authenticateToken, 
     }
 });
 
-app.post("/api/admin/events/:eventId/archive", authenticateToken, requireAdmin, async (req, res) => {
+app.post("/api/admin/events/:eventId/archive", authenticateToken, requirePermission("events.manage"), async (req, res) => {
     try {
         const eventId = Number(req.params.eventId);
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
@@ -11712,7 +12531,7 @@ app.post("/api/admin/events/:eventId/archive", authenticateToken, requireAdmin, 
     }
 });
 
-app.post("/api/admin/events/:eventId/reopen", authenticateToken, requireAdmin, async (req, res) => {
+app.post("/api/admin/events/:eventId/reopen", authenticateToken, requirePermission("events.manage"), async (req, res) => {
     try {
         const eventId = Number(req.params.eventId);
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
@@ -11829,7 +12648,7 @@ app.get("/api/achievements", authenticateToken, async (req: AuthenticatedRequest
             course: row.course,
             title: row.title,
             description: row.description,
-            date: row.achievement_date,
+            date: normalizeDateOnly(row.achievement_date),
             category: row.category,
             organization: row.organization,
             proofImage: normalizeStoredMedia(row.image_url),
@@ -11893,7 +12712,7 @@ app.post("/api/achievements", authenticateToken, async (req: AuthenticatedReques
     }
 });
 
-app.patch("/api/achievements/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/achievements/:id", authenticateToken, requirePermission("achievements.moderate"), async (req: AuthenticatedRequest, res) => {
     try {
         const achievementId = Number(req.params.id);
         if (!achievementId) {
@@ -11916,6 +12735,11 @@ app.patch("/api/achievements/:id", authenticateToken, requireAdmin, async (req: 
             featured,
             rejectionReason
         } = req.body || {};
+        const achievementDate = normalizeDateOnly(date ?? current.achievement_date);
+
+        if (!achievementDate) {
+            return res.status(400).json({ error: "A valid achievement date is required" });
+        }
 
         await db.execute(
             `UPDATE achievements SET
@@ -11933,7 +12757,7 @@ app.patch("/api/achievements/:id", authenticateToken, requireAdmin, async (req: 
             [
                 title ?? current.title,
                 description ?? current.description,
-                date ?? current.achievement_date,
+                achievementDate,
                 category ?? current.category,
                 organization ?? current.organization,
                 normalizeStoredMedia(proofImage ?? current.image_url) || null,
@@ -11961,7 +12785,7 @@ app.patch("/api/achievements/:id", authenticateToken, requireAdmin, async (req: 
     }
 });
 
-app.delete("/api/achievements/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/achievements/:id", authenticateToken, requirePermission("achievements.moderate"), async (req, res) => {
     try {
         const achievementId = Number(req.params.id);
         if (!achievementId) {
@@ -11985,7 +12809,7 @@ app.get("/api/achievements/:id/comments", authenticateToken, async (req: Authent
             return res.status(400).json({ error: "Invalid achievement id" });
         }
 
-        const access = await getAchievementAccess(achievementId, req.user.id);
+        const access = await getAchievementAccess(achievementId, req.user.id, req.user.role);
         if (!access.achievement || !access.canAccess) {
             return res.status(404).json({ error: "Achievement not found" });
         }
@@ -12041,7 +12865,7 @@ app.post("/api/achievements/:id/comments", authenticateToken, async (req: Authen
             return res.status(400).json({ error: "Comment content is required" });
         }
 
-        const access = await getAchievementAccess(achievementId, req.user.id);
+        const access = await getAchievementAccess(achievementId, req.user.id, req.user.role);
         if (!access.achievement || !access.canAccess) {
             return res.status(404).json({ error: "Achievement not found" });
         }
@@ -12085,7 +12909,7 @@ app.post("/api/achievements/:id/reaction", authenticateToken, async (req: Authen
             return res.status(400).json({ error: "A valid reaction type is required" });
         }
 
-        const access = await getAchievementAccess(achievementId, req.user.id);
+        const access = await getAchievementAccess(achievementId, req.user.id, req.user.role);
         if (!access.achievement || !access.canAccess) {
             return res.status(404).json({ error: "Achievement not found" });
         }
@@ -12136,7 +12960,7 @@ app.post("/api/achievements/:id/reaction", authenticateToken, async (req: Authen
 });
 
 // Freedom Wall
-app.get("/api/admin/freedom-wall/posts", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/freedom-wall/posts", authenticateToken, requirePermission("community.moderate"), async (_req, res) => {
     try {
         const rows = parseRows(await db.query(
             `SELECT
@@ -12195,7 +13019,7 @@ app.get("/api/admin/freedom-wall/posts", authenticateToken, requireAdmin, async 
     }
 });
 
-app.patch("/api/admin/freedom-wall/posts/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/admin/freedom-wall/posts/:id", authenticateToken, requirePermission("community.moderate"), async (req: AuthenticatedRequest, res) => {
     try {
         const postId = Number(req.params.id);
         if (!postId) {
@@ -12245,7 +13069,7 @@ app.patch("/api/admin/freedom-wall/posts/:id", authenticateToken, requireAdmin, 
     }
 });
 
-app.delete("/api/admin/freedom-wall/posts/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/admin/freedom-wall/posts/:id", authenticateToken, requirePermission("community.moderate"), async (req, res) => {
     try {
         const postId = Number(req.params.id);
         if (!postId) {
@@ -12324,12 +13148,13 @@ app.post("/api/freedom-wall/posts", authenticateToken, async (req: Authenticated
 
         const content = String(req.body?.content || "").trim();
         const category = normalizeText(req.body?.category) || "Discussion";
-        const imageUrl = normalizeStoredMedia(
-            typeof req.body?.imageUrl === "string" ? req.body.imageUrl : null
-        ) || null;
+        const imageUrl = normalizeSubmittedImage(req.body?.imageUrl) || null;
 
         if (!content) {
             return res.status(400).json({ error: "Post content is required." });
+        }
+        if (content.length > 5000 || category.length > 80) {
+            return res.status(400).json({ error: "One or more fields exceed the allowed length." });
         }
 
         const result = await db.execute(
@@ -12562,23 +13387,44 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
              ORDER BY s.created_at DESC, s.id DESC`
         ));
 
-        const surveys = await Promise.all(surveyRows.map(async (row) => {
-            const questions = parseRows(await db.query(
-                `SELECT *
+        const surveyIds = surveyRows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+        const surveyPlaceholders = surveyIds.map(() => "?").join(", ");
+        const questionRows = surveyIds.length > 0
+            ? parseRows(await db.query(
+                `SELECT id, survey_id, question_text, question_type, question_order, is_required,
+                        options_json, min_rating, max_rating, placeholder
                  FROM survey_questions
-                 WHERE survey_id = ?
-                 ORDER BY question_order ASC, id ASC`,
-                [row.id]
-            ));
+                 WHERE survey_id IN (${surveyPlaceholders})
+                 ORDER BY survey_id ASC, question_order ASC, id ASC`,
+                surveyIds
+            ))
+            : [];
+        const answerRows = !canManageSurveys && surveyIds.length > 0
+            ? parseRows(await db.query(
+                `SELECT survey_id, question_id, answer_text, answer_value, answer_json, rating_value
+                 FROM survey_answers
+                 WHERE survey_id IN (${surveyPlaceholders}) AND respondent_id = ?`,
+                [...surveyIds, req.user.id]
+            ))
+            : [];
+        const questionsBySurvey = new Map<number, QueryRow[]>();
+        const answersBySurvey = new Map<number, QueryRow[]>();
+        questionRows.forEach((question) => {
+            const surveyId = Number(question.survey_id);
+            const items = questionsBySurvey.get(surveyId) || [];
+            items.push(question);
+            questionsBySurvey.set(surveyId, items);
+        });
+        answerRows.forEach((answer) => {
+            const surveyId = Number(answer.survey_id);
+            const items = answersBySurvey.get(surveyId) || [];
+            items.push(answer);
+            answersBySurvey.set(surveyId, items);
+        });
 
-            const userAnswers = canManageSurveys
-                ? []
-                : parseRows(await db.query(
-                    `SELECT question_id, answer_text, answer_value, answer_json, rating_value
-                     FROM survey_answers
-                     WHERE survey_id = ? AND respondent_id = ?`,
-                    [row.id, req.user?.id || null]
-                ));
+        const surveys = surveyRows.map((row) => {
+            const questions = questionsBySurvey.get(Number(row.id)) || [];
+            const userAnswers = answersBySurvey.get(Number(row.id)) || [];
 
             const duration = withDurationFields({
                 ...row,
@@ -12635,7 +13481,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
                     ratingValue: answer.rating_value
                 }))
             };
-        }));
+        });
 
         res.json(canManageSurveys ? surveys : surveys.filter((survey) => survey.questions.length > 0));
     } catch (err: unknown) {
@@ -12644,7 +13490,7 @@ app.get("/api/surveys", authenticateToken, async (req: AuthenticatedRequest, res
     }
 });
 
-app.post("/api/surveys", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/surveys", authenticateToken, requirePermission("surveys.manage"), async (req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
@@ -12744,7 +13590,7 @@ app.post("/api/surveys", authenticateToken, requireAdmin, async (req: Authentica
     }
 });
 
-app.put("/api/surveys/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.put("/api/surveys/:id", authenticateToken, requirePermission("surveys.manage"), async (req: AuthenticatedRequest, res) => {
     const conn = await db.getConnection();
 
     try {
@@ -12847,7 +13693,7 @@ app.put("/api/surveys/:id", authenticateToken, requireAdmin, async (req: Authent
     }
 });
 
-app.patch("/api/surveys/:id/status", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.patch("/api/surveys/:id/status", authenticateToken, requirePermission("surveys.manage"), async (req: AuthenticatedRequest, res) => {
     try {
         const surveyId = Number(req.params.id);
         const { status } = req.body || {};
@@ -12903,7 +13749,7 @@ app.patch("/api/surveys/:id/status", authenticateToken, requireAdmin, async (req
     }
 });
 
-app.delete("/api/surveys/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/surveys/:id", authenticateToken, requirePermission("surveys.manage"), async (req, res) => {
     try {
         const surveyId = Number(req.params.id);
         if (!surveyId) {
@@ -12997,7 +13843,7 @@ app.post("/api/surveys/:id/responses", authenticateToken, async (req: Authentica
     }
 });
 
-app.get("/api/surveys/:id/responses", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/surveys/:id/responses", authenticateToken, requirePermission("surveys.manage"), async (req, res) => {
     try {
         const surveyId = Number(req.params.id);
         if (!surveyId) {
@@ -13184,9 +14030,8 @@ app.post("/api/alumni-officers", authenticateToken, requireAdmin, async (req: Au
         const saved = await getAlumniOfficerById(Number(result.insertId));
         res.status(201).json(saved ? mapAlumniOfficer(saved) : { id: Number(result.insertId) });
     } catch (err: unknown) {
-        const message = getErrorMessage(err);
-        res.status(message.includes("required") || message.includes("Select") || message.includes("Term") || message.includes("custom") || message.includes("selected") ? 400 : 500)
-            .json({ error: message });
+        logger.error("CREATE ALUMNI OFFICER ERROR:", err);
+        res.status(400).json({ error: "Unable to create this officer record. Check the required fields and try again." });
     }
 });
 
@@ -13211,9 +14056,8 @@ app.put("/api/alumni-officers/:id", authenticateToken, requireAdmin, async (req,
         const saved = await getAlumniOfficerById(id);
         res.json(saved ? mapAlumniOfficer(saved) : { id });
     } catch (err: unknown) {
-        const message = getErrorMessage(err);
-        res.status(message.includes("required") || message.includes("Select") || message.includes("Term") || message.includes("custom") || message.includes("selected") ? 400 : 500)
-            .json({ error: message });
+        logger.error("UPDATE ALUMNI OFFICER ERROR:", err);
+        res.status(400).json({ error: "Unable to update this officer record. Check the required fields and try again." });
     }
 });
 
@@ -13559,6 +14403,7 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
                 ]
             );
         }
+
         await conn.commit();
         transactionStarted = false;
 
@@ -13671,7 +14516,7 @@ app.post("/api/user-notifications/read-all", authenticateToken, async (req: Auth
     }
 });
 
-app.get("/api/notifications", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/notifications", authenticateToken, requirePermission("notifications.draft"), async (_req, res) => {
     try {
         const rows = parseRows(await db.query(
             `SELECT * FROM notifications ORDER BY created_at DESC LIMIT 50`
@@ -13683,7 +14528,7 @@ app.get("/api/notifications", authenticateToken, requireAdmin, async (_req, res)
     }
 });
 
-app.get("/api/admin/mailing/alumni", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/mailing/alumni", authenticateToken, requirePermission("notifications.draft"), async (req, res) => {
     try {
         const search = String(req.query.search || "").trim();
         const course = String(req.query.course || "").trim();
@@ -13698,7 +14543,7 @@ app.get("/api/admin/mailing/alumni", authenticateToken, requireAdmin, async (req
     }
 });
 
-app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/mailing/logs", authenticateToken, requirePermission("notifications.draft"), async (req, res) => {
     try {
         const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>);
         const countRows = parseRows(await db.query("SELECT COUNT(*) AS total FROM email_logs"));
@@ -13730,7 +14575,7 @@ app.get("/api/admin/mailing/logs", authenticateToken, requireAdmin, async (req, 
     }
 });
 
-app.delete("/api/admin/mailing/logs/:id", authenticateToken, requireAdmin, async (req, res) => {
+app.delete("/api/admin/mailing/logs/:id", authenticateToken, requirePermission("notifications.send"), async (req, res) => {
     try {
         const logId = String(req.params.id || "").trim();
 
@@ -13754,7 +14599,7 @@ app.delete("/api/admin/mailing/logs/:id", authenticateToken, requireAdmin, async
     }
 });
 
-app.get("/api/admin/mailing/filters", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/mailing/filters", authenticateToken, requirePermission("notifications.draft"), async (_req, res) => {
     try {
         const rows = await getEligibleMailingRecipients({ limit: 500 });
         const courses = Array.from(new Set(rows.map((row) => row.course).filter(Boolean))).sort();
@@ -13771,7 +14616,7 @@ app.get("/api/admin/mailing/filters", authenticateToken, requireAdmin, async (_r
     }
 });
 
-app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/mailing/send", authenticateToken, requirePermission("notifications.send"), async (req: AuthenticatedRequest, res) => {
     const now = new Date().toISOString().slice(0, 19).replace("T", " ");
 
     try {
@@ -13934,7 +14779,7 @@ app.post("/api/admin/mailing/send", authenticateToken, requireAdmin, async (req:
     }
 });
 
-app.get("/api/admin/email-queue/settings", authenticateToken, requireAdmin, async (_req, res) => {
+app.get("/api/admin/email-queue/settings", authenticateToken, requirePermission("notifications.send"), async (_req, res) => {
     try {
         const settings = await getEmailQueueSettings();
         const stats = await getEmailQueueStats();
@@ -13945,7 +14790,7 @@ app.get("/api/admin/email-queue/settings", authenticateToken, requireAdmin, asyn
     }
 });
 
-app.put("/api/admin/email-queue/settings", authenticateToken, requireAdmin, async (req, res) => {
+app.put("/api/admin/email-queue/settings", authenticateToken, requirePermission("notifications.send"), async (req, res) => {
     try {
         const settings = await saveEmailQueueSettings(req.body || {});
         const stats = await getEmailQueueStats();
@@ -13956,7 +14801,7 @@ app.put("/api/admin/email-queue/settings", authenticateToken, requireAdmin, asyn
     }
 });
 
-app.get("/api/admin/email-queue", authenticateToken, requireAdmin, async (req, res) => {
+app.get("/api/admin/email-queue", authenticateToken, requirePermission("notifications.send"), async (req, res) => {
     try {
         await ensureEmailQueueTables();
         const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>);
@@ -13975,7 +14820,7 @@ app.get("/api/admin/email-queue", authenticateToken, requireAdmin, async (req, r
     }
 });
 
-app.post("/api/admin/email-queue/enqueue-tracer-reminders", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/admin/email-queue/enqueue-tracer-reminders", authenticateToken, requirePermission("notifications.send"), async (req: AuthenticatedRequest, res) => {
     try {
         const result = await enqueueDueTracerReminders({ force: true, createdBy: req.user?.id || null });
         res.json({ success: true, message: `${result.queued} tracer reminder${result.queued === 1 ? "" : "s"} queued.`, ...result, stats: await getEmailQueueStats() });
@@ -13985,7 +14830,7 @@ app.post("/api/admin/email-queue/enqueue-tracer-reminders", authenticateToken, r
     }
 });
 
-app.post("/api/admin/email-queue/process", authenticateToken, requireAdmin, async (_req, res) => {
+app.post("/api/admin/email-queue/process", authenticateToken, requirePermission("notifications.send"), async (_req, res) => {
     try {
         const result = await processEmailQueue({ force: true });
         res.json({ success: true, message: `${result.sent} queued email${result.sent === 1 ? "" : "s"} sent.`, ...result, stats: await getEmailQueueStats() });
@@ -13994,7 +14839,7 @@ app.post("/api/admin/email-queue/process", authenticateToken, requireAdmin, asyn
         res.status(500).json({ error: "Unable to process email queue." });
     }
 });
-app.post("/api/notifications/send", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+app.post("/api/notifications/send", authenticateToken, requirePermission("notifications.send"), async (req: AuthenticatedRequest, res) => {
     try {
         return res.status(400).json({
             error: "Bulk mailing is disabled. Use the targeted mailing endpoint and select up to 10 alumni."
@@ -14010,7 +14855,7 @@ app.get("/api/admin/tracer/:alumniId/pdf/preview", authenticateToken, assertTrac
 app.get("/api/admin/tracer/:alumniId/pdf/download", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
 app.get("/api/admin/tracer/:alumniId/pdf", authenticateToken, assertTracerAdminAccess, exportTracerPdfByRecordId);
 app.get("/api/admin/tracer/:alumniId", authenticateToken, assertTracerAdminAccess, getAdminTracerRecord);
-app.use("/api/email", authenticateToken, requireAdmin, emailRoutes);
+app.use("/api/email", authenticateToken, requirePermission("notifications.send"), emailRoutes);
 
 // 404 handler for unmatched routes
 app.use(notFoundHandler);

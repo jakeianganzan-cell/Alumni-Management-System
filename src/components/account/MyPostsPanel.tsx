@@ -218,7 +218,7 @@ export default function MyPostsPanel() {
   };
 
   return (
-    <div className="rounded-3xl border border-border bg-card p-4 shadow-card sm:p-5">
+    <div className="mobile-compact-my-posts rounded-3xl border border-border bg-card p-4 shadow-card sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-navy">My Posts</p>

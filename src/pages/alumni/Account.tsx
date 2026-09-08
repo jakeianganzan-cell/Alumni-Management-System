@@ -4,7 +4,9 @@ import ManageAccountModule from "@/components/account/ManageAccountModule";
 export default function AlumniAccount() {
   return (
     <AlumniLayout title="Manage Account">
-      <ManageAccountModule mode="alumni" />
+      <div className="mobile-compact-account">
+        <ManageAccountModule mode="alumni" />
+      </div>
     </AlumniLayout>
   );
 }

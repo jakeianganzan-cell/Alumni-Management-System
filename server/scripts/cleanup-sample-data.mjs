@@ -2,12 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
+import { assertNonProductionOperation } from "../environment-policy.mjs";
 
 const serverRoot = path.resolve(import.meta.dirname, "..");
-const projectRoot = path.resolve(serverRoot, "..");
-
-dotenv.config({ path: path.resolve(projectRoot, ".env") });
-dotenv.config({ path: path.resolve(serverRoot, ".env"), override: true });
+dotenv.config({ path: path.resolve(serverRoot, ".env"), quiet: true });
+assertNonProductionOperation("Sample-data cleanup");
 
 const sampleProjectTitles = [
   "Sample: Batch 2018 Classroom Repair Drive",

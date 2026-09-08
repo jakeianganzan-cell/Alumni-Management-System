@@ -31,7 +31,16 @@ export const REMEMBERED_IDENTIFIER_KEY = "remembered_login_identifier";
 export const getAuthToken = () => {
   if (typeof window === "undefined") return null;
 
-  return sessionStorage.getItem(AUTH_TOKEN_KEY) ?? localStorage.getItem(AUTH_TOKEN_KEY);
+  const activeTabToken = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (activeTabToken) return activeTabToken;
+
+  const rememberedToken = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (rememberedToken) {
+    // Keep the active session isolated from later logins in other browser tabs.
+    sessionStorage.setItem(AUTH_TOKEN_KEY, rememberedToken);
+  }
+
+  return rememberedToken;
 };
 
 export const getRememberMePreference = () => {
@@ -43,13 +52,14 @@ export const getRememberMePreference = () => {
 export const setAuthToken = (token: string, rememberMe: boolean) => {
   if (typeof window === "undefined") return;
 
-  sessionStorage.removeItem(AUTH_TOKEN_KEY);
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  // Every tab keeps its own active account. localStorage is only the optional
+  // remembered session used to initialize a newly opened tab.
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
 
   if (rememberMe) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
   } else {
-    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
   }
 
   localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? "true" : "false");
@@ -108,15 +118,39 @@ const getSameOriginApiFallbackUrl = (input: string) => {
 };
 
 const buildApiConnectionError = (error: unknown, fallbackUrl?: string | null) => {
-  const detail = error instanceof Error && error.message ? error.message : "network request failed";
-  const retryDetail = fallbackUrl ? ` Tried direct API and ${fallbackUrl}.` : "";
-  return new Error(`Cannot connect to the API server.${retryDetail} Make sure the backend is running locally on port 5000 or set VITE_API_URL to the deployed backend URL. (${detail})`);
+  void error;
+  void fallbackUrl;
+  return new Error("Unable to connect to the server. Please check your connection and try again.");
+};
+
+const INTERNAL_ERROR_PATTERN = /(?:sql|database|stack|exception|jwt|token|secret|password_hash|node_modules|[a-z]:\\|\/home\/|\/var\/|select\s.+from|insert\s+into|update\s+.+set)/i;
+
+const getSafeApiErrorMessage = (payload: unknown, status: number) => {
+  const candidate = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+    ? payload.error.trim()
+    : "";
+
+  if (candidate && candidate.length <= 300 && !INTERNAL_ERROR_PATTERN.test(candidate)) {
+    return candidate;
+  }
+
+  if (status === 401) return "Please sign in to continue.";
+  if (status === 403) return "You do not have permission to perform this action.";
+  if (status === 404) return "The requested information could not be found.";
+  if (status === 429) return "Too many requests. Please wait and try again.";
+  return "Unable to complete your request. Please try again.";
 };
 
 export const fetchApi = async (input: string, init?: RequestInit) => {
   try {
     return await fetch(input, init);
   } catch (error) {
+    const method = String(init?.method || "GET").toUpperCase();
+    const canRetrySafely = method === "GET" || method === "HEAD";
+    if (!canRetrySafely) {
+      throw buildApiConnectionError(error);
+    }
+
     const fallbackUrl = getSameOriginApiFallbackUrl(input);
 
     if (fallbackUrl) {
@@ -157,14 +191,7 @@ export const readApiResponse = async <T>(response: Response): Promise<T> => {
   }
 
   if (!response.ok) {
-    const message =
-      (payload &&
-        typeof payload === "object" &&
-        "error" in payload &&
-        typeof payload.error === "string" &&
-        payload.error) ||
-      (typeof payload === "string" && payload.trim()) ||
-      `Request failed with status ${response.status}`;
+    const message = getSafeApiErrorMessage(payload, response.status);
 
     throw new ApiError(message, response.status, payload);
   }

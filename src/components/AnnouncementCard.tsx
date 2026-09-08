@@ -44,6 +44,8 @@ export function AnnouncementCard({
             alt=""
             className="absolute inset-0 h-full w-full object-cover md:hidden"
             aria-hidden="true"
+            loading="lazy"
+            decoding="async"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-black/20 md:hidden" />
         </>
@@ -59,6 +61,8 @@ export function AnnouncementCard({
               src={imageUrl}
               alt={announcement.title}
               className="h-full w-full object-contain"
+              loading="lazy"
+              decoding="async"
             />
           </div>
         )}
@@ -132,6 +136,7 @@ export function AnnouncementAttachment({ announcement }: { announcement: Announc
         src={imageUrl}
         alt={announcement.title}
         className="h-full w-full object-contain"
+        decoding="async"
       />
     </div>
   );

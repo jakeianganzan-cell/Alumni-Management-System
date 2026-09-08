@@ -10,9 +10,14 @@
     "security:rotate-admin": "node scripts/rotate-admin-password.mjs",
     "load:test": "node scripts/load-test.mjs",
     "cleanup:samples": "node scripts/cleanup-sample-data.mjs",
+    "backup": "node scripts/backup-database.mjs",
+    "restore": "node scripts/restore-database.mjs",
     "migrate": "node run-migration.mjs",
     "test": "tsx --test tests/hardening.test.mjs tests/security-policy.test.ts",
     "smoke": "node scripts/smoke-api.mjs",
+    "smoke:edge": "node scripts/edge-smoke-api.mjs",
+    "smoke:contributions": "node scripts/contribution-smoke-api.mjs",
+    "smoke:browser": "node scripts/browser-smoke.mjs",
     "install:chrome": "echo 'Skipping puppeteer browser install (using @sparticuz/chromium).'",
     "postinstall": "npm run install:chrome",
     "seed": "tsx seed.ts"
@@ -31,6 +36,7 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",
     "bcrypt": "^6.0.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
@@ -48,6 +54,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/node": "^25.8.0"
   }
 }
