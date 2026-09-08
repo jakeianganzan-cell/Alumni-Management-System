@@ -35,6 +35,16 @@ test("Render production installs include compression declarations", () => {
   assert.notEqual(packageLock.packages?.["node_modules/@types/compression"]?.dev, true);
 });
 
+test("deployed security policies allow the configured Google Maps embed", () => {
+  const vercel = read("vercel.json");
+  const security = read("server/middleware/security.ts");
+
+  for (const source of ["https://www.google.com", "https://maps.google.com"]) {
+    assert.match(vercel, new RegExp(source.replaceAll(".", "\\.")));
+    assert.match(security, new RegExp(source.replaceAll(".", "\\.")));
+  }
+});
+
 test("development, staging, and production configuration stay separated", () => {
   const envLoader = read("server/env.ts");
   const migrationRunner = read("server/run-migration.mjs");
