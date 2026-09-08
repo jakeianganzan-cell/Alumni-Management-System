@@ -28,6 +28,7 @@
   "dependencies": {
     "@sparticuz/chromium": "^148.0.0",
     "@types/bcrypt": "^6.0.0",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.10",
@@ -54,7 +55,6 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@types/compression": "^1.8.1",
     "@types/node": "^25.8.0"
   }
 }

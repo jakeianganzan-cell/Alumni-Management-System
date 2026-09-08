@@ -25,6 +25,16 @@ test("root env example is frontend-only", () => {
   assert.doesNotMatch(envExample, /ADMIN_PASSWORD=/);
 });
 
+test("Render production installs include compression declarations", () => {
+  const packageJson = JSON.parse(read("server/package.json"));
+  const packageLock = JSON.parse(read("server/package-lock.json"));
+
+  assert.equal(packageJson.dependencies?.["@types/compression"], "^1.8.1");
+  assert.equal(packageJson.devDependencies?.["@types/compression"], undefined);
+  assert.equal(packageLock.packages?.[""]?.dependencies?.["@types/compression"], "^1.8.1");
+  assert.notEqual(packageLock.packages?.["node_modules/@types/compression"]?.dev, true);
+});
+
 test("development, staging, and production configuration stay separated", () => {
   const envLoader = read("server/env.ts");
   const migrationRunner = read("server/run-migration.mjs");
