@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { formatApplicationDateTime } from "@/lib/applicationTime";
 
 type Priority = "low" | "normal" | "high";
 
@@ -58,8 +59,6 @@ const asNumber = (value: string, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
-
-const formatDateTime = (value: string | null) => value ? new Date(value).toLocaleString() : "Not yet";
 
 export default function EmailQueueSettingsPanel() {
   const [settings, setSettings] = useState<EmailQueueSettings>(DEFAULT_SETTINGS);
@@ -148,14 +147,14 @@ export default function EmailQueueSettingsPanel() {
       {loading ? (
         <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading</div>
       ) : (
-        <div className="mt-5 space-y-5">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 space-y-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Pending Queue" value={stats.pending} />
             <Stat label="Sent Today" value={stats.sentToday} />
             <Stat label="Remaining Today" value={stats.remainingToday} />
             <Stat label="Failed" value={stats.failed} />
-            <Stat label="Last Processed" value={formatDateTime(settings.lastProcessedAt)} />
-            <Stat label="Next Scheduled" value={formatDateTime(stats.nextScheduledAt)} />
+            <Stat label="Last Daily Check" value={formatApplicationDateTime(settings.lastDailyCheckAt)} />
+            <Stat label="Last Processed" value={formatApplicationDateTime(settings.lastProcessedAt)} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -214,9 +213,9 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-2xl border border-border bg-background p-4">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><MailCheck className="h-3.5 w-3.5" />{label}</div>
-      <p className="mt-2 text-lg font-bold text-navy-dark">{value}</p>
+    <div className="rounded-xl border border-border bg-background px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground"><MailCheck className="h-3 w-3 shrink-0" />{label}</div>
+      <p className="mt-1 text-sm font-bold leading-tight text-navy-dark">{value}</p>
     </div>
   );
 }

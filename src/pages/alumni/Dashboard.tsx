@@ -210,23 +210,54 @@ export default function AlumniDashboard() {
   const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [donationActivity, setDonationActivity] = useState<DonationActivity[]>([]);
+  const [slideshowLoading, setSlideshowLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const hasLoadedDashboard = useRef(false);
 
   useEffect(() => {
     if (!user) return;
 
+    const fetchSlideshow = async () => {
+      try {
+        const response = await fetch(`${API_URL}/slideshow?limit=1`, {
+          headers: getAuthHeaders(),
+        });
+        const firstSlides = await readApiResponse<unknown>(response);
+        if (!Array.isArray(firstSlides)) {
+          throw new Error("The slideshow service returned an invalid response.");
+        }
+        setSlideshow(firstSlides as SlideData[]);
+        setSlideshowLoading(false);
+
+        if (firstSlides.length > 0) {
+          const remainingResponse = await fetch(`${API_URL}/slideshow?limit=9&offset=1`, {
+            headers: getAuthHeaders(),
+          });
+          const remainingSlides = await readApiResponse<unknown>(remainingResponse);
+          if (Array.isArray(remainingSlides) && remainingSlides.length > 0) {
+            setSlideshow((current) => {
+              const knownIds = new Set(current.map((slide) => String(slide.id)));
+              return [...current, ...(remainingSlides as SlideData[]).filter((slide) => !knownIds.has(String(slide.id)))];
+            });
+          }
+        }
+      } catch (error) {
+        clientLogger.debug("Failed to load slideshow independently", error);
+      } finally {
+        setSlideshowLoading(false);
+      }
+    };
+
     const fetchData = async () => {
       const keepSpinner = !hasLoadedDashboard.current;
       try {
-        const res = await fetch(`${API_URL}/alumni/dashboard`, {
+        const res = await fetch(`${API_URL}/alumni/dashboard?includeSlideshow=false`, {
           headers: getAuthHeaders(),
         });
         const data = await readApiResponse<DashboardResponse>(res);
 
         setAnnouncements(data.events || []);
         setSurveys(data.surveys || []);
-        setSlideshow(data.slideshow || []);
         setDonationActivity((data.donationUpdates || []).slice(0, 4));
         setRegistrations(new Set(data.registrations || []));
         setOfficers(
@@ -257,6 +288,7 @@ export default function AlumniDashboard() {
       }
     };
 
+    void fetchSlideshow();
     void fetchData();
   }, [user]);
 
@@ -440,8 +472,9 @@ export default function AlumniDashboard() {
 
   if (loading) {
     return (
-      <AlumniLayout title={settings.institutionName}>
-        <div className="flex h-full min-h-[50vh] items-center justify-center">
+      <AlumniLayout title={settings.institutionName} subtitle={settings.systemShortName}>
+        <HomepageSlideshow slides={slideshow} loading={slideshowLoading} className="mb-8 max-[640px]:mb-3" />
+        <div className="flex min-h-[20vh] items-center justify-center">
           <LoadingProgress className="px-4" />
         </div>
       </AlumniLayout>
@@ -450,7 +483,7 @@ export default function AlumniDashboard() {
 
   return (
     <AlumniLayout title={settings.institutionName} subtitle={settings.systemShortName}>
-      <HomepageSlideshow slides={slideshow} className="mb-8 max-[640px]:mb-3" />
+      <HomepageSlideshow slides={slideshow} loading={slideshowLoading} className="mb-8 max-[640px]:mb-3" />
 
       <div
         className="hidden"

@@ -70,6 +70,22 @@ const STALE_TRACER_NOTIFICATION_CATEGORY = "tracer";
 const STALE_TRACER_NOTIFICATION_LINK = "/alumni/tracer";
 const TWO_YEARS_IN_MS = 1000 * 60 * 60 * 24 * 365 * 2;
 
+const formatNotificationSqlDateTime = (date: Date) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = values.hour === "24" ? "00" : values.hour;
+  return `${values.year}-${values.month}-${values.day} ${hour}:${values.minute}:${values.second}`;
+};
+
 const getErrorMessage = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
 
 const escapeHtml = (value: unknown) =>
@@ -278,7 +294,7 @@ const syncStaleTracerNotification = async (userId: string, row: Pick<TracerSumma
   await db.execute(
     `INSERT INTO user_notifications
       (id, user_id, title, message, category, link_url, is_read, created_at, actor_id)
-     VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), NULL)`,
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL)`,
     [
       randomUUID(),
       userId,
@@ -286,6 +302,7 @@ const syncStaleTracerNotification = async (userId: string, row: Pick<TracerSumma
       "Your graduate tracer record has not been updated for 2 years. Please review and update it.",
       STALE_TRACER_NOTIFICATION_CATEGORY,
       STALE_TRACER_NOTIFICATION_LINK,
+      formatNotificationSqlDateTime(new Date()),
     ],
   );
 };

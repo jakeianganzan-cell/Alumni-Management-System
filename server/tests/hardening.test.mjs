@@ -45,6 +45,14 @@ test("deployed security policies allow the configured Google Maps embed", () => 
   }
 });
 
+test("deployed security policies allow authenticated blob PDF previews", () => {
+  const vercel = read("vercel.json");
+  const security = read("server/middleware/security.ts");
+
+  assert.match(vercel, /frame-src 'self' blob:/);
+  assert.match(security, /"frame-src": \[\s*"'self'",\s*"blob:"/);
+});
+
 test("development, staging, and production configuration stay separated", () => {
   const envLoader = read("server/env.ts");
   const migrationRunner = read("server/run-migration.mjs");
@@ -382,4 +390,52 @@ test("Graduate Tracer validation and end-to-end test controls stay connected", (
   assert.match(ci, /NODE_ENV:\s*test/);
   assert.match(ci, /DB_NAME:\s*ustp_alumni_ci/);
   assert.match(ci, /Smoke test Graduate Tracer workflow[\s\S]{0,120}npm run smoke:tracer/);
+});
+
+test("email queue checks and sends use the same application time", () => {
+  const app = read("server/app.ts");
+  const emailSettings = read("src/components/account/EmailQueueSettingsPanel.tsx");
+  const applicationTime = read("src/lib/applicationTime.ts");
+
+  assert.match(app, /const getManilaDayWindow = \(date: Date\)/);
+  assert.equal((app.match(/\[currentDay\.startSql, currentDay\.endSql\]/g) || []).length, 2);
+  assert.match(app, /copy\.message, nowSql, nowSql, options\.createdBy/);
+  assert.doesNotMatch(app.slice(app.indexOf("const getEmailQueueStats"), app.indexOf("const getEligibleMailingRecipients")), /CURRENT_DATE\(\)|DATE_SUB\(NOW\(\), INTERVAL 1 DAY\)/);
+  assert.match(emailSettings, /formatApplicationDateTime/);
+  assert.match(applicationTime, /APPLICATION_TIME_ZONE = "Asia\/Manila"/);
+  assert.match(emailSettings, /label="Last Daily Check"/);
+});
+
+test("in-app notifications use explicit application time and refresh promptly", () => {
+  const app = read("server/app.ts");
+  const tracerController = read("server/controllers/tracer.controller.ts");
+  const notificationBell = read("src/components/NotificationBell.tsx");
+  const chairmanLayout = read("src/components/chairman/ChairmanLayout.tsx");
+
+  assert.match(app, /DATE_FORMAT\(created_at, '%Y-%m-%dT%H:%i:%s\+08:00'\) AS created_at[\s\S]{0,220}FROM user_notifications/);
+  assert.doesNotMatch(app, /INSERT INTO user_notifications[\s\S]{0,180}NOW\(\)/);
+  assert.doesNotMatch(tracerController, /INSERT INTO user_notifications[\s\S]{0,180}NOW\(\)/);
+  assert.match(notificationBell, /NOTIFICATION_REFRESH_INTERVAL_MS = 15_000/);
+  assert.match(notificationBell, /refetchOnWindowFocus: "always"/);
+  assert.match(notificationBell, /formatApplicationDateTime\(notification\.createdAt\)/);
+  assert.match(notificationBell, /CHAIRMAN_NOTIFICATION_LINKS/);
+  assert.match(chairmanLayout, /<NotificationBell \/>/);
+});
+
+test("alumni slideshow renders early without duplicate media payloads", () => {
+  const app = read("server/app.ts");
+  const dashboard = read("src/pages/alumni/Dashboard.tsx");
+  const slideshow = read("src/components/HomepageSlideshow.tsx");
+  const mediaDialog = read("src/components/admin/HomepageMediaPostDialog.tsx");
+
+  assert.match(dashboard, /\/slideshow\?limit=1/);
+  assert.match(dashboard, /\/slideshow\?limit=9&offset=1/);
+  assert.match(dashboard, /\/alumni\/dashboard\?includeSlideshow=false/);
+  assert.match(dashboard, /<HomepageSlideshow slides=\{slideshow\} loading=\{slideshowLoading\}/);
+  assert.match(app, /imageUrl: null/);
+  assert.match(app, /const includeSlideshow = normalizeBoolean\(req\.query\.includeSlideshow, true\)/);
+  assert.doesNotMatch(mediaDialog, /imageUrl: selectedMediaUrl/);
+  assert.doesNotMatch(slideshow, /video\.load\(\)/);
+  assert.match(slideshow, /preload="metadata"/);
+  assert.match(slideshow, /fetchPriority="high"/);
 });

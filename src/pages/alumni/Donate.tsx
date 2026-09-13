@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Heart,
+  History as HistoryIcon,
   Loader2,
   Printer,
   QrCode,
@@ -119,6 +120,7 @@ export default function AlumniDonate() {
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [showQrPreview, setShowQrPreview] = useState(false);
+  const [donationHistoryOpen, setDonationHistoryOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [form, setForm] = useState(() => createEmptyForm(profile));
   const visibleHistory = history.filter((item) => DONATION_TYPES.includes(item.contribution_type));
@@ -555,27 +557,6 @@ export default function AlumniDonate() {
           </section>
         </form>
 
-        <section className="mt-4 rounded-xl border border-border bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-navy-dark">My Donation History</h2>
-            <span className="text-[10px] font-semibold text-muted-foreground">{visibleHistory.length} records</span>
-          </div>
-          <div className="mt-2 space-y-2">
-            {visibleHistory.slice(0, 8).map((item) => (
-              <div key={item.id} className="grid gap-1 rounded-lg border border-border px-3 py-2 text-xs sm:grid-cols-[1fr_auto_auto] sm:items-center sm:gap-3">
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-navy-dark">{item.activity_name || item.purpose}</p>
-                  <p className="truncate text-[10px] text-muted-foreground">{item.contribution_type} · {item.contribution_date || "Date not set"}</p>
-                </div>
-                <span className="text-muted-foreground">{formatHistoryMeasure(item)}</span>
-                <span className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === "Approved" ? "bg-emerald-100 text-emerald-700" : item.status === "Rejected" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{item.status}</span>
-                {item.review_notes && <p className="text-[10px] text-muted-foreground sm:col-span-3">Admin note: {item.review_notes}</p>}
-              </div>
-            ))}
-            {visibleHistory.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">No donations submitted yet.</p>}
-          </div>
-        </section>
-
         {isContributionModule && opportunityHistory.length > 0 && (
           <section className="mt-4 rounded-xl border border-border bg-white p-3 shadow-sm">
             <div className="space-y-2">
@@ -590,6 +571,63 @@ export default function AlumniDonate() {
           </section>
         )}
       </div>
+
+      <button
+        type="button"
+        onClick={() => setDonationHistoryOpen(true)}
+        className="fixed right-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-1.5 rounded-l-xl bg-navy px-2.5 py-3 text-[10px] font-semibold text-white shadow-lg transition hover:bg-navy-light focus:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+        aria-label="Open donation history"
+        aria-controls="alumni-donation-history"
+        aria-expanded={donationHistoryOpen}
+      >
+        <HistoryIcon className="h-4 w-4" />
+        <span className="hidden sm:inline">History</span>
+      </button>
+
+      {donationHistoryOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default bg-black/35"
+            onClick={() => setDonationHistoryOpen(false)}
+            aria-label="Close donation history"
+          />
+          <aside
+            id="alumni-donation-history"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(92vw,24rem)] animate-in flex-col border-l border-border bg-white shadow-2xl slide-in-from-right-full duration-200"
+            aria-label="My Donation History"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <HistoryIcon className="h-4 w-4 text-navy" />
+                <h2 className="text-sm font-bold text-navy-dark">My Donation History</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold text-muted-foreground">{visibleHistory.length} records</span>
+                <button type="button" onClick={() => setDonationHistoryOpen(false)} className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-navy" aria-label="Close donation history panel">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
+              {visibleHistory.slice(0, 8).map((item) => (
+                <div key={item.id} className="rounded-lg border border-border px-3 py-2 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-navy-dark">{item.activity_name || item.purpose}</p>
+                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{item.contribution_type} · {item.contribution_date || "Date not set"}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === "Approved" ? "bg-emerald-100 text-emerald-700" : item.status === "Rejected" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{item.status}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{formatHistoryMeasure(item)}</p>
+                  {item.review_notes && <p className="mt-1 text-[10px] text-muted-foreground">Admin note: {item.review_notes}</p>}
+                </div>
+              ))}
+              {visibleHistory.length === 0 && <p className="py-8 text-center text-xs text-muted-foreground">No donations submitted yet.</p>}
+            </div>
+          </aside>
+        </>
+      )}
 
       {showQrPreview && settings.gcash_qr && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={() => setShowQrPreview(false)}>

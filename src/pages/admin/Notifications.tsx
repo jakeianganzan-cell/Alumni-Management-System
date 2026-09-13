@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, ApiError, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { formatApplicationDateTime } from "@/lib/applicationTime";
 import {
   AlertCircle,
   CheckCircle,
@@ -135,8 +136,7 @@ const MAX_SELECTED_ALUMNI = 10;
 const LOGS_PAGE_SIZE = 10;
 
 const formatDate = (value?: string | null) => {
-  if (!value) return "Not sent";
-  return new Date(value).toLocaleString();
+  return formatApplicationDateTime(value, "Not sent");
 };
 
 const getMailingSendErrorMessage = (error: unknown) => {
@@ -412,9 +412,47 @@ export default function AdminNotifications() {
                 </div>
               )}
 
+              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Email Purpose</label>
+                  <select
+                    value={purpose}
+                    onChange={(event) => applyTemplate(event.target.value as EmailPurpose)}
+                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                  >
+                    {(Object.keys(PURPOSE_LABELS) as EmailPurpose[]).map((key) => (
+                      <option key={key} value={key}>
+                        {PURPOSE_LABELS[key]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Subject</label>
+                  <input
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    maxLength={255}
+                    placeholder="Email subject"
+                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                  />
+                </div>
+              </section>
+
+              <section>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Message</label>
+                <textarea
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  rows={11}
+                  placeholder="Write the email message"
+                  className="w-full resize-none rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
+                />
+              </section>
+
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-navy">Selected Alumni</label>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-navy">Select Alumni</label>
                   <span className="text-xs font-semibold text-muted-foreground">
                     {selectedAlumni.length}/{MAX_SELECTED_ALUMNI} selected
                   </span>
@@ -528,44 +566,6 @@ export default function AdminNotifications() {
                     })}
                   </div>
                 </div>
-              </section>
-
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Email Purpose</label>
-                  <select
-                    value={purpose}
-                    onChange={(event) => applyTemplate(event.target.value as EmailPurpose)}
-                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
-                  >
-                    {(Object.keys(PURPOSE_LABELS) as EmailPurpose[]).map((key) => (
-                      <option key={key} value={key}>
-                        {PURPOSE_LABELS[key]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Subject</label>
-                  <input
-                    value={subject}
-                    onChange={(event) => setSubject(event.target.value)}
-                    maxLength={255}
-                    placeholder="Email subject"
-                    className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
-                  />
-                </div>
-              </section>
-
-              <section>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-navy">Message</label>
-                <textarea
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  rows={11}
-                  placeholder="Write the email message"
-                  className="w-full resize-none rounded-lg border border-border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-navy/20"
-                />
               </section>
 
               <button

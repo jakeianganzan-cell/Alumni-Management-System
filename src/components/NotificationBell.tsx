@@ -5,6 +5,27 @@ import { useNavigate } from "react-router-dom";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { formatApplicationDateTime } from "@/lib/applicationTime";
+import { useAuth, type AppRole } from "@/hooks/useAuth";
+
+const NOTIFICATION_REFRESH_INTERVAL_MS = 15_000;
+
+const CHAIRMAN_NOTIFICATION_LINKS: Record<string, string> = {
+  "/admin/alumni": "/chairman/alumni",
+  "/admin/announcements": "/chairman/announcements",
+  "/admin/achievements": "/chairman/achievements",
+  "/admin/tracer": "/chairman/tracer",
+  "/alumni/announcements": "/chairman/announcements",
+  "/alumni/achievements": "/chairman/achievements",
+  "/alumni/community": "/chairman/community",
+};
+
+const resolveNotificationLink = (linkUrl: string | null | undefined, role: AppRole | null) => {
+  if (!linkUrl || role !== "chairman") return linkUrl;
+  const path = linkUrl.split("?", 1)[0];
+  if (CHAIRMAN_NOTIFICATION_LINKS[path]) return CHAIRMAN_NOTIFICATION_LINKS[path];
+  return path.startsWith("/admin/") || path.startsWith("/alumni/") ? null : linkUrl;
+};
 
 interface UserNotification {
   id: string;
@@ -23,6 +44,7 @@ interface UserNotificationResponse {
 
 export default function NotificationBell() {
   const navigate = useNavigate();
+  const { role } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
 
@@ -35,7 +57,10 @@ export default function NotificationBell() {
 
       return readApiResponse<UserNotificationResponse>(res);
     },
-    refetchInterval: 30000,
+    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
+    refetchIntervalInBackground: true,
+    refetchOnReconnect: "always",
+    refetchOnWindowFocus: "always",
   });
 
   const readMutation = useMutation({
@@ -72,8 +97,9 @@ export default function NotificationBell() {
       await readMutation.mutateAsync(notification.id);
     }
 
-    if (notification.linkUrl) {
-      navigate(notification.linkUrl);
+    const destination = resolveNotificationLink(notification.linkUrl, role);
+    if (destination) {
+      navigate(destination);
       setOpen(false);
     }
   };
@@ -90,31 +116,31 @@ export default function NotificationBell() {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(360px,calc(100vw-1rem))] p-0 max-[640px]:max-h-[70dvh]" align="end">
-        <div className="border-b border-border px-4 py-3 max-[640px]:px-3 max-[640px]:py-2.5">
-          <div className="flex items-center justify-between gap-3">
+      <PopoverContent className="w-[min(320px,calc(100vw-0.75rem))] p-0 max-[640px]:w-[min(300px,calc(100vw-0.75rem))] max-[640px]:max-h-[62dvh]" align="end">
+        <div className="border-b border-border px-3 py-2 max-[640px]:px-2.5 max-[640px]:py-1.5">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-semibold text-foreground">Notifications</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs font-semibold leading-tight text-foreground max-[640px]:text-[11px]">Notifications</p>
+              <p className="text-[10px] leading-tight text-muted-foreground max-[640px]:text-[9px]">
                 {unreadCount > 0 ? `${unreadCount} unread` : "You are all caught up"}
               </p>
             </div>
             <Button
               variant="ghost"
               size="sm"
-              className="gap-1 px-2 text-xs"
+              className="h-7 gap-1 px-1.5 text-[10px] max-[640px]:h-6 max-[640px]:text-[9px]"
               onClick={() => readAllMutation.mutate()}
               disabled={unreadCount === 0 || readAllMutation.isPending}
             >
-              <CheckCheck className="h-3.5 w-3.5" />
+              <CheckCheck className="h-3 w-3" />
               Mark all
             </Button>
           </div>
         </div>
 
-        <div className="max-h-[420px] overflow-y-auto overscroll-contain max-[640px]:max-h-[calc(70dvh-64px)]">
+        <div className="max-h-[360px] overflow-y-auto overscroll-contain max-[640px]:max-h-[calc(62dvh-48px)]">
           {notifications.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground max-[640px]:px-3 max-[640px]:py-6 max-[640px]:text-xs">
+            <div className="px-3 py-6 text-center text-xs text-muted-foreground max-[640px]:px-2.5 max-[640px]:py-5 max-[640px]:text-[10px]">
               No notifications yet.
             </div>
           ) : (
@@ -122,20 +148,20 @@ export default function NotificationBell() {
               <button
                 key={notification.id}
                 onClick={() => openNotification(notification)}
-                className={`min-h-11 w-full border-b border-border px-4 py-3 text-left transition hover:bg-muted/40 max-[640px]:px-3 max-[640px]:py-2.5 ${
+                className={`min-h-9 w-full border-b border-border px-3 py-2 text-left transition hover:bg-muted/40 max-[640px]:px-2.5 max-[640px]:py-1.5 ${
                   notification.isRead ? "bg-background" : "bg-rose-50/40"
                 }`}
                 type="button"
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start justify-between gap-1.5">
                   <div className="min-w-0">
-                    <p className="line-clamp-2 text-sm font-semibold text-foreground max-[640px]:text-xs">{notification.title}</p>
-                    <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground max-[640px]:leading-4">{notification.message}</p>
-                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground max-[640px]:text-[10px]">
-                      {notification.category} | {new Date(notification.createdAt).toLocaleString()}
+                    <p className="line-clamp-2 text-xs font-semibold leading-4 text-foreground max-[640px]:text-[11px] max-[640px]:leading-[14px]">{notification.title}</p>
+                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground max-[640px]:text-[10px] max-[640px]:leading-[14px]">{notification.message}</p>
+                    <p className="mt-1 text-[9px] uppercase leading-3 tracking-[0.08em] text-muted-foreground max-[640px]:text-[8px]">
+                      {notification.category} | {formatApplicationDateTime(notification.createdAt)}
                     </p>
                   </div>
-                  {!notification.isRead && <span className="mt-1 h-2.5 w-2.5 rounded-full bg-rose-500" />}
+                  {!notification.isRead && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose-500" />}
                 </div>
               </button>
             ))

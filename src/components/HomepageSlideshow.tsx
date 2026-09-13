@@ -65,6 +65,7 @@ interface HomepageSlideshowProps {
   slides: HomepageSlide[];
   intervalMs?: number;
   className?: string;
+  loading?: boolean;
 }
 
 interface PreparedSlide extends HomepageSlide {
@@ -125,28 +126,9 @@ function formatDuration(seconds: number | null | undefined) {
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
-function BackgroundMedia({ slide, priority }: { slide: PreparedSlide; priority: boolean }) {
-  if (slide.mediaKind === "video") {
-    return (
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_22%,rgba(255,255,255,0.12),transparent_30%),linear-gradient(135deg,rgba(120,18,36,0.72),rgba(17,24,39,0.98))]" />
-    );
-  }
-
-  if (slide.mediaKind === "youtube") {
-    return (
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_25%,rgba(255,255,255,0.16),transparent_28%),linear-gradient(135deg,rgba(120,18,36,0.72),rgba(17,24,39,0.95))]" />
-    );
-  }
-
+function BackgroundMedia() {
   return (
-    <img
-      src={slide.resolvedUrl}
-      alt=""
-      loading={priority ? "eager" : "lazy"}
-      decoding="async"
-      className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
-      aria-hidden="true"
-    />
+    <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_22%,rgba(255,255,255,0.14),transparent_30%),linear-gradient(135deg,rgba(120,18,36,0.72),rgba(17,24,39,0.98))]" />
   );
 }
 
@@ -251,7 +233,7 @@ function YouTubeSlide({
               if (Number.isFinite(latestDuration) && latestDuration && latestDuration > 0) {
                 onDurationChange(slide.id, latestDuration);
               }
-            }, 500);
+            }, 1000);
             if (mutedRef.current) {
               event.target.mute();
             } else {
@@ -376,7 +358,6 @@ function UploadedVideoSlide({
       return;
     }
 
-    video.load();
     video.play().catch(() => {
       onPlayingChange(false);
     });
@@ -390,7 +371,7 @@ function UploadedVideoSlide({
       autoPlay={active}
       muted={muted || !active}
       playsInline
-      preload="auto"
+      preload="metadata"
       onLoadedMetadata={(event) => {
         const duration = event.currentTarget.duration;
         if (Number.isFinite(duration) && duration > 0) {
@@ -414,7 +395,7 @@ function UploadedVideoSlide({
   );
 }
 
-export default function HomepageSlideshow({ slides, intervalMs = 6000, className = "" }: HomepageSlideshowProps) {
+export default function HomepageSlideshow({ slides, intervalMs = 6000, className = "", loading = false }: HomepageSlideshowProps) {
   const { settings } = useSystemSettings();
   const [activeSlide, setActiveSlide] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
@@ -505,6 +486,20 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
     window.location.href = linkUrl;
   };
 
+  if (loading && slides.length === 0) {
+    return (
+      <section className={`relative w-full overflow-hidden rounded-2xl bg-gray-950 shadow-[0_24px_70px_rgba(15,23,42,0.18)] max-[640px]:rounded-xl max-[640px]:shadow-sm ${className}`}>
+        <div className="homepage-slideshow-frame relative min-h-[340px] overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_28%_22%,rgba(255,255,255,0.14),transparent_30%),linear-gradient(135deg,rgba(120,18,36,0.72),rgba(17,24,39,0.98))] sm:min-h-[430px] lg:min-h-[540px] max-[640px]:rounded-xl">
+          <div className="absolute inset-x-4 bottom-14 max-w-xs text-white sm:inset-x-8 sm:bottom-7 sm:max-w-sm lg:inset-x-10">
+            <h2 className="font-display text-base font-semibold leading-tight sm:text-lg lg:text-xl max-[640px]:text-xs">
+              {settings.institutionName} Alumni
+            </h2>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
       className={`group relative w-full overflow-hidden rounded-2xl bg-gray-950 shadow-[0_24px_70px_rgba(15,23,42,0.18)] max-[640px]:rounded-xl max-[640px]:shadow-sm ${className}`}
@@ -527,7 +522,7 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
               aria-hidden={!isActive}
               onClick={() => isLinkedImage && openSlideLink(slide.linkUrl)}
             >
-              {isActive && <BackgroundMedia slide={slide} priority={index === 0} />}
+              {isActive && <BackgroundMedia />}
               <div className="absolute inset-0 bg-gradient-to-r from-black/72 via-black/28 to-black/52" />
               <div className="absolute inset-x-0 bottom-0 z-20 h-1/2 bg-gradient-to-t from-black/78 via-black/20 to-transparent" />
 
@@ -559,7 +554,8 @@ export default function HomepageSlideshow({ slides, intervalMs = 6000, className
                 <img
                   src={slide.resolvedUrl}
                   alt={slide.title}
-                  loading={index === 0 ? "eager" : "lazy"}
+                  loading="eager"
+                  fetchPriority="high"
                   decoding="async"
                   className="relative z-10 h-full w-full object-contain"
                 />

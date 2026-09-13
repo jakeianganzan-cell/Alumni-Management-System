@@ -1287,6 +1287,15 @@ const formatSqlDateTime = (date: Date | null) => {
     return `${formatManilaDate(date)} ${formatManilaTime(date)}`;
 };
 
+const getManilaDayWindow = (date: Date) => {
+    const dayStart = parseManilaDateTime(formatManilaDate(date), "00:00:00");
+    if (!dayStart) throw new Error("Unable to calculate the application day boundary.");
+    return {
+        startSql: formatSqlDateTime(dayStart),
+        endSql: formatSqlDateTime(new Date(dayStart.getTime() + 24 * 60 * 60 * 1000))
+    };
+};
+
 const formatDisplayManilaDateTime = (date: Date | null) => {
     if (!date) return "Not set";
     return new Intl.DateTimeFormat("en-US", {
@@ -2572,7 +2581,7 @@ const mapDashboardSlide = (row: QueryRow) => ({
     caption: row.caption ? String(row.caption) : "",
     mediaType: normalizeDashboardSlideMediaType(row.media_type, row.image_url),
     mediaUrl: normalizeStoredMedia(row.image_url),
-    imageUrl: normalizeStoredMedia(row.image_url),
+    imageUrl: null,
     linkUrl: row.link_url ? String(row.link_url) : "",
     isHighlighted: Boolean(row.is_highlighted),
     displayOrder: Number(row.display_order || 0),
@@ -4110,7 +4119,14 @@ const ensureEmailQueueTables = async () => {
 
 const getEmailQueueSettings = async () => {
     await ensureEmailQueueTables();
-    return mapEmailQueueSettings(await getSingleRow("SELECT * FROM email_queue_settings WHERE id = 1 LIMIT 1"));
+    return mapEmailQueueSettings(await getSingleRow(
+        `SELECT *,
+                DATE_FORMAT(last_processed_at, '%Y-%m-%dT%H:%i:%s+08:00') AS last_processed_at,
+                DATE_FORMAT(last_daily_check_at, '%Y-%m-%dT%H:%i:%s+08:00') AS last_daily_check_at
+         FROM email_queue_settings
+         WHERE id = 1
+         LIMIT 1`
+    ));
 };
 
 const saveEmailQueueSettings = async (input: Record<string, unknown>) => {
@@ -4177,6 +4193,7 @@ const getTracerReminderCopy = (stage: EmailQueueStage, institutionName?: string 
 
 const getEmailQueueStats = async () => {
     await ensureEmailQueueTables();
+    const currentDay = getManilaDayWindow(new Date());
     const statusRows = parseRows(await db.query(
         `SELECT status, COUNT(*) AS count FROM email_queue GROUP BY status`
     ));
@@ -4184,11 +4201,14 @@ const getEmailQueueStats = async () => {
         `SELECT COUNT(*) AS count
          FROM email_logs
          WHERE status = 'sent'
-           AND sent_at >= CURRENT_DATE()
-           AND sent_at < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)`
+           AND sent_at >= ?
+           AND sent_at < ?`,
+        [currentDay.startSql, currentDay.endSql]
     );
     const nextPending = await getSingleRow(
-        `SELECT MIN(scheduled_for) AS nextScheduledAt FROM email_queue WHERE status = 'pending'`
+        `SELECT DATE_FORMAT(MIN(scheduled_for), '%Y-%m-%dT%H:%i:%s+08:00') AS nextScheduledAt
+         FROM email_queue
+         WHERE status = 'pending'`
     );
     const settings = await getEmailQueueSettings();
     const byStatus = Object.fromEntries(statusRows.map((row) => [String(row.status || "pending"), Number(row.count || 0)]));
@@ -4227,7 +4247,10 @@ const enqueueDueTracerReminders = async (options: { force?: boolean; createdBy?:
             p.email,
             p.batch,
             (SELECT COUNT(*) FROM email_logs el WHERE el.alumni_id = p.id AND el.email_purpose = ? AND el.status = 'sent') AS sent_count,
-            (SELECT MAX(el.sent_at) FROM email_logs el WHERE el.alumni_id = p.id AND el.email_purpose = ? AND el.status = 'sent') AS last_sent_at
+            DATE_FORMAT(
+                (SELECT MAX(el.sent_at) FROM email_logs el WHERE el.alumni_id = p.id AND el.email_purpose = ? AND el.status = 'sent'),
+                '%Y-%m-%dT%H:%i:%s+08:00'
+            ) AS last_sent_at
          FROM profiles p
          INNER JOIN user_roles ur ON ur.user_id = p.id
          ${tracerJoin}
@@ -4266,9 +4289,10 @@ const enqueueDueTracerReminders = async (options: { force?: boolean; createdBy?:
 
         const recentSent = await getSingleRow(
             `SELECT id FROM email_logs
-             WHERE alumni_id = ? AND email_purpose = ? AND status = 'sent' AND sent_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+             WHERE alumni_id = ? AND email_purpose = ? AND status = 'sent'
+               AND sent_at >= ? AND sent_at <= ?
              LIMIT 1`,
-            [String(row.id), EMAIL_QUEUE_PURPOSE]
+            [String(row.id), EMAIL_QUEUE_PURPOSE, formatSqlDateTime(addDays(now, -1)), nowSql]
         );
         if (recentSent) { skipped += 1; continue; }
 
@@ -4277,7 +4301,7 @@ const enqueueDueTracerReminders = async (options: { force?: boolean; createdBy?:
             `INSERT INTO email_queue
                 (id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, message, status, scheduled_for, created_at, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
-            [uuidv4(), String(row.id), recipientEmail, normalizeText(row.name) || "Alumni", EMAIL_QUEUE_PURPOSE, schedule.stage, settings.reminderPriorityLevel, copy.subject, copy.message, formatSqlDateTime(schedule.dueAt), nowSql, options.createdBy || null]
+            [uuidv4(), String(row.id), recipientEmail, normalizeText(row.name) || "Alumni", EMAIL_QUEUE_PURPOSE, schedule.stage, settings.reminderPriorityLevel, copy.subject, copy.message, nowSql, nowSql, options.createdBy || null]
         );
         queued += 1;
     }
@@ -4292,6 +4316,7 @@ const processEmailQueue = async (options: { force?: boolean } = {}) => {
     if (!settings.queueProcessingEnabled && !options.force) return { processed: 0, sent: 0, failed: 0, skipped: true, reason: "disabled" };
 
     const now = new Date();
+    const currentDay = getManilaDayWindow(now);
     if (!options.force && settings.lastProcessedAt) {
         const lastProcessed = parseDateTimeValue(settings.lastProcessedAt);
         if (lastProcessed && now.getTime() - lastProcessed.getTime() < settings.sendIntervalMinutes * 60 * 1000) {
@@ -4303,8 +4328,9 @@ const processEmailQueue = async (options: { force?: boolean } = {}) => {
         `SELECT COUNT(*) AS count
          FROM email_logs
          WHERE status = 'sent'
-           AND sent_at >= CURRENT_DATE()
-           AND sent_at < DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)`
+           AND sent_at >= ?
+           AND sent_at < ?`,
+        [currentDay.startSql, currentDay.endSql]
     );
     const remainingToday = Math.max(0, settings.dailyEmailLimit - Number(sentTodayRow?.count || 0));
     const sendLimit = Math.min(settings.batchSizePerSendCycle, remainingToday);
@@ -5576,12 +5602,13 @@ const createUserNotification = async ({
 }) => {
     if (!userId) return;
     if (actorId && actorId === userId) return;
+    const createdAt = formatSqlDateTime(new Date());
 
     await db.execute(
         `INSERT INTO user_notifications
             (id, user_id, title, message, category, link_url, is_read, created_at, actor_id)
-         VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), ?)`,
-        [uuidv4(), userId, title, message, category, linkUrl || null, actorId || null]
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        [uuidv4(), userId, title, message, category, linkUrl || null, createdAt, actorId || null]
     );
 };
 
@@ -5675,14 +5702,15 @@ const syncStaleTracerNotification = async (userId: string) => {
     await db.execute(
         `INSERT INTO user_notifications
             (id, user_id, title, message, category, link_url, is_read, created_at, actor_id)
-         VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), NULL)`,
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL)`,
         [
             uuidv4(),
             userId,
             STALE_TRACER_NOTIFICATION_TITLE,
             "Your graduate tracer record has not been updated for 2 years. Please review and update it.",
             STALE_TRACER_NOTIFICATION_CATEGORY,
-            STALE_TRACER_NOTIFICATION_LINK
+            STALE_TRACER_NOTIFICATION_LINK,
+            formatSqlDateTime(new Date())
         ]
     );
 };
@@ -8721,14 +8749,19 @@ app.get("/api/admin/dashboard", authenticateToken, requireOfficer, async (_req, 
     }
 });
 
-app.get("/api/slideshow", authenticateToken, async (_req, res) => {
+app.get("/api/slideshow", authenticateToken, async (req, res) => {
     try {
         await ensureDashboardSlideTable();
+        const requestedLimit = Number(req.query.limit);
+        const requestedOffset = Number(req.query.offset);
+        const limit = Number.isInteger(requestedLimit) ? Math.min(10, Math.max(1, requestedLimit)) : 10;
+        const offset = Number.isInteger(requestedOffset) ? Math.max(0, requestedOffset) : 0;
         const rows = parseRows(await db.query(
             `SELECT *
              FROM dashboard_slides
              WHERE LOWER(COALESCE(status, 'active')) = 'active'
-             ORDER BY is_highlighted DESC, display_order ASC, created_at DESC`
+             ORDER BY is_highlighted DESC, display_order ASC, created_at DESC
+             LIMIT ${limit} OFFSET ${offset}`
         ));
 
         res.json(rows.map(mapDashboardSlide));
@@ -9327,14 +9360,18 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
             };
         }).filter((survey) => survey.questions.length > 0);
 
-        await ensureDashboardSlideTable();
-        const slides = parseRows(await db.query(
-            `SELECT *
-             FROM dashboard_slides
-             WHERE LOWER(COALESCE(status, 'active')) = 'active'
-             ORDER BY is_highlighted DESC, display_order ASC, created_at DESC
-             LIMIT 10`
-        ));
+        const includeSlideshow = normalizeBoolean(req.query.includeSlideshow, true);
+        let slides: QueryRow[] = [];
+        if (includeSlideshow) {
+            await ensureDashboardSlideTable();
+            slides = parseRows(await db.query(
+                `SELECT *
+                 FROM dashboard_slides
+                 WHERE LOWER(COALESCE(status, 'active')) = 'active'
+                 ORDER BY is_highlighted DESC, display_order ASC, created_at DESC
+                 LIMIT 10`
+            ));
+        }
 
         await ensureEventRsvpTables();
         const registrations = parseRows<RegistrationRow>(await db.query<RegistrationRow>(
@@ -14764,7 +14801,8 @@ app.get("/api/user-notifications", authenticateToken, async (req: AuthenticatedR
         await syncStaleTracerNotification(req.user.id);
 
         const rows = parseRows<UserNotificationRow>(await db.query<UserNotificationRow>(
-            `SELECT *
+            `SELECT id, user_id, title, message, category, link_url, is_read, actor_id,
+                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s+08:00') AS created_at
              FROM user_notifications
              WHERE user_id = ?
                AND NOT (title = ? AND COALESCE(category, '') = ?)
@@ -14847,7 +14885,12 @@ app.post("/api/user-notifications/read-all", authenticateToken, async (req: Auth
 app.get("/api/notifications", authenticateToken, requirePermission("notifications.draft"), async (_req, res) => {
     try {
         const rows = parseRows(await db.query(
-            `SELECT * FROM notifications ORDER BY created_at DESC LIMIT 50`
+            `SELECT id, subject, message, type, status, recipients, recipient_count, created_by,
+                    DATE_FORMAT(sent_at, '%Y-%m-%dT%H:%i:%s+08:00') AS sent_at,
+                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s+08:00') AS created_at
+             FROM notifications
+             ORDER BY created_at DESC
+             LIMIT 50`
         ));
         res.json(rows);
     } catch (err: unknown) {
@@ -14887,8 +14930,8 @@ app.get("/api/admin/mailing/logs", authenticateToken, requirePermission("notific
                 el.message,
                 el.status,
                 el.error_message,
-                el.sent_at,
-                el.created_at
+                DATE_FORMAT(el.sent_at, '%Y-%m-%dT%H:%i:%s+08:00') AS sent_at,
+                DATE_FORMAT(el.created_at, '%Y-%m-%dT%H:%i:%s+08:00') AS created_at
              FROM email_logs el
              LEFT JOIN profiles p ON p.id = el.alumni_id
              ORDER BY el.created_at DESC
@@ -14945,7 +14988,9 @@ app.get("/api/admin/mailing/filters", authenticateToken, requirePermission("noti
 });
 
 app.post("/api/admin/mailing/send", authenticateToken, requirePermission("notifications.send"), async (req: AuthenticatedRequest, res) => {
-    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const nowDate = new Date();
+    const now = formatSqlDateTime(nowDate);
+    const duplicateWindowStart = formatSqlDateTime(new Date(nowDate.getTime() - 10 * 60 * 1000));
 
     try {
         const { alumniId, alumniIds, purpose, subject, message, confirmed } = req.body || {};
@@ -15003,8 +15048,8 @@ app.post("/api/admin/mailing/send", authenticateToken, requirePermission("notifi
                AND email_purpose = ?
                AND subject = ?
                AND status = 'sent'
-               AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
-            [...uniqueAlumniIds, purpose, normalizedSubject]
+               AND created_at >= ?`,
+            [...uniqueAlumniIds, purpose, normalizedSubject, duplicateWindowStart]
         ));
 
         if (duplicateRows.length > 0) {
@@ -15135,7 +15180,13 @@ app.get("/api/admin/email-queue", authenticateToken, requirePermission("notifica
         const { page, pageSize, offset } = getPagination(req.query as Record<string, unknown>);
         const countRows = parseRows(await db.query("SELECT COUNT(*) AS total FROM email_queue"));
         const rows = parseRows(await db.query(
-            `SELECT id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, status, scheduled_for, attempts, last_attempt_at, sent_at, error_message, created_at
+            `SELECT id, alumni_id, recipient_email, recipient_name, email_purpose, reminder_stage, priority, subject, status,
+                    DATE_FORMAT(scheduled_for, '%Y-%m-%dT%H:%i:%s+08:00') AS scheduled_for,
+                    attempts,
+                    DATE_FORMAT(last_attempt_at, '%Y-%m-%dT%H:%i:%s+08:00') AS last_attempt_at,
+                    DATE_FORMAT(sent_at, '%Y-%m-%dT%H:%i:%s+08:00') AS sent_at,
+                    error_message,
+                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s+08:00') AS created_at
              FROM email_queue
              ORDER BY created_at DESC
              LIMIT ? OFFSET ?`,

@@ -160,7 +160,6 @@ export default function HomepageMediaPostDialog() {
             ...form,
             title: form.title.trim() || "Homepage advertisement",
             mediaUrl: selectedMediaUrl,
-            imageUrl: selectedMediaUrl,
             status: form.status || "active",
           }),
         },

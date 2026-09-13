@@ -300,7 +300,7 @@ export default function SessionMonitoringPanel() {
           <Laptop className="h-3.5 w-3.5 text-muted-foreground" />
           <h4 className="text-sm font-bold text-navy-dark">Device History</h4>
         </div>
-        <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid max-h-[360px] grid-cols-1 gap-2 overflow-y-auto overscroll-contain p-3 md:grid-cols-2 xl:grid-cols-3">
           {deviceHistory.length === 0 ? (
             <p className="text-sm text-muted-foreground">No device history found.</p>
           ) : deviceHistory.slice(0, 18).map((item) => (

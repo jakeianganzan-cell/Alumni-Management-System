@@ -23,6 +23,7 @@ export const securityHeaders = helmet({
       "connect-src": ["'self'", ...String(process.env.CSP_CONNECT_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean)],
       "frame-src": [
         "'self'",
+        "blob:",
         "https://www.youtube.com",
         "https://www.youtube-nocookie.com",
         "https://www.google.com",

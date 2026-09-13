@@ -6,6 +6,7 @@ import { resolveAssetUrl } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
+import NotificationBell from "@/components/NotificationBell";
 import {
   LayoutDashboard, Users, LogOut, Menu, X, LineChart, FileText,
   ChevronDown, User, Megaphone, Award, MessageSquare
@@ -139,6 +140,7 @@ export default function ChairmanLayout({ children, title, subtitle }: ChairmanLa
           </div>
 
           <div className="flex items-center gap-3">
+            <NotificationBell />
             {/* Manage Account dropdown */}
             <div className="relative">
               <button
