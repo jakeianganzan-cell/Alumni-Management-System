@@ -1,6 +1,6 @@
 import { clientLogger } from "@/lib/logger";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ExcelJS from "exceljs";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type ExcelJS from "exceljs";
 import { toast } from "sonner";
 import AdminLayout from "@/components/admin/AdminLayout";
 import {
@@ -24,6 +24,9 @@ import { ALL_COURSES_OPTION, COURSE_OPTIONS, SYSTEM_COURSES, formatCourseLabel, 
 import { useAuth } from "@/hooks/useAuth";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 const ALUMNI_PAGE_SIZE = 15;
 
@@ -474,7 +477,8 @@ const parseImportFile = async (file: File, schoolYear: string, programOptions: C
     throw new Error("Only XLSX alumni import files are supported.");
   }
 
-  const workbook = new ExcelJS.Workbook();
+  const { default: ExcelJSRuntime } = await import("exceljs");
+  const workbook = new ExcelJSRuntime.Workbook();
   await workbook.xlsx.load(buffer);
   const worksheet = workbook.worksheets[0];
 
@@ -493,14 +497,14 @@ const parseImportFile = async (file: File, schoolYear: string, programOptions: C
 
 export default function AdminAlumni() {
   const { profile, user } = useAuth();
+  const queryClient = useQueryClient();
+  const userId = user?.id || "anonymous";
   const { settings: systemSettings } = useSystemSettings();
   const programOptions = systemSettings.programs;
   const systemCourses = useMemo(() => programOptions.map((option) => option.code), [programOptions]);
-  const [alumni, setAlumni] = useState<AlumniRecord[]>([]);
-  const [graduationBatches, setGraduationBatches] = useState<GraduationBatch[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState("");
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search.trim());
   const [courseFilter, setCourseFilter] = useState(ALL_COURSES_OPTION);
   const [batchFilter, setBatchFilter] = useState("");
   const [advancedStudiesFilter, setAdvancedStudiesFilter] = useState("");
@@ -508,8 +512,6 @@ export default function AdminAlumni() {
   const [sortKey, setSortKey] = useState<keyof AlumniRecord>("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalAlumni, setTotalAlumni] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   const [showAdd, setShowAdd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -533,6 +535,13 @@ export default function AdminAlumni() {
   const [importResult, setImportResult] = useState<ImportResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const batchesKey = appQueryKeys.graduationBatches(userId);
+  const batchesQuery = useQuery({
+    ...authenticatedQueryOptions<GraduationBatch[]>({ queryKey: batchesKey, path: "/graduation-batches", policy: QUERY_CACHE_POLICY.reference }),
+    enabled: Boolean(user?.id),
+  });
+  const graduationBatches = useMemo(() => batchesQuery.data ?? [], [batchesQuery.data]);
+
   const selectedBatch = useMemo(
     () => graduationBatches.find((item) => String(item.id) === selectedBatchId) || null,
     [graduationBatches, selectedBatchId]
@@ -549,30 +558,17 @@ export default function AdminAlumni() {
     }
   }, [form.course, systemCourses]);
 
-  const fetchGraduationBatches = useCallback(async (preferredBatchId?: string) => {
-    try {
-      const response = await fetch(`${API_URL}/graduation-batches`, { headers: getAuthHeaders() });
-      const rows = await readApiResponse<GraduationBatch[]>(response);
-      setGraduationBatches(rows || []);
-      setSelectedBatchId((current) => {
-        if (preferredBatchId && rows.some((item) => String(item.id) === preferredBatchId)) return preferredBatchId;
-        if (current && rows.some((item) => String(item.id) === current)) return current;
-        return rows[0] ? String(rows[0].id) : "";
-      });
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error("Failed to load graduation batches");
-    }
-  }, []);
+  useEffect(() => {
+    if (graduationBatches.length === 0) return;
+    setSelectedBatchId((current) => current && graduationBatches.some((item) => String(item.id) === current) ? current : String(graduationBatches[0].id));
+  }, [graduationBatches]);
 
   useEffect(() => {
-    void fetchGraduationBatches();
-  }, [fetchGraduationBatches]);
+    if (!batchesQuery.error) return;
+    clientLogger.error(batchesQuery.error);
+    toast.error("Failed to load graduation batches");
+  }, [batchesQuery.error]);
 
-  const existingEmails = useMemo(
-    () => new Set(alumni.map((profile) => normalizeEmail(profile.email)).filter(Boolean)),
-    [alumni]
-  );
   const trimmedName = normalizeText(form.name);
   const emailValidationError = form.email ? getAlumniEmailError(form.email) : "Email address is required.";
   const studentIdValidationError = getStudentIdError(form.studentId);
@@ -584,20 +580,6 @@ export default function AdminAlumni() {
     studentId: studentIdValidationError,
   };
   const canCreateAlumni = Object.values(addFormErrors).every((message) => !message);
-
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pageStartIndex = (safeCurrentPage - 1) * ALUMNI_PAGE_SIZE;
-  const paginatedAlumni = alumni;
-  const visibleStart = totalAlumni === 0 ? 0 : pageStartIndex + 1;
-  const visibleEnd = Math.min(pageStartIndex + paginatedAlumni.length, totalAlumni);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [advancedStudiesFilter, batchFilter, courseFilter, search, selectedBatchId, sortAsc, sortKey]);
-
-  useEffect(() => {
-    setCurrentPage((page) => Math.min(page, totalPages));
-  }, [totalPages]);
 
   const importReadyCount = useMemo(
     () => importRows.filter((row) => row.errors.length === 0).length,
@@ -616,41 +598,51 @@ export default function AdminAlumni() {
       sortDirection: sortAsc ? "asc" : "desc",
     });
 
-    if (search.trim()) params.set("search", search.trim());
+    if (deferredSearch) params.set("search", deferredSearch);
     if (courseFilter !== ALL_COURSES_OPTION) params.set("course", courseFilter);
     const effectiveBatchFilter = batchFilter || selectedBatchId;
     if (effectiveBatchFilter && effectiveBatchFilter !== "all") params.set("graduationBatchId", effectiveBatchFilter);
     if (advancedStudiesFilter) params.set("advancedStudiesLevel", advancedStudiesFilter);
 
     return params;
+  }, [advancedStudiesFilter, batchFilter, courseFilter, deferredSearch, selectedBatchId, sortAsc, sortKey]);
+  const profilesQueryString = useMemo(() => buildProfilesQuery(currentPage, ALUMNI_PAGE_SIZE).toString(), [buildProfilesQuery, currentPage]);
+  const profilesQuery = useQuery({
+    ...authenticatedQueryOptions<ProfilesPageResponse>({
+      queryKey: appQueryKeys.adminProfiles(userId, profilesQueryString),
+      path: `/profiles?${profilesQueryString}`,
+      policy: QUERY_CACHE_POLICY.user,
+    }),
+    enabled: Boolean(user?.id && selectedBatchId),
+    placeholderData: (previous) => previous,
+  });
+  const alumni = useMemo(() => profilesQuery.data?.rows ?? [], [profilesQuery.data]);
+  const totalAlumni = profilesQuery.data?.pagination.total ?? 0;
+  const totalPages = profilesQuery.data?.pagination.totalPages ?? 1;
+  const loading = profilesQuery.isLoading && !profilesQuery.data;
+
+  useEffect(() => {
+    if (!profilesQuery.error) return;
+    clientLogger.error(profilesQuery.error);
+    toast.error("Failed to fetch alumni records");
+  }, [profilesQuery.error]);
+  const existingEmails = useMemo(
+    () => new Set(alumni.map((profile) => normalizeEmail(profile.email)).filter(Boolean)),
+    [alumni]
+  );
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * ALUMNI_PAGE_SIZE;
+  const paginatedAlumni = alumni;
+  const visibleStart = totalAlumni === 0 ? 0 : pageStartIndex + 1;
+  const visibleEnd = Math.min(pageStartIndex + paginatedAlumni.length, totalAlumni);
+
+  useEffect(() => {
+    setCurrentPage(1);
   }, [advancedStudiesFilter, batchFilter, courseFilter, search, selectedBatchId, sortAsc, sortKey]);
 
-  const fetchAlumni = useCallback(async (signal?: AbortSignal) => {
-    if (!selectedBatchId) {
-      setAlumni([]);
-      setTotalAlumni(0);
-      setTotalPages(1);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const headers = getAuthHeaders();
-
-    try {
-      const query = buildProfilesQuery(currentPage, ALUMNI_PAGE_SIZE);
-      const profilesResponse = await fetch(`${API_URL}/profiles?${query}`, { headers, signal });
-      const data = await readApiResponse<ProfilesPageResponse>(profilesResponse);
-      setAlumni(data.rows || []);
-      setTotalAlumni(data.pagination.total);
-      setTotalPages(data.pagination.totalPages);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      clientLogger.error(error);
-      toast.error("Failed to fetch alumni records");
-    } finally {
-      setLoading(false);
-    }
-  }, [buildProfilesQuery, currentPage, selectedBatchId]);
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const fetchAllFilteredAlumni = async () => {
     const headers = getAuthHeaders();
@@ -669,16 +661,6 @@ export default function AdminAlumni() {
 
     return rows;
   };
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => void fetchAlumni(controller.signal), search.trim() ? 250 : 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [fetchAlumni, search]);
 
   const toggleSort = (key: keyof AlumniRecord) => {
     if (sortKey === key) {
@@ -770,8 +752,10 @@ export default function AdminAlumni() {
       setForm(BLANK);
       setSelectedBatchId(form.graduationBatchId);
       setBatchFilter("");
-      await fetchGraduationBatches(form.graduationBatchId);
-      if (form.graduationBatchId === selectedBatchId) await fetchAlumni();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: batchesKey }),
+        queryClient.invalidateQueries({ queryKey: appQueryKeys.adminProfilesRoot(userId) }),
+      ]);
 
       if (!data.emailSent && data.emailError) {
         toast.error(`Alumni account created, but the credentials email was not sent: ${data.emailError}`);
@@ -859,7 +843,10 @@ export default function AdminAlumni() {
       setImportRows([]);
       setImportFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      await Promise.all([fetchAlumni(), fetchGraduationBatches(selectedBatchId)]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: appQueryKeys.adminProfilesRoot(userId) }),
+        queryClient.invalidateQueries({ queryKey: batchesKey }),
+      ]);
 
       if (data.summary.importedRows > 0) {
         toast.success(`${data.summary.importedRows} alumni record${data.summary.importedRows === 1 ? "" : "s"} imported`);
@@ -942,7 +929,10 @@ export default function AdminAlumni() {
       setShowBatch(false);
       setSelectedBatchId(savedId);
       setBatchFilter("");
-      await fetchGraduationBatches(savedId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: batchesKey }),
+        queryClient.invalidateQueries({ queryKey: appQueryKeys.adminProfilesRoot(userId) }),
+      ]);
       toast.success(editingBatch ? "Batch updated" : "Batch created");
     } catch (error) {
       setBatchError(error instanceof Error ? error.message : "Unable to save the graduation batch.");

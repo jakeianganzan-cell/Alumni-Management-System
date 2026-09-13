@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,9 @@ import { COURSE_OPTIONS, formatCourseLabel } from "@/lib/courseCatalog";
 import type { Announcement, AnnouncementAudienceScope, AnnouncementStatus } from "@/context/AnnouncementContext";
 import { Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AnnouncementForm = {
   title: string;
@@ -34,34 +37,25 @@ const emptyForm = (course: string | null | undefined): AnnouncementForm => ({
 });
 
 export default function ChairmanAnnouncements() {
-  const { profile } = useAuth();
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { profile, user } = useAuth();
+  const queryClient = useQueryClient();
+  const announcementsQuery = useQuery({
+    ...authenticatedQueryOptions<Announcement[]>({
+      queryKey: appQueryKeys.announcements(user?.id || "anonymous"),
+      path: "/announcements",
+      policy: QUERY_CACHE_POLICY.standard,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const announcements = (announcementsQuery.data ?? []).filter((item) => item.type === "announcement" && (item.approvalStatus || "approved") === "approved");
+  const loading = announcementsQuery.isLoading && !announcementsQuery.data;
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const error = announcementsQuery.error instanceof Error ? announcementsQuery.error.message : "";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | AnnouncementStatus>("all");
   const [formOpen, setFormOpen] = useState(false);
   const [viewItem, setViewItem] = useState<Announcement | null>(null);
   const [form, setForm] = useState<AnnouncementForm>(() => emptyForm(profile?.course));
-
-  const loadAnnouncements = async () => {
-    try {
-      setLoading(true);
-      setError("");
-      const response = await fetch(`${API_URL}/announcements`, { headers: getAuthHeaders() });
-      const payload = await readApiResponse<Announcement[]>(response);
-      setAnnouncements(payload.filter((item) => item.type === "announcement" && (item.approvalStatus || "approved") === "approved"));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load announcements.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadAnnouncements();
-  }, []);
 
   const departmentAnnouncements = useMemo(() => {
     const course = (profile?.course || "").toLowerCase();
@@ -118,7 +112,7 @@ export default function ChairmanAnnouncements() {
       await readApiResponse(response);
       toast.success("Announcement posted");
       setFormOpen(false);
-      await loadAnnouncements();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.announcements(user?.id || "anonymous") });
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : "Failed to save announcement");
     } finally {

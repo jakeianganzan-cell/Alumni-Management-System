@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
-import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { resolveAssetUrl } from "@/lib/api";
 import { formatCourseLabel } from "@/lib/courseCatalog";
 import { MessageCircle, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AchievementStatus = "pending" | "approved" | "rejected" | "archived";
 
@@ -33,31 +36,21 @@ interface AchievementRecord {
 }
 
 export default function ChairmanAchievements() {
-  const { profile } = useAuth();
-  const [items, setItems] = useState<AchievementRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { profile, user } = useAuth();
+  const achievementsQuery = useQuery({
+    ...authenticatedQueryOptions<AchievementRecord[]>({
+      queryKey: appQueryKeys.achievements(user?.id || "anonymous"),
+      path: "/achievements",
+      policy: QUERY_CACHE_POLICY.standard,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const items = (achievementsQuery.data ?? []).filter((item) => item.status === "approved");
+  const loading = achievementsQuery.isLoading && !achievementsQuery.data;
+  const error = achievementsQuery.error instanceof Error ? achievementsQuery.error.message : "";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "approved">("all");
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
-
-  const loadAchievements = async () => {
-    try {
-      setLoading(true);
-      setError("");
-      const response = await fetch(`${API_URL}/achievements`, { headers: getAuthHeaders() });
-      const payload = await readApiResponse<AchievementRecord[]>(response);
-      setItems(payload.filter((item) => item.status === "approved"));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load achievements.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadAchievements();
-  }, []);
 
   const departmentItems = useMemo(() => {
     const course = (profile?.course || "").toLowerCase();

@@ -6,6 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { formatApplicationDateTime } from "@/lib/applicationTime";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type Priority = "low" | "normal" | "high";
 
@@ -61,33 +65,35 @@ const asNumber = (value: string, fallback: number) => {
 };
 
 export default function EmailQueueSettingsPanel() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const settingsKey = appQueryKeys.emailQueueSettings(user?.id || "anonymous");
+  const settingsQuery = useQuery({
+    ...authenticatedQueryOptions<SettingsResponse>({
+      queryKey: settingsKey,
+      path: "/admin/email-queue/settings",
+      policy: QUERY_CACHE_POLICY.live,
+    }),
+    enabled: Boolean(user?.id),
+  });
   const [settings, setSettings] = useState<EmailQueueSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState<EmailQueueStats>(DEFAULT_STATS);
-  const [loading, setLoading] = useState(true);
+  const loading = settingsQuery.isLoading && !settingsQuery.data;
   const [saving, setSaving] = useState(false);
   const [runningCheck, setRunningCheck] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(`${API_URL}/admin/email-queue/settings`, { headers: getAuthHeaders() });
-      const data = await readApiResponse<SettingsResponse>(response);
-      setSettings(data.settings || DEFAULT_SETTINGS);
-      setStats(data.stats || DEFAULT_STATS);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load email queue settings.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    void load();
-  }, []);
+    if (settingsQuery.data) {
+      setSettings(settingsQuery.data.settings || DEFAULT_SETTINGS);
+      setStats(settingsQuery.data.stats || DEFAULT_STATS);
+    }
+    if (settingsQuery.error) {
+      setError(settingsQuery.error instanceof Error ? settingsQuery.error.message : "Unable to load email queue settings.");
+    }
+  }, [settingsQuery.data, settingsQuery.error]);
 
   const save = async () => {
     setSaving(true);
@@ -102,6 +108,7 @@ export default function EmailQueueSettingsPanel() {
       const data = await readApiResponse<SettingsResponse>(response);
       setSettings(data.settings || settings);
       setStats(data.stats || stats);
+      queryClient.setQueryData<SettingsResponse>(settingsKey, data);
       setMessage(data.message || "Email queue settings saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save email queue settings.");
@@ -124,7 +131,7 @@ export default function EmailQueueSettingsPanel() {
       const data = await readApiResponse<SettingsResponse & { stats?: EmailQueueStats }>(response);
       if (data.stats) setStats(data.stats);
       setMessage(data.message || (processingCheck ? "Tracer reminders queued." : "Email queue processed."));
-      await load();
+      await queryClient.invalidateQueries({ queryKey: settingsKey });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Email queue action failed.");
     } finally {
@@ -139,7 +146,7 @@ export default function EmailQueueSettingsPanel() {
           <h3 className="font-display text-xl font-bold text-navy-dark">Email Settings</h3>
           <p className="mt-1 text-sm text-muted-foreground">Control queued tracer reminder delivery and provider sending limits.</p>
         </div>
-        <Button type="button" variant="outline" onClick={() => void load()} disabled={loading}>
+        <Button type="button" variant="outline" onClick={() => void settingsQuery.refetch()} disabled={settingsQuery.isFetching}>
           <RefreshCw className="mr-2 h-4 w-4" /> Refresh
         </Button>
       </div>

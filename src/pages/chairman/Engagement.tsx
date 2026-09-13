@@ -1,6 +1,5 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useMemo } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
-import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Activity, TrendingUp, Users } from "lucide-react";
 import { useIsPhone } from "@/hooks/use-mobile";
 import {
@@ -17,6 +16,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface NamedMetric {
   label: string;
@@ -65,31 +68,18 @@ const SOFT_GRAY = "#e4e4e7";
 
 export default function ChairmanEngagement() {
   const isPhone = useIsPhone();
-  const [data, setData] = useState<EngagementResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const loadEngagement = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await fetch(`${API_URL}/chairman/engagement`, {
-          headers: getAuthHeaders(),
-        });
-
-        const payload = await readApiResponse<EngagementResponse>(response);
-        setData(payload);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load chairman engagement metrics.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadEngagement();
-  }, []);
+  const { user } = useAuth();
+  const engagementQuery = useQuery({
+    ...authenticatedQueryOptions<EngagementResponse>({
+      queryKey: appQueryKeys.chairmanEngagement(user?.id || "anonymous"),
+      path: "/chairman/engagement",
+      policy: QUERY_CACHE_POLICY.user,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const data = engagementQuery.data ?? null;
+  const loading = engagementQuery.isLoading && !engagementQuery.data;
+  const error = engagementQuery.error instanceof Error ? engagementQuery.error.message : "";
 
   const courseComparison = useMemo(() => {
     return (data?.departmentMetrics || []).map((item) => ({

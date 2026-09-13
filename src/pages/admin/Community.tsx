@@ -5,6 +5,10 @@ import { AlertTriangle, MessageSquare, Pin, Search, Trash2 } from "lucide-react"
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface Post {
   id: number;
@@ -23,33 +27,29 @@ interface Post {
 const PAGE_SIZE = 10;
 
 export default function AdminCommunity() {
-  const [posts, setPosts] = useState<Post[]>([]);
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const postsQuery = useQuery({
+    ...authenticatedQueryOptions<Post[]>({
+      queryKey: appQueryKeys.adminFreedomWall(user?.id || "anonymous"),
+      path: "/admin/freedom-wall/posts",
+      policy: QUERY_CACHE_POLICY.live,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const posts = useMemo(() => postsQuery.data ?? [], [postsQuery.data]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showFlagged, setShowFlagged] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const loading = postsQuery.isLoading && !postsQuery.data;
   const [postToDelete, setPostToDelete] = useState<Post | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<number | null>(null);
 
-  const loadPosts = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/admin/freedom-wall/posts`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<Post[]>(response);
-      setPosts(data);
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error(error instanceof Error ? error.message : "Failed to load Freedom Wall posts");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    void loadPosts();
-  }, []);
+    if (!postsQuery.error) return;
+    clientLogger.error(postsQuery.error);
+    toast.error(postsQuery.error instanceof Error ? postsQuery.error.message : "Failed to load Freedom Wall posts");
+  }, [postsQuery.error]);
 
   const filteredPosts = useMemo(() => {
     return posts.filter((post) => {
@@ -86,7 +86,7 @@ export default function AdminCommunity() {
       await readApiResponse(response);
       setPostToDelete(null);
       toast.success("Post marked as deleted");
-      await loadPosts();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.adminFreedomWall(user?.id || "anonymous") });
     } catch (error) {
       clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Could not delete post");
@@ -103,7 +103,7 @@ export default function AdminCommunity() {
         body: JSON.stringify({ isPinned: !post.isPinned }),
       });
       await readApiResponse(response);
-      await loadPosts();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.adminFreedomWall(user?.id || "anonymous") });
     } catch (error) {
       clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Could not update pin state");
@@ -119,7 +119,7 @@ export default function AdminCommunity() {
       });
       await readApiResponse(response);
       toast.success("Flag cleared");
-      await loadPosts();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.adminFreedomWall(user?.id || "anonymous") });
     } catch (error) {
       clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Could not clear flag");

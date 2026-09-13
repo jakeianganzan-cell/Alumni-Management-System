@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import OrganizationChart from "@/components/alumni/OrganizationChart";
@@ -18,29 +17,21 @@ import {
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { fetchAboutPageData, type AboutPageData } from "@/lib/about";
 import { INSTITUTION_OFFICIAL_CATEGORY } from "@/lib/institutionOfficials";
+import { useQuery } from "@tanstack/react-query";
+import { appQueryKeys } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 export default function AboutUs() {
   const location = useLocation();
   const { settings, loading: settingsLoading } = useSystemSettings();
-  const [aboutData, setAboutData] = useState<AboutPageData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    fetchAboutPageData(controller.signal)
-      .then((data) => {
-        setAboutData(data);
-        setError("");
-      })
-      .catch((fetchError) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
-        setError("Some optional institutional sections are temporarily unavailable.");
-      })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, []);
+  const aboutQuery = useQuery<AboutPageData>({
+    queryKey: appQueryKeys.aboutPage(),
+    queryFn: ({ signal }) => fetchAboutPageData(signal),
+    ...QUERY_CACHE_POLICY.reference,
+  });
+  const aboutData = aboutQuery.data ?? null;
+  const loading = aboutQuery.isLoading && !aboutQuery.data;
+  const error = aboutQuery.error ? "Some optional institutional sections are temporarily unavailable." : "";
 
   const pageSettings = aboutData?.institution || settings;
   const leadership = aboutData?.leadership || [];

@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { History, Laptop, Loader2, LogOut, RefreshCw, ShieldAlert } from "lucide-react";
 import { API_URL, clearAuthToken, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface SessionRow {
   id: number;
@@ -79,12 +83,24 @@ const formatRelativeActivity = (value: string | null) => {
 };
 
 export default function SessionMonitoringPanel() {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [activities, setActivities] = useState<ActivityRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const sessionsKey = useMemo(() => appQueryKeys.adminSessions(user?.id || "anonymous"), [user?.id]);
+  const sessionsQuery = useQuery({
+    ...authenticatedQueryOptions<SessionsResponse>({
+      queryKey: sessionsKey,
+      path: "/admin/sessions",
+      policy: QUERY_CACHE_POLICY.live,
+      refetchInterval: 30_000,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const sessions = useMemo(() => sessionsQuery.data?.sessions ?? [], [sessionsQuery.data]);
+  const activities = sessionsQuery.data?.activities ?? [];
+  const loading = sessionsQuery.isLoading && !sessionsQuery.data;
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [stats, setStats] = useState(EMPTY_STATS);
+  const stats = { ...EMPTY_STATS, ...(sessionsQuery.data?.stats || {}) };
   const [accountToTerminate, setAccountToTerminate] = useState<AccountSessionRow | null>(null);
   const [terminateAllOpen, setTerminateAllOpen] = useState(false);
 
@@ -131,31 +147,9 @@ export default function SessionMonitoringPanel() {
     });
   }, [sessions]);
 
-  const loadSessions = useCallback(async (showLoading = true) => {
-    if (showLoading) {
-      setLoading(true);
-      setMessage("");
-    }
-    try {
-      const response = await fetch(`${API_URL}/admin/sessions`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<SessionsResponse>(response);
-      setSessions(data.sessions || []);
-      setActivities(data.activities || []);
-      setStats({ ...EMPTY_STATS, ...(data.stats || {}) });
-    } catch (error) {
-      if (showLoading) setMessage(error instanceof Error ? error.message : "Failed to load sessions.");
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadSessions();
-    const timer = window.setInterval(() => void loadSessions(false), 30_000);
-    return () => window.clearInterval(timer);
-  }, [loadSessions]);
+    if (sessionsQuery.error) setMessage(sessionsQuery.error instanceof Error ? sessionsQuery.error.message : "Failed to load sessions.");
+  }, [sessionsQuery.error]);
 
   const terminateAccount = async (account: AccountSessionRow) => {
     const actionKey = `user-${account.userId}`;
@@ -174,7 +168,7 @@ export default function SessionMonitoringPanel() {
         return;
       }
       setMessage(`${data.terminated} active session${data.terminated === 1 ? "" : "s"} terminated for ${account.fullName}.`);
-      await loadSessions();
+      await queryClient.invalidateQueries({ queryKey: sessionsKey });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to terminate account sessions.");
     } finally {
@@ -216,7 +210,7 @@ export default function SessionMonitoringPanel() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={() => void loadSessions()} disabled={loading}>
+            <Button type="button" size="sm" variant="outline" onClick={() => void sessionsQuery.refetch()} disabled={sessionsQuery.isFetching}>
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
             </Button>
             <Button type="button" size="sm" variant="destructive" onClick={() => setTerminateAllOpen(true)} disabled={busyAction === "all" || stats.activeSessions === 0}>

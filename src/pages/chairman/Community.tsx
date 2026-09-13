@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { resolveAssetUrl } from "@/lib/api";
 import { Loader2, MessageCircle, MessageSquare, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface FreedomWallPost {
   id: number;
@@ -23,30 +27,21 @@ interface FreedomWallPost {
 }
 
 export default function ChairmanCommunity() {
-  const [posts, setPosts] = useState<FreedomWallPost[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { user } = useAuth();
+  const postsQuery = useQuery({
+    ...authenticatedQueryOptions<FreedomWallPost[]>({
+      queryKey: appQueryKeys.adminFreedomWall(user?.id || "anonymous"),
+      path: "/admin/freedom-wall/posts",
+      policy: QUERY_CACHE_POLICY.live,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const posts = useMemo(() => postsQuery.data ?? [], [postsQuery.data]);
+  const loading = postsQuery.isLoading && !postsQuery.data;
+  const error = postsQuery.error instanceof Error ? postsQuery.error.message : "";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | FreedomWallPost["status"]>("all");
   const [selected, setSelected] = useState<FreedomWallPost | null>(null);
-
-  const loadPosts = async () => {
-    try {
-      setLoading(true);
-      setError("");
-      const response = await fetch(`${API_URL}/admin/freedom-wall/posts`, { headers: getAuthHeaders() });
-      const payload = await readApiResponse<FreedomWallPost[]>(response);
-      setPosts(payload);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load Freedom Wall posts.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadPosts();
-  }, []);
 
   const filteredPosts = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();

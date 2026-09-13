@@ -29,6 +29,9 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type DonationStatus = "Pending Review" | "Approved" | "Rejected";
 type ContributionType = "Financial" | "In-Kind" | "Volunteer Service" | "Project Support";
@@ -120,15 +123,6 @@ const EMPTY_SETTINGS: DonationSettings = {
   personal_office: "",
 };
 
-const EMPTY_SUMMARY: DonationSummary = {
-  approvedTotal: 0,
-  approvedCount: 0,
-  pendingCount: 0,
-  rejectedCount: 0,
-  donorCount: 0,
-  totalDonations: 0,
-};
-
 const EMPTY_WALK_IN_FORM = {
   donorName: "",
   donorEmail: "",
@@ -159,13 +153,35 @@ const DONATION_PAGE_SIZE = 10;
 
 export default function AdminDonations() {
   const { profile, user, role } = useAuth();
+  const queryClient = useQueryClient();
+  const donationsKey = appQueryKeys.adminDonations(user?.id || "anonymous");
+  const summaryKey = appQueryKeys.adminDonationSummary(user?.id || "anonymous");
+  const submissionsKey = appQueryKeys.adminContributionSubmissions(user?.id || "anonymous");
+  const donationsQuery = useQuery({
+    ...authenticatedQueryOptions<Donation[]>({ queryKey: donationsKey, path: "/donations", policy: QUERY_CACHE_POLICY.live }),
+    enabled: Boolean(user?.id),
+  });
+  const summaryQuery = useQuery({
+    ...authenticatedQueryOptions<Partial<DonationSummary>>({ queryKey: summaryKey, path: "/donations/summary", policy: QUERY_CACHE_POLICY.live }),
+    enabled: Boolean(user?.id),
+  });
+  const submissionsQuery = useQuery({
+    ...authenticatedQueryOptions<OpportunitySubmission[]>({ queryKey: submissionsKey, path: "/admin/contribution-submissions", policy: QUERY_CACHE_POLICY.live }),
+    enabled: Boolean(user?.id),
+  });
   const [search, setSearch] = useState("");
-  const [donations, setDonations] = useState<Donation[]>([]);
+  const donations = useMemo(() => (donationsQuery.data ?? []).map((donation) => ({
+    ...donation,
+    contribution_type: donation.contribution_type || "Financial",
+    amount: Number(donation.amount || 0),
+    volunteer_hours: donation.volunteer_hours === null ? null : Number(donation.volunteer_hours || 0),
+    estimated_value: donation.estimated_value === null ? null : Number(donation.estimated_value || 0),
+  })), [donationsQuery.data]);
   const [selectedDonation, setSelectedDonation] = useState<Donation | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [filter, setFilter] = useState<"All" | DonationStatus>("All");
   const [typeFilter, setTypeFilter] = useState<ContributionCategory>("Donation");
-  const [loading, setLoading] = useState(true);
+  const loading = donationsQuery.isLoading && !donationsQuery.data;
   const [showSettings, setShowSettings] = useState(false);
   const [showWalkInForm, setShowWalkInForm] = useState(false);
   const [walkInForm, setWalkInForm] = useState(EMPTY_WALK_IN_FORM);
@@ -173,7 +189,14 @@ export default function AdminDonations() {
   const [actionNote, setActionNote] = useState("");
   const [submittingAction, setSubmittingAction] = useState<"" | "approve" | "reject" | "request-info">("");
   const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
-  const [summary, setSummary] = useState<DonationSummary>(EMPTY_SUMMARY);
+  const summary: DonationSummary = {
+    approvedTotal: Number(summaryQuery.data?.approvedTotal || 0),
+    approvedCount: Number(summaryQuery.data?.approvedCount || 0),
+    pendingCount: Number(summaryQuery.data?.pendingCount || 0),
+    rejectedCount: Number(summaryQuery.data?.rejectedCount || 0),
+    donorCount: Number(summaryQuery.data?.donorCount || 0),
+    totalDonations: Number(summaryQuery.data?.totalDonations || 0),
+  };
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
   const [showSettingsVerify, setShowSettingsVerify] = useState(false);
@@ -182,7 +205,7 @@ export default function AdminDonations() {
   const [verifyingSettings, setVerifyingSettings] = useState(false);
   const [settingsVerifyError, setSettingsVerifyError] = useState("");
   const [donationPage, setDonationPage] = useState(1);
-  const [opportunitySubmissions, setOpportunitySubmissions] = useState<OpportunitySubmission[]>([]);
+  const opportunitySubmissions = submissionsQuery.data ?? [];
   const [selectedOpportunitySubmission, setSelectedOpportunitySubmission] = useState<OpportunitySubmission | null>(null);
   const [opportunityAction, setOpportunityAction] = useState({ status: "", assignedRole: "", attendanceStatus: "", actualHours: "", fulfilledQuantity: "", fulfilledValue: "", adminNotes: "" });
   const [savingOpportunityAction, setSavingOpportunityAction] = useState(false);
@@ -194,60 +217,16 @@ export default function AdminDonations() {
   const canManagePaymentSettings = role === "admin";
 
   useEffect(() => {
-    void Promise.all([fetchDonations(), fetchDonationSummary()]);
-    void fetchOpportunitySubmissions();
-  }, []);
-
-  const fetchDonations = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`${API_URL}/donations`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<Donation[]>(res);
-      setDonations(data.map((donation) => ({
-        ...donation,
-        contribution_type: donation.contribution_type || "Financial",
-        amount: Number(donation.amount || 0),
-        volunteer_hours: donation.volunteer_hours === null ? null : Number(donation.volunteer_hours || 0),
-        estimated_value: donation.estimated_value === null ? null : Number(donation.estimated_value || 0),
-      })));
-    } catch (error) {
-      clientLogger.error(error);
+    if (donationsQuery.error) {
+      clientLogger.error(donationsQuery.error);
       toast.error("Failed to load donations");
-    } finally {
-      setLoading(false);
     }
-  };
-
-  const fetchDonationSummary = async () => {
-    try {
-      const res = await fetch(`${API_URL}/donations/summary`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<Partial<DonationSummary>>(res);
-      setSummary({
-        approvedTotal: Number(data.approvedTotal || 0),
-        approvedCount: Number(data.approvedCount || 0),
-        pendingCount: Number(data.pendingCount || 0),
-        rejectedCount: Number(data.rejectedCount || 0),
-        donorCount: Number(data.donorCount || 0),
-        totalDonations: Number(data.totalDonations || 0),
-      });
-    } catch (error) {
-      clientLogger.error(error);
+    if (summaryQuery.error) {
+      clientLogger.error(summaryQuery.error);
       toast.error("Failed to load donation totals");
     }
-  };
-
-  const fetchOpportunitySubmissions = async () => {
-    try {
-      const response = await fetch(`${API_URL}/admin/contribution-submissions`, { headers: getAuthHeaders() });
-      setOpportunitySubmissions(await readApiResponse<OpportunitySubmission[]>(response));
-    } catch (error) {
-      clientLogger.error(error);
-    }
-  };
+    if (submissionsQuery.error) clientLogger.error(submissionsQuery.error);
+  }, [donationsQuery.error, submissionsQuery.error, summaryQuery.error]);
 
   const openOpportunitySubmission = (submission: OpportunitySubmission) => {
     setSelectedOpportunitySubmission(submission);
@@ -274,7 +253,11 @@ export default function AdminDonations() {
       await readApiResponse(response);
       toast.success("Contribution lifecycle updated");
       setSelectedOpportunitySubmission(null);
-      await Promise.all([fetchOpportunitySubmissions(), fetchDonations(), fetchDonationSummary()]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: submissionsKey }),
+        queryClient.invalidateQueries({ queryKey: donationsKey }),
+        queryClient.invalidateQueries({ queryKey: summaryKey }),
+      ]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to update contribution lifecycle");
     } finally {
@@ -329,6 +312,7 @@ export default function AdminDonations() {
         body: JSON.stringify(settings),
       });
       await readApiResponse(response);
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.donationSettings() });
       toast.success("Donation payment settings saved");
     } catch (error) {
       clientLogger.error(error);
@@ -403,9 +387,9 @@ export default function AdminDonations() {
       });
       const payload = await readApiResponse<{ donation: Donation }>(response);
       const updatedDonation = { ...payload.donation, amount: Number(payload.donation.amount || 0) };
-      setDonations((current) => current.map((item) => (item.id === selectedDonation.id ? { ...item, ...updatedDonation } : item)));
+      queryClient.setQueryData<Donation[]>(donationsKey, (current = []) => current.map((item) => (item.id === selectedDonation.id ? { ...item, ...updatedDonation } : item)));
       setSelectedDonation((current) => (current ? { ...current, ...updatedDonation } : current));
-      await fetchDonationSummary();
+      await queryClient.invalidateQueries({ queryKey: summaryKey });
       const isFinancialDonation = selectedDonation.contribution_type === "Financial";
       toast.success(status === "Approved" ? (isFinancialDonation ? "Donation approved" : "Contribution verified") : `${isFinancialDonation ? "Donation" : "Contribution"} rejected`);
     } catch (error) {
@@ -434,12 +418,12 @@ export default function AdminDonations() {
       await readApiResponse(response);
       toast.success(`More information requested from ${isFinancialDonation ? "donor" : "contributor"}`);
       setSelectedDonation((current) => (current ? { ...current, review_notes: actionNote, status: "Pending Review" } : current));
-      setDonations((current) =>
+      queryClient.setQueryData<Donation[]>(donationsKey, (current = []) =>
         current.map((item) =>
           item.id === selectedDonation.id ? { ...item, review_notes: actionNote, status: "Pending Review" } : item,
         ),
       );
-      await fetchDonationSummary();
+      await queryClient.invalidateQueries({ queryKey: summaryKey });
     } catch (error) {
       clientLogger.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to request more info");
@@ -483,7 +467,10 @@ export default function AdminDonations() {
       setWalkInForm(EMPTY_WALK_IN_FORM);
       setShowWalkInForm(false);
       setFilter("Approved");
-      await Promise.all([fetchDonations(), fetchDonationSummary()]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: donationsKey }),
+        queryClient.invalidateQueries({ queryKey: summaryKey }),
+      ]);
       toast.success(walkInForm.contributionType === "Financial" ? "Donation recorded and approved" : "Contribution recorded as verified");
     } catch (error) {
       clientLogger.error(error);

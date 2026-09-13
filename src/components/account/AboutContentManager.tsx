@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ImagePlus, ListTree, Pencil, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,10 @@ import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib
 import { uploadBrandingFile } from "@/lib/adminUploads";
 import type { AboutContentItem, AboutContentType } from "@/lib/about";
 import ServiceItemsManager from "./ServiceItemsManager";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 const CONTENT_TYPES: Array<{ value: AboutContentType; label: string }> = [
   { value: "history", label: "History Timeline" },
@@ -49,11 +53,11 @@ const fieldLabel = (type: AboutContentType, field: "title" | "subtitle") => {
 };
 
 export default function AboutContentManager() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [contentType, setContentType] = useState<AboutContentType>("history");
-  const [items, setItems] = useState<AboutContentItem[]>([]);
   const [draft, setDraft] = useState(EMPTY_ITEM);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
@@ -62,26 +66,32 @@ export default function AboutContentManager() {
   const [itemToArchive, setItemToArchive] = useState<AboutContentItem | null>(null);
   const [archivingId, setArchivingId] = useState<number | null>(null);
 
+  const itemsKey = useMemo(() => appQueryKeys.adminAbout(user?.id || "anonymous", contentType), [contentType, user?.id]);
+  const itemsQuery = useQuery({
+    ...authenticatedQueryOptions<AboutContentItem[]>({ queryKey: itemsKey, path: `/admin/about/${contentType}`, policy: QUERY_CACHE_POLICY.standard }),
+    enabled: Boolean(user?.id),
+  });
+  const items = itemsQuery.data ?? [];
+  const loading = itemsQuery.isLoading && !itemsQuery.data;
+
   const loadItems = useCallback(async () => {
-    setLoading(true);
     setMessage("");
-    try {
-      const response = await fetch(`${API_URL}/admin/about/${contentType}`, { headers: getAuthHeaders() });
-      setItems(await readApiResponse<AboutContentItem[]>(response));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load About Us content.");
-    } finally {
-      setLoading(false);
-    }
-  }, [contentType]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: itemsKey }),
+      queryClient.invalidateQueries({ queryKey: appQueryKeys.aboutPage() }),
+    ]);
+  }, [itemsKey, queryClient]);
 
   useEffect(() => {
     setEditingId(null);
     setDraft(EMPTY_ITEM);
     setSearch("");
     setSelectedService(null);
-    void loadItems();
-  }, [loadItems]);
+  }, [contentType]);
+
+  useEffect(() => {
+    if (itemsQuery.error) setMessage(itemsQuery.error instanceof Error ? itemsQuery.error.message : "Unable to load About Us content.");
+  }, [itemsQuery.error]);
 
   const updateDraft = <K extends keyof typeof EMPTY_ITEM>(key: K, value: (typeof EMPTY_ITEM)[K]) => {
     setMessage("");

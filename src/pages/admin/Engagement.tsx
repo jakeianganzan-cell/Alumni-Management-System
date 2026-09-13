@@ -1,8 +1,10 @@
-import { clientLogger } from "@/lib/logger";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Star } from "lucide-react";
-import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface BatchEngagement {
   batch: string;
@@ -79,22 +81,25 @@ interface DashboardAnalyticsResponse {
 }
 
 export default function AdminEngagement() {
-  const [topBatches, setTopBatches] = useState<BatchEngagement[]>([]);
-  const [courseComparisons, setCourseComparisons] = useState<CourseComparisonPoint[]>([]);
-  const [heatmap, setHeatmap] = useState<HeatmapPoint[]>([]);
-  const [topAlumni, setTopAlumni] = useState<AlumniPredictionPoint[]>([]);
-  const [predictionCounts, setPredictionCounts] = useState<PredictionCountPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => { fetchEngagement(); }, []);
-
-  const fetchEngagement = async () => {
-    try {
-      const res = await fetch(`${API_URL}/admin/engagement-metrics`, {
-        headers: getAuthHeaders()
-      });
-      const data = await readApiResponse<EngagementMetricsResponse>(res);
-      
+  const { user } = useAuth();
+  const metricsQuery = useQuery({
+    ...authenticatedQueryOptions<EngagementMetricsResponse>({
+      queryKey: appQueryKeys.adminEngagement(user?.id || "anonymous"),
+      path: "/admin/engagement-metrics",
+      policy: QUERY_CACHE_POLICY.user,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const dashboardQuery = useQuery({
+    ...authenticatedQueryOptions<DashboardAnalyticsResponse>({
+      queryKey: appQueryKeys.adminDashboard(user?.id || "anonymous"),
+      path: "/admin/dashboard",
+      policy: QUERY_CACHE_POLICY.live,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const topBatches = useMemo<BatchEngagement[]>(() => {
+      const data = metricsQuery.data;
       const userBatchMap = new Map<string, string>();
       data.profiles?.forEach((profile) => {
         if (profile.batch) userBatchMap.set(profile.id, profile.batch);
@@ -114,7 +119,7 @@ export default function AdminEngagement() {
       data.regs?.forEach((registration) => addToBatch(registration.user_id, "events"));
       data.comments?.forEach((comment) => addToBatch(comment.user_id, "comments"));
 
-      const sorted = Array.from(batchMap.entries())
+      return Array.from(batchMap.entries())
         .map(([batch, s]) => ({
           batch,
           events: s.events,
@@ -124,24 +129,12 @@ export default function AdminEngagement() {
         }))
         .sort((a, b) => b.score - a.score)
         .slice(0, 10);
-
-      setTopBatches(sorted);
-
-      const analyticsRes = await fetch(`${API_URL}/admin/dashboard`, {
-        headers: getAuthHeaders()
-      });
-      const analyticsData = await readApiResponse<DashboardAnalyticsResponse>(analyticsRes);
-
-      setCourseComparisons(analyticsData.courseComparisons || []);
-      setHeatmap(analyticsData.heatmap || []);
-      setTopAlumni(analyticsData.topAlumni || []);
-      setPredictionCounts(analyticsData.predictionCounts || []);
-    } catch (err) {
-      clientLogger.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [metricsQuery.data]);
+  const courseComparisons = dashboardQuery.data?.courseComparisons ?? [];
+  const heatmap = dashboardQuery.data?.heatmap ?? [];
+  const topAlumni = dashboardQuery.data?.topAlumni ?? [];
+  const predictionCounts = dashboardQuery.data?.predictionCounts ?? [];
+  const loading = (metricsQuery.isLoading && !metricsQuery.data) || (dashboardQuery.isLoading && !dashboardQuery.data);
 
   const maxScore = topBatches.length > 0 ? topBatches[0].score : 100;
   const heatmapMax = Math.max(...heatmap.map((item) => item.activityCount), 1);

@@ -5,6 +5,10 @@ import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib
 import { Award, CalendarClock, CheckCircle2, Eye, Loader2, Search, Star, Trash2, Trophy, XCircle } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AchievementStatus = "pending" | "approved" | "rejected" | "archived";
 const PAGE_SIZE = 10;
@@ -27,8 +31,18 @@ interface AchievementRecord {
 }
 
 export default function AdminAchievements() {
-  const [items, setItems] = useState<AchievementRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const achievementsQuery = useQuery({
+    ...authenticatedQueryOptions<AchievementRecord[]>({
+      queryKey: appQueryKeys.achievements(user?.id || "anonymous"),
+      path: "/achievements",
+      policy: QUERY_CACHE_POLICY.standard,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const items = useMemo(() => achievementsQuery.data ?? [], [achievementsQuery.data]);
+  const loading = achievementsQuery.isLoading && !achievementsQuery.data;
   const [searchQuery, setSearchQuery] = useState("");
   const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [currentPage, setCurrentPage] = useState(1);
@@ -38,25 +52,11 @@ export default function AdminAchievements() {
   const [achievementToDelete, setAchievementToDelete] = useState<AchievementRecord | null>(null);
   const [deletingAchievementId, setDeletingAchievementId] = useState<number | null>(null);
 
-  const loadAchievements = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`${API_URL}/achievements`, {
-        headers: getAuthHeaders(),
-      });
-
-      setItems(await readApiResponse<AchievementRecord[]>(res));
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error("Failed to load achievements");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadAchievements();
-  }, []);
+    if (!achievementsQuery.error) return;
+    clientLogger.error(achievementsQuery.error);
+    toast.error("Failed to load achievements");
+  }, [achievementsQuery.error]);
 
   const filtered = useMemo(() => {
     return items
@@ -113,7 +113,7 @@ export default function AdminAchievements() {
 
       await readApiResponse(res);
 
-      await loadAchievements();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.achievements(user?.id || "anonymous") });
       return true;
     } catch (error) {
       clientLogger.error(error);
@@ -173,7 +173,7 @@ export default function AdminAchievements() {
 
       toast.success("Achievement deleted");
       setAchievementToDelete(null);
-      await loadAchievements();
+      await queryClient.invalidateQueries({ queryKey: appQueryKeys.achievements(user?.id || "anonymous") });
     } catch (error) {
       clientLogger.error(error);
       toast.error("Could not delete achievement");

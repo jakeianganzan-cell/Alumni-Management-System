@@ -20,6 +20,9 @@ import MyPostsPanel from "@/components/account/MyPostsPanel";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LoadingProgress } from "@/components/ui/loading-progress";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 const ReportExportsPanel = lazy(() => import("@/components/account/ReportExportsPanel"));
 const SystemBrandingPanel = lazy(() => import("@/components/account/SystemBrandingPanel"));
@@ -278,34 +281,43 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [notificationMessage, setNotificationMessage] = useState("");
   const [savingNotifications, setSavingNotifications] = useState(false);
-  const [loadingNotifications, setLoadingNotifications] = useState(true);
-  const [homepageSlides, setHomepageSlides] = useState<HomepageSlide[]>([]);
-  const [loadingHomepageSlides, setLoadingHomepageSlides] = useState(false);
   const [homepageSlideMessage, setHomepageSlideMessage] = useState("");
   const [draggedHomepageSlideId, setDraggedHomepageSlideId] = useState<number | string | null>(null);
   const [homepageSlideToDelete, setHomepageSlideToDelete] = useState<HomepageSlide | null>(null);
   const [deletingHomepageSlideId, setDeletingHomepageSlideId] = useState<number | string | null>(null);
+  const queryClient = useQueryClient();
+  const userId = user?.id || "anonymous";
+  const slideshowKey = useMemo(() => appQueryKeys.adminSlideshow(userId), [userId]);
+  const homepageSlidesQuery = useQuery({
+    ...authenticatedQueryOptions<unknown>({ queryKey: slideshowKey, path: "/admin/slideshow", policy: QUERY_CACHE_POLICY.standard }),
+    enabled: Boolean(user?.id && isAdminView && activeSection === "settings" && settingsPanel === "media"),
+    select: (payload) => {
+      if (!Array.isArray(payload)) {
+        throw new Error("The homepage media service returned an invalid response. Check the configured API URL and backend deployment.");
+      }
+      return payload as HomepageSlide[];
+    },
+  });
+  const homepageSlides = homepageSlidesQuery.data ?? [];
+  const loadingHomepageSlides = homepageSlidesQuery.isLoading && !homepageSlidesQuery.data;
+  const accountSettingsKey = useMemo(() => appQueryKeys.accountSettings(userId), [userId]);
+  const notificationSettingsQuery = useQuery({
+    ...authenticatedQueryOptions<{ settings: NotificationSettings }>({
+      queryKey: accountSettingsKey,
+      path: "/account/settings",
+      policy: QUERY_CACHE_POLICY.user,
+    }),
+    enabled: Boolean(user?.id && activeSection === "notifications"),
+  });
+  const loadingNotifications = notificationSettingsQuery.isLoading && !notificationSettingsQuery.data;
 
   const loadHomepageSlides = useCallback(async () => {
     if (!isAdminView) return;
 
-    setLoadingHomepageSlides(true);
     setHomepageSlideMessage("");
-    try {
-      const response = await fetchApi(`${API_URL}/admin/slideshow`, {
-        headers: getAuthHeaders(),
-      });
-      const payload = await readApiResponse<unknown>(response);
-      if (!Array.isArray(payload)) {
-        throw new Error("The homepage media service returned an invalid response. Check the configured API URL and backend deployment.");
-      }
-      setHomepageSlides(payload as HomepageSlide[]);
-    } catch (error) {
-      setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to load homepage slides.");
-    } finally {
-      setLoadingHomepageSlides(false);
-    }
-  }, [isAdminView]);
+    const result = await homepageSlidesQuery.refetch();
+    if (result.error) setHomepageSlideMessage(result.error instanceof Error ? result.error.message : "Failed to load homepage slides.");
+  }, [homepageSlidesQuery, isAdminView]);
 
   useEffect(() => {
     const requestedSection = searchParams.get("section");
@@ -336,17 +348,12 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   }, [canViewReports, isAdminView, searchParams]);
 
   useEffect(() => {
-    if (!isAdminView || activeSection !== "settings" || settingsPanel !== "media") return;
-    void loadHomepageSlides();
-  }, [activeSection, isAdminView, loadHomepageSlides, settingsPanel]);
-
-  useEffect(() => {
     if (!isAdminView) return;
 
-    const refreshHomepageSlides = () => void loadHomepageSlides();
+    const refreshHomepageSlides = () => void queryClient.invalidateQueries({ queryKey: slideshowKey });
     window.addEventListener(HOMEPAGE_MEDIA_UPDATED_EVENT, refreshHomepageSlides);
     return () => window.removeEventListener(HOMEPAGE_MEDIA_UPDATED_EVENT, refreshHomepageSlides);
-  }, [isAdminView, loadHomepageSlides]);
+  }, [isAdminView, queryClient, slideshowKey]);
 
   useEffect(() => {
     setProfileForm({
@@ -362,30 +369,13 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
   }, [profile, user]);
 
   useEffect(() => {
-    const loadNotificationData = async () => {
-      setLoadingNotifications(true);
-      try {
-        const settingsResponse = await fetch(`${API_URL}/account/settings`, {
-          headers: getAuthHeaders(),
-        });
-
-        const settingsData = await readApiResponse<{ settings: NotificationSettings }>(settingsResponse);
-
-        setNotificationSettings(settingsData.settings);
-      } catch (error) {
-        setNotificationMessage(error instanceof Error ? error.message : "Failed to load notifications.");
-      } finally {
-        setLoadingNotifications(false);
-      }
-    };
-
-    if (activeSection !== "notifications") {
-      setLoadingNotifications(false);
-      return;
+    if (notificationSettingsQuery.data?.settings) {
+      setNotificationSettings(notificationSettingsQuery.data.settings);
     }
-
-    void loadNotificationData();
-  }, [activeSection]);
+    if (notificationSettingsQuery.error) {
+      setNotificationMessage(notificationSettingsQuery.error instanceof Error ? notificationSettingsQuery.error.message : "Failed to load notifications.");
+    }
+  }, [notificationSettingsQuery.data, notificationSettingsQuery.error]);
 
   const roleLabel = isOfficerRole(role) ? getRoleLabel(role) : isAdminView ? "Admin" : "Alumni";
   const profileBadge = useMemo(() => {
@@ -538,6 +528,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
       const data = await readApiResponse<{ message: string; settings: NotificationSettings }>(response);
       setNotificationSettings(data.settings);
+      queryClient.setQueryData(accountSettingsKey, { settings: data.settings });
       setNotificationMessage(data.message);
     } catch (error) {
       setNotificationMessage(error instanceof Error ? error.message : "Failed to update notifications.");
@@ -552,7 +543,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
 
   const saveHomepageSlideOrder = async (nextSlides: HomepageSlide[]) => {
     const reorderedSlides = nextSlides.map((slide, index) => ({ ...slide, displayOrder: index + 1 }));
-    setHomepageSlides(reorderedSlides);
+    queryClient.setQueryData<HomepageSlide[]>(slideshowKey, reorderedSlides);
     setHomepageSlideMessage("");
 
     try {
@@ -570,7 +561,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
       if (!Array.isArray(payload)) {
         throw new Error("The homepage media service returned an invalid reorder response.");
       }
-      setHomepageSlides(payload as HomepageSlide[]);
+      queryClient.setQueryData<HomepageSlide[]>(slideshowKey, payload as HomepageSlide[]);
       setHomepageSlideMessage("Homepage slide order updated.");
     } catch (error) {
       setHomepageSlideMessage(error instanceof Error ? error.message : "Failed to reorder homepage slides.");
@@ -610,7 +601,7 @@ export default function ManageAccountModule({ mode }: ManageAccountModuleProps) 
         headers: getAuthHeaders(),
       });
       await readApiResponse(response);
-      setHomepageSlides((current) => current.filter((item) => String(item.id) !== String(slide.id)));
+      queryClient.setQueryData<HomepageSlide[]>(slideshowKey, (current = []) => current.filter((item) => String(item.id) !== String(slide.id)));
       setHomepageSlideToDelete(null);
       setHomepageSlideMessage("Homepage slide deleted.");
     } catch (error) {

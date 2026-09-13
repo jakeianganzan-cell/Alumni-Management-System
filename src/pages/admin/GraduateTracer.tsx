@@ -1,10 +1,14 @@
 import { clientLogger } from "@/lib/logger";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { Download, Eye, FileSpreadsheet, Filter, Loader2, Search } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface TracerPayload {
   fullName?: string;
@@ -97,11 +101,8 @@ function getFileNameFromDisposition(disposition: string | null, fallback: string
 }
 
 export default function AdminGraduateTracer({ portal = "admin" }: { portal?: "admin" | "chairman" }) {
-  const [rows, setRows] = useState<TracerRow[]>([]);
-  const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
-  const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, pageSize: 10, total: 0, totalPages: 1 });
-  const [loading, setLoading] = useState(true);
-  const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+  const { user } = useAuth();
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [course, setCourse] = useState("All Courses");
   const [batch, setBatch] = useState("All Batches");
@@ -109,61 +110,47 @@ export default function AdminGraduateTracer({ portal = "admin" }: { portal?: "ad
   const [dateSubmitted, setDateSubmitted] = useState("");
   const [downloading, setDownloading] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
-  const fetchRows = useCallback(async (page = pagination.page, signal?: AbortSignal) => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pagination.pageSize),
-      });
-
-      if (search.trim()) params.set("search", search.trim());
+  const deferredSearch = useDeferredValue(search.trim());
+  const queryParams = useMemo(() => {
+      const params = new URLSearchParams({ page: String(page), pageSize: "10" });
+      if (deferredSearch) params.set("search", deferredSearch);
       if (course !== "All Courses") params.set("course", course);
       if (batch !== "All Batches") params.set("batch", batch);
       if (employmentStatus !== "All Status") params.set("employmentStatus", employmentStatus);
       if (dateSubmitted) params.set("dateSubmitted", dateSubmitted);
-
-      const response = await fetch(`${API_URL}/admin/tracer?${params.toString()}`, { headers: getAuthHeaders(), signal });
-      const payload = await readApiResponse<{ rows: TracerRow[]; pagination: PaginationMeta }>(response);
-      setRows(payload.rows ?? []);
-      setSelectedIds(new Set());
-      setPagination(payload.pagination ?? { page: 1, pageSize: 10, total: 0, totalPages: 1 });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      clientLogger.error(error);
-    } finally {
-      setLoading(false);
-    }
-  }, [batch, course, dateSubmitted, employmentStatus, pagination.page, pagination.pageSize, search]);
-
-  const fetchAnalytics = useCallback(async () => {
-    try {
-      setLoadingAnalytics(true);
-      const response = await fetch(`${API_URL}/tracer/admin/analytics`, { headers: getAuthHeaders() });
-      const payload = await readApiResponse<AnalyticsPayload>(response);
-      setAnalytics(payload);
-    } catch (error) {
-      clientLogger.error(error);
-      setAnalytics(null);
-    } finally {
-      setLoadingAnalytics(false);
-    }
-  }, []);
+      return params.toString();
+  }, [batch, course, dateSubmitted, deferredSearch, employmentStatus, page]);
+  const rowsQuery = useQuery({
+    ...authenticatedQueryOptions<{ rows: TracerRow[]; pagination: PaginationMeta }>({
+      queryKey: appQueryKeys.adminTracer(user?.id || "anonymous", queryParams),
+      path: `/admin/tracer?${queryParams}`,
+      policy: QUERY_CACHE_POLICY.user,
+    }),
+    enabled: Boolean(user?.id),
+    placeholderData: (previous) => previous,
+  });
+  const analyticsQuery = useQuery({
+    ...authenticatedQueryOptions<AnalyticsPayload>({
+      queryKey: appQueryKeys.adminTracerAnalytics(user?.id || "anonymous"),
+      path: "/tracer/admin/analytics",
+      policy: QUERY_CACHE_POLICY.standard,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const rows = useMemo(() => rowsQuery.data?.rows ?? [], [rowsQuery.data]);
+  const pagination = rowsQuery.data?.pagination ?? { page, pageSize: 10, total: 0, totalPages: 1 };
+  const analytics = analyticsQuery.data ?? null;
+  const loading = rowsQuery.isLoading && !rowsQuery.data;
+  const loadingAnalytics = analyticsQuery.isLoading && !analyticsQuery.data;
 
   useEffect(() => {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => void fetchRows(1, controller.signal), search.trim() ? 250 : 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [fetchRows, search]);
+    setSelectedIds(new Set());
+  }, [rowsQuery.data]);
 
   useEffect(() => {
-    void fetchAnalytics();
-  }, [fetchAnalytics]);
+    if (rowsQuery.error) clientLogger.error(rowsQuery.error);
+    if (analyticsQuery.error) clientLogger.error(analyticsQuery.error);
+  }, [analyticsQuery.error, rowsQuery.error]);
 
   const courses = useMemo(() => ["All Courses", ...Array.from(new Set(rows.map((row) => row.course).filter(Boolean)))], [rows]);
   const batches = useMemo(() => ["All Batches", ...Array.from(new Set(rows.map((row) => row.batch).filter(Boolean)))], [rows]);
@@ -322,7 +309,7 @@ export default function AdminGraduateTracer({ portal = "admin" }: { portal?: "ad
               </select>
               <input type="date" value={dateSubmitted} onChange={(event) => setDateSubmitted(event.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
               <button
-                onClick={() => void fetchRows(1)}
+                onClick={() => setPage(1)}
                 disabled={loading}
                 className="inline-flex min-h-9 items-center justify-center rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -465,14 +452,14 @@ export default function AdminGraduateTracer({ portal = "admin" }: { portal?: "ad
           </p>
           <div className="flex gap-2">
             <button
-              onClick={() => void fetchRows(Math.max(1, pagination.page - 1))}
+              onClick={() => setPage(Math.max(1, pagination.page - 1))}
               disabled={pagination.page <= 1}
               className="rounded-lg border border-border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Previous
             </button>
             <button
-              onClick={() => void fetchRows(Math.min(pagination.totalPages, pagination.page + 1))}
+              onClick={() => setPage(Math.min(pagination.totalPages, pagination.page + 1))}
               disabled={pagination.page >= pagination.totalPages}
               className="rounded-lg border border-border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
             >

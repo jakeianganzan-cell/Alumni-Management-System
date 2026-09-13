@@ -28,5 +28,6 @@ export const queryClient = new QueryClient({
 });
 
 export const clearAuthenticatedQueryCache = () => {
+  void queryClient.cancelQueries({ queryKey: ["auth"] });
   queryClient.removeQueries({ queryKey: ["auth"] });
 };

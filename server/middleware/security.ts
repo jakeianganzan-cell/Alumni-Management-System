@@ -18,7 +18,7 @@ export const securityHeaders = helmet({
       "frame-ancestors": ["'none'"],
       "img-src": ["'self'", "data:", "blob:", "https:"],
       "media-src": ["'self'", "data:", "blob:", "https:"],
-      "script-src": ["'self'"],
+      "script-src": ["'self'", "https://www.youtube.com", "https://s.ytimg.com"],
       "style-src": ["'self'", "'unsafe-inline'"],
       "connect-src": ["'self'", ...String(process.env.CSP_CONNECT_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean)],
       "frame-src": [

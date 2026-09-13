@@ -13,9 +13,6 @@ export function getYouTubeVideoId(value: string | null | undefined) {
   if (!value) return null;
 
   const trimmed = value.trim();
-  const directMatch = trimmed.match(/(?:youtube(?:-nocookie)?\.com\/(?:embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
-  if (directMatch) return directMatch[1];
-
   try {
     const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     const url = new URL(normalizedUrl);
@@ -28,7 +25,7 @@ export function getYouTubeVideoId(value: string | null | undefined) {
           ? url.searchParams.get("v") || (["embed", "shorts", "live", "v"].includes(pathParts[0]) ? pathParts[1] : null)
           : null;
 
-    return candidate && /^[A-Za-z0-9_-]{6,}$/.test(candidate) ? candidate : null;
+    return candidate && /^[A-Za-z0-9_-]{11}$/.test(candidate) ? candidate : null;
   } catch {
     return null;
   }

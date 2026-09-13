@@ -35,6 +35,7 @@ declare global {
           events?: {
             onReady?: (event: { target: YouTubePlayer }) => void;
             onStateChange?: (event: { data: number }) => void;
+            onError?: (event: { data: number }) => void;
           };
         }
       ) => YouTubePlayer;
@@ -75,25 +76,53 @@ interface PreparedSlide extends HomepageSlide {
 
 let youtubeApiPromise: Promise<void> | null = null;
 
-function loadYouTubeApi() {
+function loadYouTubeApi(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (window.YT?.Player) return Promise.resolve();
   if (youtubeApiPromise) return youtubeApiPromise;
 
-  youtubeApiPromise = new Promise((resolve) => {
+  youtubeApiPromise = new Promise((resolve, reject) => {
+    let settled = false;
     const previousReady = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      previousReady?.();
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      youtubeApiPromise = null;
+      reject(new Error("YouTube player API timed out"));
+    }, 12_000);
+
+    const resolveReady = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
       resolve();
     };
+    window.onYouTubeIframeAPIReady = () => {
+      try {
+        previousReady?.();
+      } finally {
+        resolveReady();
+      }
+    };
 
-    const existingScript = document.querySelector<HTMLScriptElement>("script[src='https://www.youtube.com/iframe_api']");
-    if (!existingScript) {
-      const script = document.createElement("script");
+    let script = document.querySelector<HTMLScriptElement>("script[src='https://www.youtube.com/iframe_api']");
+    if (!script) {
+      script = document.createElement("script");
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
       document.body.appendChild(script);
     }
+    script.addEventListener(
+      "error",
+      () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        youtubeApiPromise = null;
+        reject(new Error("YouTube player API failed to load"));
+      },
+      { once: true }
+    );
   });
 
   return youtubeApiPromise;
@@ -151,12 +180,29 @@ function YouTubeSlide({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const playbackTimeoutRef = useRef<number | null>(null);
   const mutedRef = useRef(muted);
   const [loading, setLoading] = useState(true);
   const [hasStarted, setHasStarted] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const videoId = useMemo(() => getYouTubeVideoId(slide.resolvedUrl), [slide.resolvedUrl]);
 
   mutedRef.current = muted;
+
+  const clearPlaybackTimeout = useCallback(() => {
+    if (playbackTimeoutRef.current !== null) window.clearTimeout(playbackTimeoutRef.current);
+    playbackTimeoutRef.current = null;
+  }, []);
+
+  const awaitPlayback = useCallback(() => {
+    clearPlaybackTimeout();
+    playbackTimeoutRef.current = window.setTimeout(() => {
+      setLoading(false);
+      setHasStarted(false);
+      setPlayerError("This YouTube video could not start or is unavailable.");
+      onPlayingChange(false);
+    }, 12_000);
+  }, [clearPlaybackTimeout, onPlayingChange]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -192,10 +238,23 @@ function YouTubeSlide({
 
     let destroyed = false;
     let progressInterval: number | null = null;
+    let loadTimeout: number | null = null;
+    let bufferingTimeout: number | null = null;
+    const clearBufferingTimeout = () => {
+      if (bufferingTimeout !== null) window.clearTimeout(bufferingTimeout);
+      bufferingTimeout = null;
+    };
     setHasStarted(false);
     setLoading(true);
+    setPlayerError(null);
     const playerElement = document.createElement("div");
     container.replaceChildren(playerElement);
+    loadTimeout = window.setTimeout(() => {
+      if (destroyed) return;
+      setLoading(false);
+      setPlayerError("This YouTube video could not be loaded. It may be private or unavailable.");
+      onPlayingChange(false);
+    }, 15_000);
 
     loadYouTubeApi().then(() => {
       if (destroyed || !window.YT?.Player) return;
@@ -205,8 +264,8 @@ function YouTubeSlide({
         width: "100%",
         height: "100%",
         playerVars: {
-          autoplay: 0,
-          mute: mutedRef.current ? 1 : 0,
+          autoplay: 1,
+          mute: 1,
           playsinline: 1,
           rel: 0,
           enablejsapi: 1,
@@ -218,8 +277,12 @@ function YouTubeSlide({
         },
         events: {
           onReady: (event) => {
+            if (destroyed) return;
+            if (loadTimeout !== null) window.clearTimeout(loadTimeout);
+            loadTimeout = null;
             playerRef.current = event.target;
             setLoading(false);
+            setPlayerError(null);
             const duration = event.target.getDuration?.();
             if (Number.isFinite(duration) && duration && duration > 0) {
               onDurationChange(slide.id, duration);
@@ -234,31 +297,75 @@ function YouTubeSlide({
                 onDurationChange(slide.id, latestDuration);
               }
             }, 1000);
-            if (mutedRef.current) {
-              event.target.mute();
-            } else {
-              event.target.unMute?.();
-              event.target.setVolume?.(100);
-            }
+            // Browser autoplay policies require media to begin muted. The
+            // requested sound state is applied after playback actually starts.
+            event.target.mute();
+            event.target.playVideo();
+            awaitPlayback();
             onPlayingChange(false);
           },
           onStateChange: (event) => {
             if (event.data === window.YT?.PlayerState?.ENDED || event.data === 0) {
+              clearPlaybackTimeout();
+              clearBufferingTimeout();
               setHasStarted(false);
               onPlayingChange(false);
               onEnded();
             } else if (event.data === window.YT?.PlayerState?.PLAYING || event.data === 1) {
+              clearPlaybackTimeout();
+              clearBufferingTimeout();
               setLoading(false);
               setHasStarted(true);
+              setPlayerError(null);
+              if (mutedRef.current) {
+                playerRef.current?.mute();
+              } else {
+                playerRef.current?.unMute?.();
+                playerRef.current?.setVolume?.(100);
+              }
               onPlayingChange(true);
             } else if (event.data === window.YT?.PlayerState?.PAUSED || event.data === 2) {
+              clearPlaybackTimeout();
+              clearBufferingTimeout();
+              setLoading(false);
               onPlayingChange(false);
             } else if (event.data === window.YT?.PlayerState?.BUFFERING || event.data === 3) {
+              clearPlaybackTimeout();
               setLoading(true);
+              clearBufferingTimeout();
+              bufferingTimeout = window.setTimeout(() => {
+                if (destroyed) return;
+                setLoading(false);
+                setPlayerError("This YouTube video is taking too long to load or is unavailable.");
+                onPlayingChange(false);
+              }, 15_000);
+            } else if (event.data === window.YT?.PlayerState?.CUED || event.data === 5) {
+              clearPlaybackTimeout();
+              clearBufferingTimeout();
+              setLoading(false);
+              onPlayingChange(false);
             }
+          },
+          onError: () => {
+            if (destroyed) return;
+            clearPlaybackTimeout();
+            if (loadTimeout !== null) window.clearTimeout(loadTimeout);
+            loadTimeout = null;
+            clearBufferingTimeout();
+            setLoading(false);
+            setHasStarted(false);
+            setPlayerError("This YouTube video is private, unavailable, or cannot be embedded.");
+            onPlayingChange(false);
           },
         },
       });
+    }).catch(() => {
+      if (destroyed) return;
+      if (loadTimeout !== null) window.clearTimeout(loadTimeout);
+      loadTimeout = null;
+      setLoading(false);
+      setPlayerError("The YouTube player is unavailable. Please try again later.");
+      onPlayingChange(false);
     });
 
     return () => {
@@ -266,6 +373,9 @@ function YouTubeSlide({
       setHasStarted(false);
       onPlayingChange(false);
       if (progressInterval !== null) window.clearInterval(progressInterval);
+      clearPlaybackTimeout();
+      if (loadTimeout !== null) window.clearTimeout(loadTimeout);
+      clearBufferingTimeout();
       try {
         playerRef.current?.destroy();
       } catch {
@@ -274,7 +384,7 @@ function YouTubeSlide({
       playerRef.current = null;
       container.replaceChildren();
     };
-  }, [active, onDurationChange, onEnded, onPlayingChange, onProgressChange, slide.id, slide.resolvedUrl, videoId]);
+  }, [active, awaitPlayback, clearPlaybackTimeout, onDurationChange, onEnded, onPlayingChange, onProgressChange, slide.id, slide.resolvedUrl, videoId]);
 
   if (!videoId) {
     return (
@@ -290,7 +400,10 @@ function YouTubeSlide({
 
     try {
       player.playVideo();
+      setPlayerError(null);
+      setLoading(true);
       setHasStarted(true);
+      awaitPlayback();
       onPlayingChange(true);
     } catch {
       onPlayingChange(false);
@@ -305,7 +418,12 @@ function YouTubeSlide({
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" title={slide.title} />
-      {!hasStarted && !loading && (
+      {playerError && !loading && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black px-6 text-center text-sm font-medium text-white/80" role="alert">
+          {playerError}
+        </div>
+      )}
+      {!hasStarted && !loading && !playerError && (
         <button
           type="button"
           onClick={(event) => {

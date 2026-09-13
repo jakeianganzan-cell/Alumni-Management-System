@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { API_URL, ApiError, fetchApi, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { formatApplicationDateTime } from "@/lib/applicationTime";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 import {
   AlertCircle,
   CheckCircle,
@@ -162,20 +166,17 @@ const getMailingSendErrorMessage = (error: unknown) => {
 
 export default function AdminNotifications() {
   const { settings } = useSystemSettings();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const emailTemplates = useMemo(() => getEmailTemplates(settings.institutionName), [settings.institutionName]);
   const [tab, setTab] = useState<ComposeTab>("compose");
-  const [logs, setLogs] = useState<EmailLog[]>([]);
-  const [loadingLogs, setLoadingLogs] = useState(true);
   const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
   const [logToDelete, setLogToDelete] = useState<EmailLog | null>(null);
   const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
   const [logsPage, setLogsPage] = useState(1);
 
   const [alumniSearch, setAlumniSearch] = useState("");
-  const [recipientResults, setRecipientResults] = useState<AlumniRecipient[]>([]);
-  const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [selectedAlumni, setSelectedAlumni] = useState<AlumniRecipient[]>([]);
-  const [filterOptions, setFilterOptions] = useState<MailingFilterOptions>({ courses: [], batches: [], reasons: [] });
   const [selectedCourse, setSelectedCourse] = useState("");
   const [selectedBatch, setSelectedBatch] = useState("");
   const [selectedReason, setSelectedReason] = useState("");
@@ -187,62 +188,44 @@ export default function AdminNotifications() {
   const [sending, setSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState("");
   const [sendError, setSendError] = useState("");
-
-  const fetchLogs = async () => {
-    setLoadingLogs(true);
-    try {
-      const res = await fetchApi(`${API_URL}/admin/mailing/logs`, { headers: getAuthHeaders() });
-      const data = await readApiResponse<EmailLogsResponse>(res);
-      setLogs(Array.isArray(data) ? data : data?.rows ?? []);
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : "Unable to load email logs.");
-    } finally {
-      setLoadingLogs(false);
-    }
-  };
-
-  const fetchFilterOptions = async () => {
-    try {
-      const res = await fetchApi(`${API_URL}/admin/mailing/filters`, { headers: getAuthHeaders() });
-      const data = await readApiResponse<MailingFilterOptions>(res);
-      setFilterOptions(data ?? { courses: [], batches: [], reasons: [] });
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : "Unable to load recipient filters.");
-    }
-  };
+  const userId = user?.id || "anonymous";
+  const logsKey = appQueryKeys.adminMailLogs(userId);
+  const logsQuery = useQuery({
+    ...authenticatedQueryOptions<EmailLogsResponse>({ queryKey: logsKey, path: "/admin/mailing/logs", policy: QUERY_CACHE_POLICY.live }),
+    enabled: Boolean(user?.id),
+  });
+  const filtersQuery = useQuery({
+    ...authenticatedQueryOptions<MailingFilterOptions>({ queryKey: appQueryKeys.adminMailFilters(userId), path: "/admin/mailing/filters", policy: QUERY_CACHE_POLICY.reference }),
+    enabled: Boolean(user?.id),
+  });
+  const deferredSearch = useDeferredValue(alumniSearch.trim());
+  const recipientParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (deferredSearch) params.set("search", deferredSearch);
+    if (selectedCourse) params.set("course", selectedCourse);
+    if (selectedBatch) params.set("batch", selectedBatch);
+    if (selectedReason) params.set("reason", selectedReason);
+    return params.toString();
+  }, [deferredSearch, selectedBatch, selectedCourse, selectedReason]);
+  const recipientsQuery = useQuery({
+    ...authenticatedQueryOptions<AlumniRecipient[]>({
+      queryKey: appQueryKeys.adminMailRecipients(userId, recipientParams),
+      path: `/admin/mailing/alumni?${recipientParams}`,
+      policy: QUERY_CACHE_POLICY.sensitive,
+    }),
+    enabled: Boolean(user?.id),
+    placeholderData: (previous) => previous,
+  });
+  const logs = useMemo(() => Array.isArray(logsQuery.data) ? logsQuery.data : logsQuery.data?.rows ?? [], [logsQuery.data]);
+  const loadingLogs = logsQuery.isLoading && !logsQuery.data;
+  const filterOptions = filtersQuery.data ?? { courses: [], batches: [], reasons: [] };
+  const recipientResults = recipientsQuery.data ?? [];
+  const loadingRecipients = recipientsQuery.isFetching;
 
   useEffect(() => {
-    fetchLogs();
-    fetchFilterOptions();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      setLoadingRecipients(true);
-      try {
-        const params = new URLSearchParams();
-        if (alumniSearch.trim()) params.set("search", alumniSearch.trim());
-        if (selectedCourse) params.set("course", selectedCourse);
-        if (selectedBatch) params.set("batch", selectedBatch);
-        if (selectedReason) params.set("reason", selectedReason);
-        const res = await fetchApi(`${API_URL}/admin/mailing/alumni?${params.toString()}`, {
-          headers: getAuthHeaders(),
-        });
-        const data = await readApiResponse<AlumniRecipient[]>(res);
-        if (!cancelled) setRecipientResults(data ?? []);
-      } catch (error) {
-        if (!cancelled) setSendError(error instanceof Error ? error.message : "Unable to search alumni.");
-      } finally {
-        if (!cancelled) setLoadingRecipients(false);
-      }
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [alumniSearch, selectedBatch, selectedCourse, selectedReason]);
+    const queryError = logsQuery.error || filtersQuery.error || recipientsQuery.error;
+    if (queryError) setSendError(queryError instanceof Error ? queryError.message : "Unable to load mailing data.");
+  }, [filtersQuery.error, logsQuery.error, recipientsQuery.error]);
 
   const totalLogPages = Math.max(1, Math.ceil(logs.length / LOGS_PAGE_SIZE));
   const paginatedLogs = useMemo(() => {
@@ -337,11 +320,11 @@ export default function AdminNotifications() {
       setSelectedAlumni([]);
       setAlumniSearch("");
       applyTemplate(purpose);
-      await fetchLogs();
+      await queryClient.invalidateQueries({ queryKey: logsKey });
       setTab("history");
     } catch (error) {
       setSendError(getMailingSendErrorMessage(error));
-      await fetchLogs();
+      await queryClient.invalidateQueries({ queryKey: logsKey });
     } finally {
       setSending(false);
     }
@@ -365,7 +348,12 @@ export default function AdminNotifications() {
       }
       setLogToDelete(null);
       setSendSuccess("Email log deleted.");
-      await fetchLogs();
+      queryClient.setQueryData<EmailLogsResponse>(logsKey, (current) => {
+        const rows = Array.isArray(current) ? current : current?.rows ?? [];
+        const nextRows = rows.filter((log) => log.id !== logToDelete.id);
+        return Array.isArray(current) ? nextRows : { ...(current || {}), rows: nextRows };
+      });
+      await queryClient.invalidateQueries({ queryKey: logsKey });
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Unable to delete email log.");
     } finally {

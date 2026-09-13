@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
-import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { FileSpreadsheet, Loader2, Search } from "lucide-react";
 import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface ChairmanAlumniRecord {
   id: string;
@@ -39,35 +42,22 @@ const engagementColors: Record<ChairmanAlumniRecord["engagement"], string> = {
 const ALL_BATCHES = "All Batches";
 
 export default function ChairmanAlumni() {
-  const [data, setData] = useState<ChairmanAlumniResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { user } = useAuth();
+  const alumniQuery = useQuery({
+    ...authenticatedQueryOptions<ChairmanAlumniResponse>({
+      queryKey: appQueryKeys.chairmanAlumni(user?.id || "anonymous"),
+      path: "/chairman/alumni",
+      policy: QUERY_CACHE_POLICY.standard,
+    }),
+    enabled: Boolean(user?.id),
+  });
+  const data = alumniQuery.data ?? null;
+  const loading = alumniQuery.isLoading && !alumniQuery.data;
+  const error = alumniQuery.error instanceof Error ? alumniQuery.error.message : "";
   const [search, setSearch] = useState("");
   const [batch, setBatch] = useState(ALL_BATCHES);
   const [sortKey, setSortKey] = useState<keyof ChairmanAlumniRecord>("name");
   const [sortAsc, setSortAsc] = useState(true);
-
-  useEffect(() => {
-    const loadAlumni = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await fetch(`${API_URL}/chairman/alumni`, {
-          headers: getAuthHeaders(),
-        });
-
-        const payload = await readApiResponse<ChairmanAlumniResponse>(response);
-        setData(payload);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load department alumni.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadAlumni();
-  }, []);
 
   const batches = useMemo(() => {
     const options = new Set<string>([ALL_BATCHES]);

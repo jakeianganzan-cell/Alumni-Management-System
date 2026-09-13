@@ -138,10 +138,23 @@ function PostLoginPrefetch() {
         void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.alumniDashboard(user.id), path: "/alumni/dashboard?includeSlideshow=false", policy: QUERY_CACHE_POLICY.user }));
         void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.announcements(user.id), path: "/announcements", policy: QUERY_CACHE_POLICY.standard }));
         void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.surveys(user.id), path: "/surveys", policy: QUERY_CACHE_POLICY.standard }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.achievements(user.id), path: "/achievements", policy: QUERY_CACHE_POLICY.standard }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.communityPosts(user.id), path: "/freedom-wall/posts", policy: QUERY_CACHE_POLICY.live }));
       } else if (role === "chairman") {
         void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.chairmanDashboard(user.id), path: "/chairman/dashboard", policy: QUERY_CACHE_POLICY.user }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.chairmanAlumni(user.id), path: "/chairman/alumni", policy: QUERY_CACHE_POLICY.standard }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.chairmanEngagement(user.id), path: "/chairman/engagement", policy: QUERY_CACHE_POLICY.user }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.announcements(user.id), path: "/announcements", policy: QUERY_CACHE_POLICY.standard }));
       } else {
         void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.adminDashboard(user.id), path: "/admin/dashboard", policy: QUERY_CACHE_POLICY.live }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.graduationBatches(user.id), path: "/graduation-batches", policy: QUERY_CACHE_POLICY.reference }));
+        if (["admin", "pio"].includes(role)) {
+          void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.achievements(user.id), path: "/achievements", policy: QUERY_CACHE_POLICY.standard }));
+          void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.adminFreedomWall(user.id), path: "/admin/freedom-wall/posts", policy: QUERY_CACHE_POLICY.live }));
+        }
+        if (["admin", "treasurer", "assistant_treasurer", "auditor"].includes(role)) {
+          void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.adminDonationSummary(user.id), path: "/donations/summary", policy: QUERY_CACHE_POLICY.live }));
+        }
       }
     }, 750);
 

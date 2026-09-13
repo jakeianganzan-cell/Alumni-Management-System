@@ -53,6 +53,18 @@ test("deployed security policies allow authenticated blob PDF previews", () => {
   assert.match(security, /"frame-src": \[\s*"'self'",\s*"blob:"/);
 });
 
+test("deployed security policies allow the YouTube iframe player API", () => {
+  const vercel = read("vercel.json");
+  const security = read("server/middleware/security.ts");
+
+  for (const source of ["https://www.youtube.com", "https://s.ytimg.com"]) {
+    assert.match(vercel, new RegExp(source.replaceAll(".", "\\.")));
+    assert.match(security, new RegExp(source.replaceAll(".", "\\.")));
+  }
+  assert.match(vercel, /script-src 'self' https:\/\/www\.youtube\.com https:\/\/s\.ytimg\.com/);
+  assert.match(security, /"script-src": \["'self'", "https:\/\/www\.youtube\.com", "https:\/\/s\.ytimg\.com"\]/);
+});
+
 test("deployed caching keeps versioned assets immutable and authenticated APIs private", () => {
   const vercel = read("vercel.json");
   const app = read("server/app.ts");
@@ -457,6 +469,9 @@ test("alumni slideshow renders early without duplicate media payloads", () => {
   assert.doesNotMatch(dashboard, /LoadingProgress/);
   assert.doesNotMatch(mediaDialog, /imageUrl: selectedMediaUrl/);
   assert.doesNotMatch(slideshow, /video\.load\(\)/);
+  assert.match(slideshow, /autoplay: 1/);
+  assert.match(slideshow, /onError:/);
+  assert.match(slideshow, /YouTube player API timed out/);
   assert.match(slideshow, /preload="metadata"/);
   assert.match(slideshow, /fetchPriority="high"/);
 });
