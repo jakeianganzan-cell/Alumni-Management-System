@@ -1,5 +1,6 @@
 import { clientLogger } from "@/lib/logger";
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
@@ -9,8 +10,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import salayBackground from "@/assets/salay-background.png";
 import DurationBadge from "@/components/DurationBadge";
 import HomepageSlideshow from "@/components/HomepageSlideshow";
-import { LoadingProgress } from "@/components/ui/loading-progress";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface CommentData {
   id: string;
@@ -197,7 +199,6 @@ export default function AlumniDashboard() {
   const { settings } = useSystemSettings();
   const [announcements, setAnnouncements] = useState<AnnouncementData[]>([]);
   const [surveys, setSurveys] = useState<SurveyData[]>([]);
-  const [slideshow, setSlideshow] = useState<SlideData[]>([]);
   const [comments, setComments] = useState<Record<string, CommentData[]>>({});
   const [registrations, setRegistrations] = useState<Set<string>>(new Set());
   const [eventRsvps, setEventRsvps] = useState<Record<string, EventRsvpState | null>>({});
@@ -210,87 +211,74 @@ export default function AlumniDashboard() {
   const [submittingSurvey, setSubmittingSurvey] = useState(false);
   const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
   const [donationActivity, setDonationActivity] = useState<DonationActivity[]>([]);
-  const [slideshowLoading, setSlideshowLoading] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const hasLoadedDashboard = useRef(false);
+  const userId = user?.id || "signed-out";
+
+  const firstSlideQuery = useQuery<SlideData[]>({
+    ...authenticatedQueryOptions<SlideData[]>({
+      queryKey: appQueryKeys.alumniSlideshowFirst(userId),
+      path: "/slideshow?limit=1",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 5 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+
+  const remainingSlidesQuery = useQuery<SlideData[]>({
+    ...authenticatedQueryOptions<SlideData[]>({
+      queryKey: appQueryKeys.alumniSlideshowRemaining(userId),
+      path: "/slideshow?limit=9&offset=1",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 5 * 60_000,
+    }),
+    enabled: Boolean(user && firstSlideQuery.data?.length),
+  });
+
+  const dashboardQuery = useQuery<DashboardResponse>({
+    ...authenticatedQueryOptions<DashboardResponse>({
+      queryKey: appQueryKeys.alumniDashboard(userId),
+      path: "/alumni/dashboard?includeSlideshow=false",
+      policy: QUERY_CACHE_POLICY.user,
+      refetchInterval: 2 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+
+  const firstSlides = Array.isArray(firstSlideQuery.data) ? firstSlideQuery.data : [];
+  const knownSlideIds = new Set(firstSlides.map((slide) => String(slide.id)));
+  const remainingSlides = Array.isArray(remainingSlidesQuery.data)
+    ? remainingSlidesQuery.data.filter((slide) => !knownSlideIds.has(String(slide.id)))
+    : [];
+  const slideshow = [...firstSlides, ...remainingSlides];
+  const slideshowLoading = firstSlideQuery.isLoading && firstSlides.length === 0;
+  const loading = dashboardQuery.isLoading && !dashboardQuery.data;
 
   useEffect(() => {
-    if (!user) return;
+    const data = dashboardQuery.data;
+    if (!data) return;
 
-    const fetchSlideshow = async () => {
-      try {
-        const response = await fetch(`${API_URL}/slideshow?limit=1`, {
-          headers: getAuthHeaders(),
-        });
-        const firstSlides = await readApiResponse<unknown>(response);
-        if (!Array.isArray(firstSlides)) {
-          throw new Error("The slideshow service returned an invalid response.");
-        }
-        setSlideshow(firstSlides as SlideData[]);
-        setSlideshowLoading(false);
+    setAnnouncements(Array.isArray(data.events) ? data.events : []);
+    setSurveys(Array.isArray(data.surveys) ? data.surveys : []);
+    setDonationActivity((Array.isArray(data.donationUpdates) ? data.donationUpdates : []).slice(0, 4));
+    setRegistrations(new Set(Array.isArray(data.registrations) ? data.registrations : []));
+    setOfficers(
+      (Array.isArray(data.officers) ? data.officers : []).map((officer) => ({
+        ...officer,
+        role: String(officer.role || "").trim().toLowerCase(),
+      })),
+    );
 
-        if (firstSlides.length > 0) {
-          const remainingResponse = await fetch(`${API_URL}/slideshow?limit=9&offset=1`, {
-            headers: getAuthHeaders(),
-          });
-          const remainingSlides = await readApiResponse<unknown>(remainingResponse);
-          if (Array.isArray(remainingSlides) && remainingSlides.length > 0) {
-            setSlideshow((current) => {
-              const knownIds = new Set(current.map((slide) => String(slide.id)));
-              return [...current, ...(remainingSlides as SlideData[]).filter((slide) => !knownIds.has(String(slide.id)))];
-            });
-          }
-        }
-      } catch (error) {
-        clientLogger.debug("Failed to load slideshow independently", error);
-      } finally {
-        setSlideshowLoading(false);
-      }
-    };
-
-    const fetchData = async () => {
-      const keepSpinner = !hasLoadedDashboard.current;
-      try {
-        const res = await fetch(`${API_URL}/alumni/dashboard?includeSlideshow=false`, {
-          headers: getAuthHeaders(),
-        });
-        const data = await readApiResponse<DashboardResponse>(res);
-
-        setAnnouncements(data.events || []);
-        setSurveys(data.surveys || []);
-        setDonationActivity((data.donationUpdates || []).slice(0, 4));
-        setRegistrations(new Set(data.registrations || []));
-        setOfficers(
-          (data.officers || []).map((officer) => ({
-            ...officer,
-            role: String(officer.role || "").trim().toLowerCase(),
-          })),
-        );
-
-        const grouped: Record<string, CommentData[]> = {};
-        (data.comments || []).forEach((c) => {
-          if (!grouped[c.event_id]) grouped[c.event_id] = [];
-          grouped[c.event_id].push({
-            id: c.id,
-            text: c.text,
-            created_at: c.created_at,
-            profiles: { name: c.profile_name },
-          });
-        });
-        setComments(grouped);
-      } catch (err) {
-        clientLogger.error("Failed to load dashboard data", err);
-      } finally {
-        hasLoadedDashboard.current = true;
-        if (keepSpinner) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void fetchSlideshow();
-    void fetchData();
-  }, [user]);
+    const grouped: Record<string, CommentData[]> = {};
+    (Array.isArray(data.comments) ? data.comments : []).forEach((comment) => {
+      if (!grouped[comment.event_id]) grouped[comment.event_id] = [];
+      grouped[comment.event_id].push({
+        id: comment.id,
+        text: comment.text,
+        created_at: comment.created_at,
+        profiles: { name: comment.profile_name },
+      });
+    });
+    setComments(grouped);
+  }, [dashboardQuery.data]);
 
   const loadEventRsvpStatus = async (eventId: string) => {
     if (!user) return;
@@ -474,9 +462,6 @@ export default function AlumniDashboard() {
     return (
       <AlumniLayout title={settings.institutionName} subtitle={settings.systemShortName}>
         <HomepageSlideshow slides={slideshow} loading={slideshowLoading} className="mb-8 max-[640px]:mb-3" />
-        <div className="flex min-h-[20vh] items-center justify-center">
-          <LoadingProgress className="px-4" />
-        </div>
       </AlumniLayout>
     );
   }

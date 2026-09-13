@@ -7,6 +7,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Button } from "@/components/ui/button";
 import { formatApplicationDateTime } from "@/lib/applicationTime";
 import { useAuth, type AppRole } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 const NOTIFICATION_REFRESH_INTERVAL_MS = 15_000;
 
@@ -44,20 +46,19 @@ interface UserNotificationResponse {
 
 export default function NotificationBell() {
   const navigate = useNavigate();
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
 
+  const notificationQueryKey = appQueryKeys.notifications(user?.id || "signed-out");
   const { data } = useQuery<UserNotificationResponse>({
-    queryKey: ["user-notifications"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/user-notifications`, {
-        headers: getAuthHeaders(),
-      });
-
-      return readApiResponse<UserNotificationResponse>(res);
-    },
-    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
+    ...authenticatedQueryOptions<UserNotificationResponse>({
+      queryKey: notificationQueryKey,
+      path: "/user-notifications",
+      policy: QUERY_CACHE_POLICY.live,
+      refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
+    }),
+    enabled: Boolean(user),
     refetchIntervalInBackground: true,
     refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
@@ -72,7 +73,7 @@ export default function NotificationBell() {
       await readApiResponse(res);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user-notifications"] });
+      queryClient.invalidateQueries({ queryKey: notificationQueryKey });
     },
   });
 
@@ -85,7 +86,7 @@ export default function NotificationBell() {
       await readApiResponse(res);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user-notifications"] });
+      queryClient.invalidateQueries({ queryKey: notificationQueryKey });
     },
   });
 

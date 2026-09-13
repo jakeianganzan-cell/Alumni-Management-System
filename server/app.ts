@@ -1591,45 +1591,6 @@ const ensureEventRsvpTables = async () => {
     `);
 };
 
-const ensureDashboardSlideTable = async () => {
-    await db.execute(`
-        CREATE TABLE IF NOT EXISTS dashboard_slides (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            title VARCHAR(255) NOT NULL,
-            caption TEXT,
-            media_type VARCHAR(30) NOT NULL DEFAULT 'image',
-            image_url LONGTEXT NOT NULL,
-            link_url TEXT,
-            is_highlighted TINYINT(1) NOT NULL DEFAULT 0,
-            display_order INT NOT NULL DEFAULT 0,
-            status VARCHAR(30) NOT NULL DEFAULT 'active',
-            created_by VARCHAR(36) DEFAULT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_dashboard_slides_visible (status, is_highlighted, display_order),
-            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
-        )
-    `);
-
-    try {
-        await db.execute("ALTER TABLE dashboard_slides ADD COLUMN media_type VARCHAR(30) NOT NULL DEFAULT 'image' AFTER caption");
-    } catch (error) {
-        if (!getErrorMessage(error).toLowerCase().includes("duplicate column")) {
-            logger.error("DASHBOARD SLIDES MEDIA TYPE MIGRATION ERROR:", error);
-        }
-    }
-
-    await db.execute(`
-        UPDATE dashboard_slides
-        SET media_type = CASE
-            WHEN image_url REGEXP 'youtube\\\\.com|youtu\\\\.be' THEN 'youtube'
-            WHEN image_url REGEXP '\\\\.(mp4|webm|ogg|mov)(\\\\?.*)?$' OR image_url LIKE 'data:video/%' THEN 'video'
-            ELSE 'image'
-        END
-        WHERE COALESCE(media_type, '') = '' OR media_type = 'image'
-    `);
-};
-
 const ensureAlumniLoginActivityTable = async () => {
     await db.execute(`
         CREATE TABLE IF NOT EXISTS alumni_login_events (
@@ -5928,11 +5889,16 @@ const ensureChairmanAccounts = async () => {
 
 // Middleware
 app.use(express.json({ limit: "20mb" }));
+app.use("/api", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    next();
+});
 app.use("/uploads/branding", express.static(brandingUploadDir(), {
     dotfiles: "deny",
     fallthrough: false,
     immutable: true,
-    maxAge: "1d",
+    maxAge: "1y",
     setHeaders: (res) => {
         res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
         res.setHeader("X-Content-Type-Options", "nosniff");
@@ -6367,7 +6333,6 @@ const initializeDatabaseBackedStartup = async () => {
         await ensureAnnouncementEventSurveyEngagementTables();
         await ensureAnnouncementInterestTable();
         await ensureEventRsvpTables();
-        await ensureDashboardSlideTable();
         await ensureSystemSettingsTable();
         await ensureAlumniFeeRecordsTable();
         await ensureAlumniProjectTables();
@@ -8751,7 +8716,6 @@ app.get("/api/admin/dashboard", authenticateToken, requireOfficer, async (_req, 
 
 app.get("/api/slideshow", authenticateToken, async (req, res) => {
     try {
-        await ensureDashboardSlideTable();
         const requestedLimit = Number(req.query.limit);
         const requestedOffset = Number(req.query.offset);
         const limit = Number.isInteger(requestedLimit) ? Math.min(10, Math.max(1, requestedLimit)) : 10;
@@ -8773,7 +8737,6 @@ app.get("/api/slideshow", authenticateToken, async (req, res) => {
 
 app.get("/api/admin/slideshow", authenticateToken, requireAdmin, async (_req, res) => {
     try {
-        await ensureDashboardSlideTable();
         const rows = parseRows(await db.query(
             `SELECT *
              FROM dashboard_slides
@@ -8792,7 +8755,6 @@ app.get("/api/admin/slideshow", authenticateToken, requireAdmin, async (_req, re
 
 app.post("/api/admin/slideshow", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
-        await ensureDashboardSlideTable();
         const title = normalizeText(req.body?.title) || "Homepage advertisement";
         const caption = normalizeText(req.body?.caption);
         const media = prepareDashboardSlideMedia(
@@ -8825,7 +8787,6 @@ app.post("/api/admin/slideshow", authenticateToken, requireAdmin, async (req: Au
 
 app.put("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
-        await ensureDashboardSlideTable();
         const slideId = Number(req.params.id);
         const title = normalizeText(req.body?.title);
         const caption = normalizeText(req.body?.caption);
@@ -8860,7 +8821,6 @@ app.put("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req:
 
 app.patch("/api/admin/slideshow/:id/highlight", authenticateToken, requireAdmin, async (req, res) => {
     try {
-        await ensureDashboardSlideTable();
         const slideId = Number(req.params.id);
         if (!slideId) return res.status(400).json({ error: "Invalid slide id." });
 
@@ -8877,7 +8837,6 @@ app.patch("/api/admin/slideshow/:id/highlight", authenticateToken, requireAdmin,
 
 app.patch("/api/admin/slideshow/reorder", authenticateToken, requireAdmin, async (req, res) => {
     try {
-        await ensureDashboardSlideTable();
         const slides = Array.isArray(req.body?.slides) ? req.body.slides : [];
         const normalizedSlides = slides
             .map((slide: Record<string, unknown>) => ({
@@ -8912,7 +8871,6 @@ app.patch("/api/admin/slideshow/reorder", authenticateToken, requireAdmin, async
 
 app.delete("/api/admin/slideshow/:id", authenticateToken, requireAdmin, async (req, res) => {
     try {
-        await ensureDashboardSlideTable();
         const slideId = Number(req.params.id);
         if (!slideId) return res.status(400).json({ error: "Invalid slide id." });
 
@@ -9363,7 +9321,6 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
         const includeSlideshow = normalizeBoolean(req.query.includeSlideshow, true);
         let slides: QueryRow[] = [];
         if (includeSlideshow) {
-            await ensureDashboardSlideTable();
             slides = parseRows(await db.query(
                 `SELECT *
                  FROM dashboard_slides

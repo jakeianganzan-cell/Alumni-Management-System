@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import { API_URL, clearAuthToken, getAuthToken, readApiResponse, setAuthToken } from "@/lib/api";
+import { clearAuthenticatedQueryCache } from "@/lib/queryClient";
 
 export type AppRole =
     | "alumni"
@@ -99,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const applyAuthPayload = useCallback((token: string, data: AuthPayload, rememberMe: boolean) => {
+        clearAuthenticatedQueryCache();
         setAuthToken(token, rememberMe);
         setSession(token);
         setUser(data.user);
@@ -124,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setIsTracerCompleted(Boolean(data.isTracerCompleted));
         } catch (error) {
             clearAuthToken();
+            clearAuthenticatedQueryCache();
             clearAuthState();
         } finally {
             setLoading(false);
@@ -150,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }).then((response) => {
                 if (response.status === 401 || response.status === 403) {
                     clearAuthToken();
+                    clearAuthenticatedQueryCache();
                     clearAuthState();
                 }
             }).catch(() => undefined);
@@ -234,6 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         clearAuthToken();
+        clearAuthenticatedQueryCache();
         clearAuthState();
     };
 

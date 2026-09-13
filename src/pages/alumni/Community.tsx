@@ -1,5 +1,6 @@
 import { clientLogger } from "@/lib/logger";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
@@ -10,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Image, Loader2, MessageCircle, MessageSquare, Plus, Send } from "lucide-react";
 import { toast } from "sonner";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type ReactionType = "heart";
 
@@ -60,10 +63,24 @@ const BLANK_POST_FORM: PostFormState = {
 };
 
 export default function Community() {
-  useAuth();
-  const [posts, setPosts] = useState<FeedPost[]>([]);
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const postQueryKey = appQueryKeys.communityPosts(user?.id || "signed-out");
+  const postsQuery = useQuery<FeedPost[]>({
+    ...authenticatedQueryOptions<FeedPost[]>({
+      queryKey: postQueryKey,
+      path: "/freedom-wall/posts",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const posts = useMemo(
+    () => Array.isArray(postsQuery.data) ? postsQuery.data : [],
+    [postsQuery.data],
+  );
   const [postOrder, setPostOrder] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = postsQuery.isLoading && !postsQuery.data;
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [postDialogOpen, setPostDialogOpen] = useState(false);
   const [selectedPost, setSelectedPost] = useState<FeedPost | null>(null);
@@ -77,13 +94,12 @@ export default function Community() {
   const [reactingPostId, setReactingPostId] = useState<number | null>(null);
 
   const loadPosts = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/freedom-wall/posts`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<FeedPost[]>(response);
-      setPosts(data);
+    await postsQuery.refetch();
+  };
+
+  useEffect(() => {
+    const data = postsQuery.data;
+    if (!Array.isArray(data)) return;
       setPostOrder((currentOrder) => {
         const availableIds = data.map((post) => post.id);
         if (currentOrder.length === 0) {
@@ -99,17 +115,13 @@ export default function Community() {
         const newIds = availableIds.filter((id) => !retainedIdSet.has(id));
         return [...newIds, ...retainedIds];
       });
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error(error instanceof Error ? error.message : "Failed to load Freedom Wall posts.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [postsQuery.data]);
 
   useEffect(() => {
-    void loadPosts();
-  }, []);
+    if (!postsQuery.error || postsQuery.data) return;
+    clientLogger.error(postsQuery.error);
+    toast.error(postsQuery.error instanceof Error ? postsQuery.error.message : "Failed to load Freedom Wall posts.");
+  }, [postsQuery.data, postsQuery.error]);
 
   const filteredPosts = useMemo(() => {
     const matchingPosts = posts.filter(
@@ -230,7 +242,7 @@ export default function Community() {
         reactionCounts: Record<ReactionType, number>;
       }>(response);
 
-      setPosts((current) =>
+      queryClient.setQueryData<FeedPost[]>(postQueryKey, (current = []) =>
         current.map((post) =>
           post.id === postId
             ? {

@@ -1,10 +1,12 @@
-import { clientLogger } from "@/lib/logger";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import AdminLayout from "@/components/admin/AdminLayout";
 import { Calendar, Heart, MapPin, TrendingUp, Users, Briefcase, Clock3, MonitorSmartphone } from "lucide-react";
-import { API_URL, getAuthToken, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { useIsPhone } from "@/hooks/use-mobile";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 import {
   Bar,
   BarChart,
@@ -138,54 +140,28 @@ const formatCompactNumber = (value: number) =>
 
 export default function AdminDashboard() {
   const { settings } = useSystemSettings();
+  const { user } = useAuth();
   const isPhone = useIsPhone();
-  const [totalAlumni, setTotalAlumni] = useState(0);
-  const [totalDonations, setTotalDonations] = useState(0);
-  const [recentTracer, setRecentTracer] = useState<TracerRow[]>([]);
-  const [upcomingEvents, setUpcomingEvents] = useState<EventRow[]>([]);
-  const [monthlyEngagement, setMonthlyEngagement] = useState<MonthlyEngagementPoint[]>([]);
-  const [courseContributions, setCourseContributions] = useState<CourseContributionPoint[]>([]);
-  const [recentDonors, setRecentDonors] = useState<RecentDonor[]>([]);
-  const [sessionStats, setSessionStats] = useState<SessionStats>(emptySessionStats);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void fetchDashboard();
-  }, []);
-
-  const fetchDashboard = async (silent = false) => {
-    try {
-      const token = getAuthToken();
-
-      if (!token) {
-        window.location.href = "/";
-        return;
-      }
-
-      const res = await fetch(`${API_URL}/admin/dashboard`, {
-        headers: getAuthHeaders(),
-      });
-
-      const data = await readApiResponse<DashboardResponse>(res);
-
-      const tracerRows = data.recentTracer || data.tracerData || [];
-
-      setTotalAlumni(data.totalAlumni || 0);
-      setTotalDonations(data.totalDonations || 0);
-      setRecentTracer(tracerRows.slice(0, 6));
-      setUpcomingEvents((data.upcomingEvents || []).slice(0, 5));
-      setMonthlyEngagement(data.monthlyEngagement || []);
-      setCourseContributions(data.courseContributions || []);
-      setRecentDonors((data.recentDonors || []).slice(0, 5));
-      setSessionStats(data.sessionStats || emptySessionStats);
-    } catch (err) {
-      clientLogger.error("Dashboard error:", err);
-    } finally {
-      if (!silent) {
-        setLoading(false);
-      }
-    }
-  };
+  const userId = user?.id || "signed-out";
+  const dashboardQuery = useQuery<DashboardResponse>({
+    ...authenticatedQueryOptions<DashboardResponse>({
+      queryKey: appQueryKeys.adminDashboard(userId),
+      path: "/admin/dashboard",
+      policy: QUERY_CACHE_POLICY.live,
+      refetchInterval: 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const data = dashboardQuery.data;
+  const totalAlumni = data?.totalAlumni || 0;
+  const totalDonations = data?.totalDonations || 0;
+  const recentTracer = useMemo(() => (data?.recentTracer || data?.tracerData || []).slice(0, 6), [data]);
+  const upcomingEvents = useMemo(() => (data?.upcomingEvents || []).slice(0, 5), [data]);
+  const monthlyEngagement = useMemo(() => data?.monthlyEngagement || [], [data]);
+  const courseContributions = useMemo(() => data?.courseContributions || [], [data]);
+  const recentDonors = useMemo(() => (data?.recentDonors || []).slice(0, 5), [data]);
+  const sessionStats = data?.sessionStats || emptySessionStats;
+  const loading = dashboardQuery.isLoading && !data;
 
   const employmentRate = useMemo(() => {
     if (recentTracer.length === 0) return 0;

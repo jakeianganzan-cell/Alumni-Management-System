@@ -1,8 +1,11 @@
-import { clientLogger } from "@/lib/logger";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import salayBackground from "@/assets/salay-background.png";
-import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
+import { resolveAssetUrl } from "@/lib/api";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type DashboardOfficer = {
   name: string;
@@ -84,34 +87,27 @@ function VConn({ h = 6, mdH, className = "bg-border" }: { h?: number; mdH?: numb
 
 export default function OrganizationChart() {
   const { settings } = useSystemSettings();
-  const [officers, setOfficers] = useState<DashboardOfficer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const fetchOfficers = async () => {
-      try {
-        setError("");
-        const response = await fetch(`${API_URL}/alumni/dashboard`, {
-          headers: getAuthHeaders(),
-        });
-        const data = await readApiResponse<DashboardResponse>(response);
-        setOfficers(
-          (data.officers || []).map((officer) => ({
-            ...officer,
-            role: String(officer.role || "").trim().toLowerCase(),
-          })),
-        );
-      } catch (error) {
-        clientLogger.error("Failed to load organization chart", error);
-        setError("The organizational chart is temporarily unavailable.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void fetchOfficers();
-  }, []);
+  const { user } = useAuth();
+  const dashboardQuery = useQuery<DashboardResponse>({
+    ...authenticatedQueryOptions<DashboardResponse>({
+      queryKey: appQueryKeys.alumniDashboard(user?.id || "signed-out"),
+      path: "/alumni/dashboard?includeSlideshow=false",
+      policy: QUERY_CACHE_POLICY.user,
+      refetchInterval: 2 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const officers = useMemo(
+    () => (Array.isArray(dashboardQuery.data?.officers) ? dashboardQuery.data.officers : []).map((officer) => ({
+      ...officer,
+      role: String(officer.role || "").trim().toLowerCase(),
+    })),
+    [dashboardQuery.data?.officers],
+  );
+  const loading = dashboardQuery.isLoading && !dashboardQuery.data;
+  const error = !dashboardQuery.data && dashboardQuery.error
+    ? "The organizational chart is temporarily unavailable."
+    : "";
 
   const getOfficer = (...roles: string[]) =>
     officers.find((officer) => roles.map((role) => role.toLowerCase()).includes(officer.role)) || null;

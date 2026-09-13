@@ -31,3 +31,4 @@ npx tsx run-migration.mjs
 - `015_president_organizational_governance.sql` - Administrator/President role separation, targets, MOAs, accomplishment reports, private documents, and project links
 - `016_retire_president_access.sql` - Retire President login access, end affected sessions, and retain the shared user as System Administrator
 - `017_graduation_batches.sql` - Central graduation batches, profile relationships, and existing alumni backfill
+- `018_normalize_dashboard_slide_media.sql` - One-time dashboard slideshow schema and media-type normalization

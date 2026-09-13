@@ -135,6 +135,17 @@ const normalizeSettings = (value: Partial<SystemSettings> | null | undefined): S
     : DEFAULT_SYSTEM_SETTINGS.themeMode,
 });
 
+const readCachedSystemSettings = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(SYSTEM_SETTINGS_CACHE_KEY);
+    return cached ? normalizeSettings(JSON.parse(cached) as Partial<SystemSettings>) : null;
+  } catch {
+    localStorage.removeItem(SYSTEM_SETTINGS_CACHE_KEY);
+    return null;
+  }
+};
+
 let systemSettingsRequest: Promise<SystemSettings> | null = null;
 
 const requestSystemSettings = () => {
@@ -199,8 +210,9 @@ const applySystemSettings = (settings: SystemSettings) => {
 };
 
 export function SystemSettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
-  const [loading, setLoading] = useState(true);
+  const [cachedSettings] = useState(readCachedSystemSettings);
+  const [settings, setSettings] = useState<SystemSettings>(cachedSettings || DEFAULT_SYSTEM_SETTINGS);
+  const [loading, setLoading] = useState(!cachedSettings);
 
   const refreshSettings = useCallback(async () => {
     const data = await requestSystemSettings();
@@ -211,10 +223,11 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
+    if (!cachedSettings) setLoading(true);
+    if (cachedSettings) applySystemSettings(cachedSettings);
     refreshSettings()
       .catch(() => {
-        if (mounted) applySystemSettings(DEFAULT_SYSTEM_SETTINGS);
+        if (mounted) applySystemSettings(cachedSettings || DEFAULT_SYSTEM_SETTINGS);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -222,7 +235,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [refreshSettings]);
+  }, [cachedSettings, refreshSettings]);
 
   const value = useMemo(() => ({ settings, loading, refreshSettings }), [loading, refreshSettings, settings]);
 

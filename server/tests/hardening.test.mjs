@@ -53,6 +53,16 @@ test("deployed security policies allow authenticated blob PDF previews", () => {
   assert.match(security, /"frame-src": \[\s*"'self'",\s*"blob:"/);
 });
 
+test("deployed caching keeps versioned assets immutable and authenticated APIs private", () => {
+  const vercel = read("vercel.json");
+  const app = read("server/app.ts");
+
+  assert.match(vercel, /\/assets\/\(\.\*\)[\s\S]*public, max-age=31536000, immutable/);
+  assert.match(vercel, /\/index\.html[\s\S]*no-cache, no-store, must-revalidate/);
+  assert.match(app, /app\.use\("\/api"[\s\S]*private, no-store, max-age=0/);
+  assert.match(app, /immutable: true,[\s\S]*maxAge: "1y"/);
+});
+
 test("development, staging, and production configuration stay separated", () => {
   const envLoader = read("server/env.ts");
   const migrationRunner = read("server/run-migration.mjs");
@@ -151,6 +161,7 @@ test("critical migration files exist in order", () => {
     "015_president_organizational_governance.sql",
     "016_retire_president_access.sql",
     "017_graduation_batches.sql",
+    "018_normalize_dashboard_slide_media.sql",
   ]);
 });
 
@@ -425,8 +436,10 @@ test("in-app notifications use explicit application time and refresh promptly", 
 test("alumni slideshow renders early without duplicate media payloads", () => {
   const app = read("server/app.ts");
   const dashboard = read("src/pages/alumni/Dashboard.tsx");
+  const organizationChart = read("src/components/alumni/OrganizationChart.tsx");
   const slideshow = read("src/components/HomepageSlideshow.tsx");
   const mediaDialog = read("src/components/admin/HomepageMediaPostDialog.tsx");
+  const slideMigration = read("server/migrations/018_normalize_dashboard_slide_media.sql");
 
   assert.match(dashboard, /\/slideshow\?limit=1/);
   assert.match(dashboard, /\/slideshow\?limit=9&offset=1/);
@@ -434,6 +447,14 @@ test("alumni slideshow renders early without duplicate media payloads", () => {
   assert.match(dashboard, /<HomepageSlideshow slides=\{slideshow\} loading=\{slideshowLoading\}/);
   assert.match(app, /imageUrl: null/);
   assert.match(app, /const includeSlideshow = normalizeBoolean\(req\.query\.includeSlideshow, true\)/);
+  assert.match(organizationChart, /path: "\/alumni\/dashboard\?includeSlideshow=false"/);
+  assert.match(organizationChart, /appQueryKeys\.alumniDashboard/);
+  assert.doesNotMatch(app, /ensureDashboardSlideTable|initializeDashboardSlideTable/);
+  assert.match(slideMigration, /CREATE TABLE IF NOT EXISTS dashboard_slides/);
+  assert.match(slideMigration, /ALTER TABLE dashboard_slides[\s\S]*ADD COLUMN media_type/);
+  assert.ok(slideMigration.includes("image_url REGEXP 'youtube\\\\.com|youtu\\\\.be'"));
+  assert.ok(slideMigration.includes("image_url REGEXP '\\\\.(mp4|webm|ogg|mov)(\\\\?.*)?$'"));
+  assert.doesNotMatch(dashboard, /LoadingProgress/);
   assert.doesNotMatch(mediaDialog, /imageUrl: selectedMediaUrl/);
   assert.doesNotMatch(slideshow, /video\.load\(\)/);
   assert.match(slideshow, /preload="metadata"/);

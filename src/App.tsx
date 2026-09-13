@@ -1,65 +1,57 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { SystemSettingsProvider } from "@/context/SystemSettingsContext";
 import { canAccessModule, type OfficerRole } from "@/lib/rbac";
 import type { AdminModule } from "@/lib/rbac";
+import { queryClient, QUERY_CACHE_POLICY } from "@/lib/queryClient";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { prefetchCommonRouteModules, routeModules } from "@/lib/routePrefetch";
 
 // Lazy-loaded page components for code splitting
-const Login = lazy(() => import("./pages/Login"));
-const NotFound = lazy(() => import("./pages/NotFound"));
+const Login = lazy(routeModules.login);
+const NotFound = lazy(routeModules.notFound);
 
 // Admin pages
-const AdminDashboard = lazy(() => import("./pages/admin/Dashboard"));
-const AdminAlumni = lazy(() => import("./pages/admin/Alumni"));
-const AdminGraduateTracer = lazy(() => import("./pages/admin/GraduateTracer"));
-const AdminEngagement = lazy(() => import("./pages/admin/Engagement"));
-const AdminCommunity = lazy(() => import("./pages/admin/Community"));
-const AdminAchievements = lazy(() => import("./pages/admin/Achievements"));
-const AdminAnnouncements = lazy(() => import("./pages/admin/Announcements"));
-const AdminDonations = lazy(() => import("./pages/admin/Donations"));
-const AdminNotifications = lazy(() => import("./pages/admin/Notifications"));
-const AdminAccount = lazy(() => import("./pages/admin/Account"));
-const AccessDenied = lazy(() => import("./pages/admin/AccessDenied"));
+const AdminDashboard = lazy(routeModules.adminDashboard);
+const AdminAlumni = lazy(routeModules.adminAlumni);
+const AdminGraduateTracer = lazy(routeModules.adminTracer);
+const AdminEngagement = lazy(routeModules.adminEngagement);
+const AdminCommunity = lazy(routeModules.adminCommunity);
+const AdminAchievements = lazy(routeModules.adminAchievements);
+const AdminAnnouncements = lazy(routeModules.adminAnnouncements);
+const AdminDonations = lazy(routeModules.adminDonations);
+const AdminNotifications = lazy(routeModules.adminNotifications);
+const AdminAccount = lazy(routeModules.adminAccount);
+const AccessDenied = lazy(routeModules.accessDenied);
 
 // Alumni pages
-const AlumniDashboard = lazy(() => import("./pages/alumni/Dashboard"));
-const AlumniAccount = lazy(() => import("./pages/alumni/Account"));
-const AlumniTracer = lazy(() => import("./pages/alumni/Tracer"));
-const AlumniDonate = lazy(() => import("./pages/alumni/Donate"));
-const AlumniAboutUs = lazy(() => import("./pages/alumni/AboutUs"));
-const AlumniCommunity = lazy(() => import("./pages/alumni/Community"));
-const AlumniAchievements = lazy(() => import("./pages/alumni/Achievements"));
-const AlumniAnnouncements = lazy(() => import("./pages/alumni/Announcements"));
+const AlumniDashboard = lazy(routeModules.alumniDashboard);
+const AlumniAccount = lazy(routeModules.alumniAccount);
+const AlumniTracer = lazy(routeModules.alumniTracer);
+const AlumniDonate = lazy(routeModules.alumniDonate);
+const AlumniAboutUs = lazy(routeModules.alumniAbout);
+const AlumniCommunity = lazy(routeModules.alumniCommunity);
+const AlumniAchievements = lazy(routeModules.alumniAchievements);
+const AlumniAnnouncements = lazy(routeModules.alumniAnnouncements);
 
 // Chairman pages
-const ChairmanDashboard = lazy(() => import("./pages/chairman/Dashboard"));
-const ChairmanAlumni = lazy(() => import("./pages/chairman/Alumni"));
-const ChairmanGraduateTracer = lazy(() => import("./pages/chairman/GraduateTracer"));
-const ChairmanAccount = lazy(() => import("./pages/chairman/Account"));
-const ChairmanEngagement = lazy(() => import("./pages/chairman/Engagement"));
-const ChairmanAnnouncements = lazy(() => import("./pages/chairman/Announcements"));
-const ChairmanAchievements = lazy(() => import("./pages/chairman/Achievements"));
-const ChairmanCommunity = lazy(() => import("./pages/chairman/Community"));
+const ChairmanDashboard = lazy(routeModules.chairmanDashboard);
+const ChairmanAlumni = lazy(routeModules.chairmanAlumni);
+const ChairmanGraduateTracer = lazy(routeModules.chairmanTracer);
+const ChairmanAccount = lazy(routeModules.chairmanAccount);
+const ChairmanEngagement = lazy(routeModules.chairmanEngagement);
+const ChairmanAnnouncements = lazy(routeModules.chairmanAnnouncements);
+const ChairmanAchievements = lazy(routeModules.chairmanAchievements);
+const ChairmanCommunity = lazy(routeModules.chairmanCommunity);
 
 import { CircularLoadingProgress } from "@/components/ui/loading-progress";
 
-const OfficerBundlesModule = lazy(() => import("./components/admin/OfficerBundlesModule"));
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      gcTime: 1000 * 60 * 30, // 30 minutes
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
+const OfficerBundlesModule = lazy(routeModules.officerBundles);
 
 function isOfficerRole(role: string | null): role is OfficerRole {
   if (!role) return false;
@@ -121,7 +113,42 @@ function AuthRedirect() {
 }
 
 function PageSuspense({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<FullScreenLoader />}>{children}</Suspense>;
+  return <Suspense fallback={<div className="fixed inset-x-0 top-0 z-[100] h-1 overflow-hidden bg-muted"><div className="h-full w-2/3 animate-pulse bg-navy" /></div>}>{children}</Suspense>;
+}
+
+function PostLoginPrefetch() {
+  const { user, role, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading || !user || !role) return;
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+    if (connection?.saveData) return;
+
+    const timer = window.setTimeout(() => {
+      prefetchCommonRouteModules(role);
+
+      void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({
+        queryKey: appQueryKeys.notifications(user.id),
+        path: "/user-notifications",
+        policy: QUERY_CACHE_POLICY.live,
+      }));
+
+      if (role === "alumni") {
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.alumniSlideshowFirst(user.id), path: "/slideshow?limit=1", policy: QUERY_CACHE_POLICY.standard }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.alumniDashboard(user.id), path: "/alumni/dashboard?includeSlideshow=false", policy: QUERY_CACHE_POLICY.user }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.announcements(user.id), path: "/announcements", policy: QUERY_CACHE_POLICY.standard }));
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.surveys(user.id), path: "/surveys", policy: QUERY_CACHE_POLICY.standard }));
+      } else if (role === "chairman") {
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.chairmanDashboard(user.id), path: "/chairman/dashboard", policy: QUERY_CACHE_POLICY.user }));
+      } else {
+        void queryClient.prefetchQuery(authenticatedQueryOptions<unknown>({ queryKey: appQueryKeys.adminDashboard(user.id), path: "/admin/dashboard", policy: QUERY_CACHE_POLICY.live }));
+      }
+    }, 750);
+
+    return () => window.clearTimeout(timer);
+  }, [loading, role, user]);
+
+  return null;
 }
 
 function AppRoutes() {
@@ -188,6 +215,7 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <PostLoginPrefetch />
           <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AppRoutes />
           </BrowserRouter>

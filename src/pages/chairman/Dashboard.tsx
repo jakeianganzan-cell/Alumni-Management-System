@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import ChairmanLayout from "@/components/chairman/ChairmanLayout";
-import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 import {
   Briefcase,
   GraduationCap,
@@ -44,31 +46,23 @@ const statusColor: Record<string, string> = {
 };
 
 export default function ChairmanDashboard() {
-  const [data, setData] = useState<DashboardResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const loadDashboard = async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await fetch(`${API_URL}/chairman/dashboard`, {
-          headers: getAuthHeaders(),
-        });
-
-        const payload = await readApiResponse<DashboardResponse>(response);
-        setData(payload);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load chairman dashboard.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadDashboard();
-  }, []);
+  const { user } = useAuth();
+  const dashboardQuery = useQuery<DashboardResponse>({
+    ...authenticatedQueryOptions<DashboardResponse>({
+      queryKey: appQueryKeys.chairmanDashboard(user?.id || "signed-out"),
+      path: "/chairman/dashboard",
+      policy: QUERY_CACHE_POLICY.user,
+      refetchInterval: 2 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const data = dashboardQuery.data;
+  const loading = dashboardQuery.isLoading && !data;
+  const error = !data && dashboardQuery.error instanceof Error
+    ? dashboardQuery.error.message
+    : !data && dashboardQuery.error
+      ? "Failed to load chairman dashboard."
+      : "";
 
   return (
     <ChairmanLayout

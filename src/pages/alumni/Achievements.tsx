@@ -1,5 +1,6 @@
 import { clientLogger } from "@/lib/logger";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,9 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AchievementStatus = "pending" | "approved" | "rejected" | "archived";
 type ReactionType = "heart";
@@ -90,14 +94,35 @@ const EMPTY_REACTIONS: ReactionCounts = {
 };
 
 export default function AlumniAchievements() {
-  const [achievements, setAchievements] = useState<AchievementRecord[]>([]);
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const achievementQueryKey = appQueryKeys.achievements(user?.id || "signed-out");
+  const achievementsQuery = useQuery<AchievementRecord[]>({
+    ...authenticatedQueryOptions<AchievementRecord[]>({
+      queryKey: achievementQueryKey,
+      path: "/achievements",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 60_000,
+    }),
+    enabled: Boolean(user),
+    select: (data) => data.map((achievement) => ({
+      ...achievement,
+      reactionCounts: achievement.reactionCounts || EMPTY_REACTIONS,
+      currentUserReaction: achievement.currentUserReaction || null,
+      commentCount: achievement.commentCount || 0,
+    })),
+  });
+  const achievements = useMemo(
+    () => Array.isArray(achievementsQuery.data) ? achievementsQuery.data : [],
+    [achievementsQuery.data],
+  );
   const [achievementOrder, setAchievementOrder] = useState<number[]>([]);
   const [comments, setComments] = useState<Record<number, AchievementComment[]>>({});
   const [commentsOpen, setCommentsOpen] = useState<Record<number, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
   const [loadingComments, setLoadingComments] = useState<Record<number, boolean>>({});
   const [submittingComment, setSubmittingComment] = useState<Record<number, boolean>>({});
-  const [loading, setLoading] = useState(true);
+  const loading = achievementsQuery.isLoading && !achievementsQuery.data;
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState<AchievementRecord | null>(null);
@@ -107,19 +132,12 @@ export default function AlumniAchievements() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
   const loadAchievements = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/achievements`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<AchievementRecord[]>(response);
-      const normalized = data.map((achievement) => ({
-        ...achievement,
-        reactionCounts: achievement.reactionCounts || EMPTY_REACTIONS,
-        currentUserReaction: achievement.currentUserReaction || null,
-        commentCount: achievement.commentCount || 0,
-      }));
-      setAchievements(normalized);
+    await achievementsQuery.refetch();
+  };
+
+  useEffect(() => {
+    const normalized = achievementsQuery.data;
+    if (!Array.isArray(normalized)) return;
       setAchievementOrder((currentOrder) => {
         const availableIds = normalized.map((achievement) => achievement.id);
         if (currentOrder.length === 0) {
@@ -136,13 +154,13 @@ export default function AlumniAchievements() {
         return [...newIds, ...retainedIds];
       });
       setSelected((current) => (current ? normalized.find((achievement) => achievement.id === current.id) || current : current));
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error("Failed to load achievements");
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [achievementsQuery.data]);
+
+  useEffect(() => {
+    if (!achievementsQuery.error || achievementsQuery.data) return;
+    clientLogger.error(achievementsQuery.error);
+    toast.error("Failed to load achievements");
+  }, [achievementsQuery.data, achievementsQuery.error]);
 
   const loadComments = async (achievementId: number) => {
     try {
@@ -159,10 +177,6 @@ export default function AlumniAchievements() {
       setLoadingComments((current) => ({ ...current, [achievementId]: false }));
     }
   };
-
-  useEffect(() => {
-    void loadAchievements();
-  }, []);
 
   useEffect(() => {
     const achievementId = selected?.id;
@@ -227,7 +241,7 @@ export default function AlumniAchievements() {
         body: JSON.stringify({ reactionType }),
       });
       const payload = await readApiResponse<{ currentReaction: ReactionType | null; reactionCounts: ReactionCounts }>(response);
-      setAchievements((current) =>
+      queryClient.setQueryData<AchievementRecord[]>(achievementQueryKey, (current = []) =>
         current.map((achievement) =>
           achievement.id === achievementId
             ? {

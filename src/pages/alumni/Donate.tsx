@@ -1,5 +1,6 @@
 import { clientLogger } from "@/lib/logger";
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import {
@@ -19,6 +20,8 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 interface DonationSettings {
   gcash_name: string;
@@ -114,15 +117,40 @@ export default function AlumniDonate() {
   const [step, setStep] = useState(1);
   const [identity, setIdentity] = useState<"named" | "anonymous">("named");
   const [method, setMethod] = useState<"GCash" | "Personal">("GCash");
-  const [history, setHistory] = useState<ContributionHistoryItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState<DonationConfirmation | null>(null);
-  const [settings, setSettings] = useState<DonationSettings>(EMPTY_SETTINGS);
-  const [loadingSettings, setLoadingSettings] = useState(true);
   const [showQrPreview, setShowQrPreview] = useState(false);
   const [donationHistoryOpen, setDonationHistoryOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [form, setForm] = useState(() => createEmptyForm(profile));
+  const settingsQuery = useQuery<Partial<DonationSettings>>({
+    ...authenticatedQueryOptions<Partial<DonationSettings>>({
+      queryKey: appQueryKeys.donationSettings(),
+      path: "/settings/donation",
+      policy: QUERY_CACHE_POLICY.reference,
+    }),
+    enabled: Boolean(user),
+  });
+  const historyQuery = useQuery<ContributionHistoryItem[]>({
+    ...authenticatedQueryOptions<ContributionHistoryItem[]>({
+      queryKey: appQueryKeys.donationHistory(user?.id || "signed-out"),
+      path: "/alumni/donations",
+      policy: QUERY_CACHE_POLICY.user,
+      refetchInterval: 2 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const rawSettings = settingsQuery.data;
+  const settings: DonationSettings = rawSettings ? {
+    gcash_name: rawSettings.gcash_name ?? "",
+    gcash_number: rawSettings.gcash_number ?? "",
+    gcash_qr: rawSettings.gcash_qr ?? "",
+    personal_personnel: rawSettings.personal_personnel ?? "",
+    personal_contact: rawSettings.personal_contact ?? "",
+    personal_office: rawSettings.personal_office ?? "",
+  } : EMPTY_SETTINGS;
+  const history = Array.isArray(historyQuery.data) ? historyQuery.data : [];
+  const loadingSettings = settingsQuery.isLoading && !rawSettings;
   const visibleHistory = history.filter((item) => DONATION_TYPES.includes(item.contribution_type));
 
   const set = (key: keyof typeof form, value: string | File | null | boolean) => {
@@ -139,41 +167,9 @@ export default function AlumniDonate() {
     }));
   }, [profile]);
 
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const response = await fetch(`${API_URL}/settings/donation`, { headers: getAuthHeaders() });
-        const data = await readApiResponse<Partial<DonationSettings>>(response);
-        setSettings({
-          gcash_name: data?.gcash_name ?? "",
-          gcash_number: data?.gcash_number ?? "",
-          gcash_qr: data?.gcash_qr ?? "",
-          personal_personnel: data?.personal_personnel ?? "",
-          personal_contact: data?.personal_contact ?? "",
-          personal_office: data?.personal_office ?? "",
-        });
-      } catch (error) {
-        clientLogger.error(error);
-      } finally {
-        setLoadingSettings(false);
-      }
-    };
-
-    void fetchSettings();
-  }, []);
-
   const fetchHistory = async () => {
-    try {
-      const historyResponse = await fetch(`${API_URL}/alumni/donations`, { headers: getAuthHeaders() });
-      setHistory(await readApiResponse<ContributionHistoryItem[]>(historyResponse));
-    } catch (error) {
-      clientLogger.error(error);
-    }
+    await historyQuery.refetch();
   };
-
-  useEffect(() => {
-    void fetchHistory();
-  }, []);
 
   const handleReceiptChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

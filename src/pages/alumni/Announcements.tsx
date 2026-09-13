@@ -1,5 +1,6 @@
 import { clientLogger } from "@/lib/logger";
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus, Reply, Send, UserCircle } from "lucide-react";
 import AlumniLayout from "@/components/alumni/AlumniLayout";
 import { AnnouncementAttachment, AnnouncementCard, formatTypeLabel } from "@/components/AnnouncementCard";
@@ -12,6 +13,9 @@ import type { Announcement } from "@/context/AnnouncementContext";
 import { API_URL, getAuthHeaders, readApiResponse, resolveAssetUrl } from "@/lib/api";
 import { toast } from "sonner";
 import DurationBadge from "@/components/DurationBadge";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AlumniAnnouncementForm = {
   title: string;
@@ -94,9 +98,36 @@ const BLANK_FORM: AlumniAnnouncementForm = {
 const LIST_PAGE_SIZE = 10;
 
 export default function AlumniAnnouncements() {
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [surveys, setSurveys] = useState<SurveyData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const userId = user?.id || "signed-out";
+  const announcementsQuery = useQuery<Announcement[]>({
+    ...authenticatedQueryOptions<Announcement[]>({
+      queryKey: appQueryKeys.announcements(userId),
+      path: "/announcements",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const surveysQuery = useQuery<SurveyData[]>({
+    ...authenticatedQueryOptions<SurveyData[]>({
+      queryKey: appQueryKeys.surveys(userId),
+      path: "/surveys",
+      policy: QUERY_CACHE_POLICY.standard,
+      refetchInterval: 2 * 60_000,
+    }),
+    enabled: Boolean(user),
+  });
+  const announcements = useMemo(
+    () => Array.isArray(announcementsQuery.data) ? announcementsQuery.data : [],
+    [announcementsQuery.data],
+  );
+  const surveys = useMemo(
+    () => Array.isArray(surveysQuery.data) ? surveysQuery.data : [],
+    [surveysQuery.data],
+  );
+  const loading = (announcementsQuery.isLoading && !announcementsQuery.data)
+    || (surveysQuery.isLoading && !surveysQuery.data);
   const [submitting, setSubmitting] = useState(false);
   const [selectedAnnouncement, setSelectedAnnouncement] = useState<Announcement | null>(null);
   const [selectedSurvey, setSelectedSurvey] = useState<SurveyData | null>(null);
@@ -116,38 +147,24 @@ export default function AlumniAnnouncements() {
   const [activePage, setActivePage] = useState(1);
 
   const loadAnnouncements = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/announcements`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<Announcement[]>(response);
-      setAnnouncements(data);
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error("Failed to load announcements");
-    } finally {
-      setLoading(false);
-    }
+    await announcementsQuery.refetch();
   };
 
   const loadSurveys = async () => {
-    try {
-      const response = await fetch(`${API_URL}/surveys`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await readApiResponse<SurveyData[]>(response);
-      setSurveys(data);
-    } catch (error) {
-      clientLogger.error(error);
-      toast.error("Failed to load surveys");
-    }
+    await surveysQuery.refetch();
   };
 
   useEffect(() => {
-    void loadAnnouncements();
-    void loadSurveys();
-  }, []);
+    if (!announcementsQuery.error || announcementsQuery.data) return;
+    clientLogger.error(announcementsQuery.error);
+    toast.error("Failed to load announcements");
+  }, [announcementsQuery.data, announcementsQuery.error]);
+
+  useEffect(() => {
+    if (!surveysQuery.error || surveysQuery.data) return;
+    clientLogger.error(surveysQuery.error);
+    toast.error("Failed to load surveys");
+  }, [surveysQuery.data, surveysQuery.error]);
 
   useEffect(() => {
     setActivePage(1);

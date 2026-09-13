@@ -28,6 +28,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import DurationBadge from "@/components/DurationBadge";
 import SurveyStudio from "@/components/admin/SurveyStudio";
+import { useAuth } from "@/hooks/useAuth";
+import { appQueryKeys, authenticatedQueryOptions } from "@/lib/appQueries";
+import { QUERY_CACHE_POLICY } from "@/lib/queryClient";
 
 type AnnouncementForm = {
   title: string;
@@ -121,6 +124,9 @@ const LIST_PAGE_SIZE = 10;
 
 export default function AdminAnnouncements() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const userId = user?.id || "signed-out";
+  const announcementQueryKey = appQueryKeys.announcements(userId);
   const [formOpen, setFormOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedAnnouncement, setSelectedAnnouncement] = useState<Announcement | null>(null);
@@ -135,20 +141,19 @@ export default function AdminAnnouncements() {
   const [announcementToDelete, setAnnouncementToDelete] = useState<Announcement | null>(null);
 
   const { data: announcements = [], isLoading } = useQuery<Announcement[]>({
-    queryKey: ["announcements"],
-    queryFn: async () => {
-      const response = await fetch(`${API_URL}/announcements`, {
-        headers: getAuthHeaders(),
-      });
-      return readApiResponse<Announcement[]>(response);
-    },
-    staleTime: 60_000,
+    ...authenticatedQueryOptions<Announcement[]>({
+      queryKey: announcementQueryKey,
+      path: "/announcements",
+      policy: QUERY_CACHE_POLICY.live,
+      refetchInterval: 15_000,
+    }),
+    enabled: Boolean(user),
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,
   });
 
   const { data: interestSummary, isLoading: interestsLoading } = useQuery<AdminInterestSummary>({
-    queryKey: ["admin-announcement-interests", selectedAnnouncement?.id],
+    queryKey: appQueryKeys.announcementInterests(userId, selectedAnnouncement?.id),
     enabled: detailOpen && Boolean(selectedAnnouncement) && (selectedAnnouncement?.type === "event" || Boolean(selectedAnnouncement?.interestEnabled)),
     queryFn: async () => {
       if (!selectedAnnouncement) {
@@ -174,7 +179,7 @@ export default function AdminAnnouncements() {
     },
     onSuccess: () => {
       toast.success("Announcement created");
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
       closeForm();
     },
     onError: (error) => {
@@ -183,7 +188,7 @@ export default function AdminAnnouncements() {
   });
 
   const { data: announcementComments = [], isFetching: commentsLoading } = useQuery<AnnouncementComment[]>({
-    queryKey: ["admin-announcement-comments", selectedAnnouncement?.id],
+    queryKey: appQueryKeys.announcementComments(userId, selectedAnnouncement?.id),
     enabled: Boolean(detailOpen && selectedAnnouncement?.id),
     queryFn: async () => {
       const response = await fetch(`${API_URL}/announcements/${selectedAnnouncement!.id}/comments`, {
@@ -204,7 +209,7 @@ export default function AdminAnnouncements() {
     },
     onSuccess: () => {
       toast.success("Announcement updated");
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
       closeForm();
       setDetailOpen(false);
       setSelectedAnnouncement(null);
@@ -226,7 +231,7 @@ export default function AdminAnnouncements() {
     },
     onSuccess: (_, variables) => {
       toast.success(variables.approvalStatus === "approved" ? "Announcement approved and published" : "Announcement rejected");
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
       setRejectionReason("");
     },
     onError: (error) => {
@@ -244,7 +249,7 @@ export default function AdminAnnouncements() {
     },
     onSuccess: () => {
       toast.success("Announcement deleted");
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
       setDetailOpen(false);
       setSelectedAnnouncement(null);
     },
@@ -264,7 +269,7 @@ export default function AdminAnnouncements() {
     },
     onSuccess: () => {
       toast.success("Item archived");
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
       setDetailOpen(false);
       setSelectedAnnouncement(null);
     },
@@ -284,8 +289,8 @@ export default function AdminAnnouncements() {
     },
     onSuccess: () => {
       toast.success("Comment moderation updated");
-      queryClient.invalidateQueries({ queryKey: ["admin-announcement-comments", selectedAnnouncement?.id] });
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      queryClient.invalidateQueries({ queryKey: appQueryKeys.announcementComments(userId, selectedAnnouncement?.id) });
+      queryClient.invalidateQueries({ queryKey: announcementQueryKey });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to moderate comment");
