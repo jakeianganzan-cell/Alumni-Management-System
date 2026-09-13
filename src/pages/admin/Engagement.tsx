@@ -80,6 +80,37 @@ interface DashboardAnalyticsResponse {
   predictionCounts?: PredictionCountPoint[];
 }
 
+export function buildTopBatches(data?: EngagementMetricsResponse): BatchEngagement[] {
+  const userBatchMap = new Map<string, string>();
+  data?.profiles?.forEach((profile) => {
+    if (profile.batch) userBatchMap.set(profile.id, profile.batch);
+  });
+
+  const batchMap = new Map<string, { events: number; comments: number; members: Set<string> }>();
+  const addToBatch = (userId: string, type: "events" | "comments") => {
+    const batch = userBatchMap.get(userId);
+    if (!batch) return;
+    const entry = batchMap.get(batch) ?? { events: 0, comments: 0, members: new Set<string>() };
+    entry[type]++;
+    entry.members.add(userId);
+    batchMap.set(batch, entry);
+  };
+
+  data?.regs?.forEach((registration) => addToBatch(registration.user_id, "events"));
+  data?.comments?.forEach((comment) => addToBatch(comment.user_id, "comments"));
+
+  return Array.from(batchMap.entries())
+    .map(([batch, totals]) => ({
+      batch,
+      events: totals.events,
+      comments: totals.comments,
+      score: totals.events * 10 + totals.comments * 5,
+      memberCount: totals.members.size,
+    }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 10);
+}
+
 export default function AdminEngagement() {
   const { user } = useAuth();
   const metricsQuery = useQuery({
@@ -98,38 +129,7 @@ export default function AdminEngagement() {
     }),
     enabled: Boolean(user?.id),
   });
-  const topBatches = useMemo<BatchEngagement[]>(() => {
-      const data = metricsQuery.data;
-      const userBatchMap = new Map<string, string>();
-      data.profiles?.forEach((profile) => {
-        if (profile.batch) userBatchMap.set(profile.id, profile.batch);
-      });
-
-      const batchMap = new Map<string, { events: number; comments: number; members: Set<string> }>();
-
-      const addToBatch = (userId: string, type: "events" | "comments") => {
-        const batch = userBatchMap.get(userId);
-        if (!batch) return;
-        const entry = batchMap.get(batch) ?? { events: 0, comments: 0, members: new Set<string>() };
-        entry[type]++;
-        entry.members.add(userId);
-        batchMap.set(batch, entry);
-      };
-
-      data.regs?.forEach((registration) => addToBatch(registration.user_id, "events"));
-      data.comments?.forEach((comment) => addToBatch(comment.user_id, "comments"));
-
-      return Array.from(batchMap.entries())
-        .map(([batch, s]) => ({
-          batch,
-          events: s.events,
-          comments: s.comments,
-          score: s.events * 10 + s.comments * 5,
-          memberCount: s.members.size,
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
-  }, [metricsQuery.data]);
+  const topBatches = useMemo(() => buildTopBatches(metricsQuery.data), [metricsQuery.data]);
   const courseComparisons = dashboardQuery.data?.courseComparisons ?? [];
   const heatmap = dashboardQuery.data?.heatmap ?? [];
   const topAlumni = dashboardQuery.data?.topAlumni ?? [];
