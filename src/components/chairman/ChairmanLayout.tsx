@@ -7,7 +7,7 @@ import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { LogoutConfirmDialog } from "@/components/account/LogoutConfirmDialog";
 import {
-  LayoutDashboard, Users, LogOut, Menu, X, LineChart,
+  LayoutDashboard, Users, LogOut, Menu, X, LineChart, FileText,
   ChevronDown, User, Megaphone, Award, MessageSquare
 } from "lucide-react";
 import ustpLogo from "@/assets/salay.png";
@@ -21,6 +21,7 @@ interface ChairmanLayoutProps {
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/chairman" },
   { icon: Users, label: "Alumni Records", path: "/chairman/alumni" },
+  { icon: FileText, label: "Graduate Tracer", path: "/chairman/tracer" },
   { icon: LineChart, label: "Engagement", path: "/chairman/engagement" },
   { icon: Megaphone, label: "Announcements", path: "/chairman/announcements" },
   { icon: Award, label: "Achievements", path: "/chairman/achievements" },

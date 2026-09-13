@@ -3,8 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
+import { API_URL, ApiError, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
+import { validateTracerPayload } from "../../../shared/tracerValidation";
 import SectionA from "./SectionA";
 import SectionB from "./SectionB";
 import SectionC from "./SectionC";
@@ -37,11 +38,9 @@ import {
   type TracerStepId,
   type TracerTableField,
 } from "./tracer-form-types";
+import { selectTracerFormPayload } from "./tracer-draft";
 
 const AUTOSAVE_KEY = "ched-tracer-draft-v3";
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const phonePattern = /^[0-9+\-\s()]{7,20}$/;
-const yearPattern = /^(19|20)\d{2}$/;
 
 interface TracerEnvelope {
   submission: null | {
@@ -63,6 +62,58 @@ interface TracerEnvelope {
   canSubmit: boolean;
 }
 
+const TRACER_STEP_FIELDS: Record<TracerStepId, TracerFormField[]> = {
+  sectionA: ["fullName", "permanentAddress", "email", "telephoneNumber", "mobileNumber", "civilStatus", "sex", "birthdayMonth", "birthdayDay", "birthdayYear", "regionOfOrigin", "province", "residenceType"],
+  sectionB: ["educationalAttainments", "professionalExams", "reasonsForCourse", "reasonsForCourseOther"],
+  sectionC: ["trainings", "advanceStudyReason", "advanceStudyReasonOther"],
+  sectionD: [
+    "presentlyEmployed",
+    "unemploymentReasons",
+    "unemploymentReasonsOther",
+    "presentEmploymentStatus",
+    "selfEmployedSkills",
+    "presentOccupation",
+    "companyNameAddress",
+    "industry",
+    "workLocation",
+    "firstJobAfterCollege",
+    "reasonsForStaying",
+    "reasonsForStayingOther",
+    "firstJobRelatedToCourse",
+    "reasonsForAcceptingJob",
+    "reasonsForAcceptingJobOther",
+    "reasonsForChangingJob",
+    "reasonsForChangingJobOther",
+    "firstJobDuration",
+    "firstJobDurationOther",
+    "firstJobFindingWays",
+    "firstJobFindingWaysOther",
+    "timeToLandFirstJob",
+    "timeToLandFirstJobOther",
+    "jobLevelFirstJob",
+    "jobLevelCurrentJob",
+    "initialGrossMonthlyEarning",
+    "curriculumRelevantToFirstJob",
+    "usefulCompetencies",
+    "usefulCompetenciesOther",
+    "curriculumSuggestions",
+    "referrals",
+  ],
+};
+
+const getServerTracerErrors = (error: unknown): TracerFormErrors => {
+  if (!(error instanceof ApiError) || !error.payload || typeof error.payload !== "object") return {};
+  const fields = "fields" in error.payload ? error.payload.fields : null;
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) return {};
+
+  return Object.fromEntries(
+    Object.entries(fields).filter((entry): entry is [TracerFormField, string] =>
+      TRACER_STEPS.some((step) => TRACER_STEP_FIELDS[step.id].includes(entry[0] as TracerFormField))
+      && typeof entry[1] === "string"
+      && entry[1].trim().length > 0),
+  ) as TracerFormErrors;
+};
+
 function readDraft(defaults: Partial<TracerFormValues>) {
   if (typeof window === "undefined") return createEmptyTracerForm(defaults);
   try {
@@ -77,25 +128,12 @@ function readDraft(defaults: Partial<TracerFormValues>) {
   }
 }
 
-function isFilledRow(row: object) {
-  return Object.values(row as Record<string, unknown>).some((value) => String(value ?? "").trim() !== "");
-}
-
 function normalizeFormSource(envelope: TracerEnvelope | null, defaults: Partial<TracerFormValues>) {
-  const submitted = envelope?.submission?.ched_payload;
-  const draft = envelope?.draft?.ched_payload;
-
-  if (submitted && typeof submitted === "object") {
+  const savedPayload = selectTracerFormPayload(envelope?.submission, envelope?.draft);
+  if (savedPayload) {
     return createEmptyTracerForm({
       ...defaults,
-      ...submitted,
-    });
-  }
-
-  if (draft && typeof draft === "object") {
-    return createEmptyTracerForm({
-      ...defaults,
-      ...draft,
+      ...savedPayload,
     });
   }
 
@@ -128,8 +166,10 @@ async function downloadTracerPdf() {
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
   anchor.download = fileName;
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(objectUrl);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 async function previewTracerPdf(previewWindow: Window | null) {
@@ -216,168 +256,10 @@ export default function TracerForm() {
     });
   };
 
-  const validateAll = (formValue: TracerFormValues) => {
-    const nextErrors: TracerFormErrors = {};
-
-    const requireText = (field: TracerFormField, message = "This field is required.") => {
-      const value = formValue[field];
-      if (typeof value === "string" && value.trim() === "") nextErrors[field] = message;
-    };
-
-    requireText("fullName");
-    requireText("permanentAddress");
-    requireText("email");
-    requireText("mobileNumber");
-    requireText("civilStatus");
-    requireText("sex");
-    requireText("birthdayMonth");
-    requireText("birthdayDay");
-    requireText("birthdayYear");
-    requireText("regionOfOrigin");
-    requireText("province");
-    requireText("residenceType");
-    requireText("presentlyEmployed");
-
-    if (formValue.email.trim() && !emailPattern.test(formValue.email.trim())) nextErrors.email = "Enter a valid email address.";
-    if (formValue.mobileNumber.trim() && !phonePattern.test(formValue.mobileNumber.trim())) nextErrors.mobileNumber = "Enter a valid contact number.";
-    if (formValue.telephoneNumber.trim() && !phonePattern.test(formValue.telephoneNumber.trim())) nextErrors.telephoneNumber = "Enter a valid contact number.";
-    if (formValue.birthdayYear.trim() && !yearPattern.test(formValue.birthdayYear.trim())) nextErrors.birthdayYear = "Enter a valid 4-digit year.";
-
-    const educationRows = formValue.educationalAttainments.filter((row) => isFilledRow(row));
-    if (educationRows.length === 0) {
-      nextErrors.educationalAttainments = "At least one educational attainment entry is required.";
-    } else if (
-      educationRows.some((row) => !row.degreeSpecialization.trim() || !row.school.trim() || !row.yearGraduated.trim() || !yearPattern.test(row.yearGraduated.trim()))
-    ) {
-      nextErrors.educationalAttainments = "Each educational attainment row must include degree & specialization, school, and a valid year graduated.";
-    }
-
-    if (formValue.reasonsForCourse.includes("Others") && !formValue.reasonsForCourseOther.trim()) {
-      nextErrors.reasonsForCourseOther = "Specify the other reason for taking the course.";
-    }
-
-    const trainingRows = formValue.trainings.filter((row) => isFilledRow(row));
-    if (trainingRows.some((row) => !row.title.trim() || !row.durationCredits.trim() || !row.institution.trim())) {
-      nextErrors.trainings = "Complete title, duration/credits, and institution for each training row.";
-    }
-
-    if (formValue.advanceStudyReason === "Others" && !formValue.advanceStudyReasonOther.trim()) {
-      nextErrors.advanceStudyReasonOther = "Specify the other reason for advance studies.";
-    }
-
-    if (formValue.presentlyEmployed !== "Employed") {
-      if (formValue.unemploymentReasons.length === 0) nextErrors.unemploymentReasons = "Select at least one unemployment reason.";
-      if (formValue.unemploymentReasons.includes("Other reason(s)") && !formValue.unemploymentReasonsOther.trim()) {
-        nextErrors.unemploymentReasonsOther = "Specify the other unemployment reason.";
-      }
-    }
-
-    if (formValue.presentlyEmployed === "Employed") {
-      requireText("presentEmploymentStatus");
-      requireText("presentOccupation");
-      requireText("industry");
-      requireText("workLocation");
-      requireText("firstJobAfterCollege");
-
-      if (formValue.presentEmploymentStatus === "Self-employed" && !formValue.selfEmployedSkills.trim()) {
-        nextErrors.selfEmployedSkills = "Describe the skills applied in self-employment.";
-      }
-
-      if (formValue.firstJobAfterCollege === "Yes") {
-        if (formValue.reasonsForStaying.length === 0) nextErrors.reasonsForStaying = "Select at least one reason for staying on the job.";
-        if (formValue.reasonsForStaying.includes("Other reason(s)") && !formValue.reasonsForStayingOther.trim()) {
-          nextErrors.reasonsForStayingOther = "Specify the other reason for staying.";
-        }
-      }
-
-      if (formValue.firstJobAfterCollege) requireText("firstJobRelatedToCourse");
-
-      if (formValue.firstJobRelatedToCourse === "Yes") {
-        if (formValue.reasonsForAcceptingJob.length === 0) nextErrors.reasonsForAcceptingJob = "Select at least one reason for accepting the job.";
-        if (formValue.reasonsForAcceptingJob.includes("Other reason(s)") && !formValue.reasonsForAcceptingJobOther.trim()) {
-          nextErrors.reasonsForAcceptingJobOther = "Specify the other reason for accepting the job.";
-        }
-      }
-
-      if (formValue.firstJobAfterCollege === "No" || formValue.firstJobRelatedToCourse === "No") {
-        if (formValue.reasonsForChangingJob.length === 0) nextErrors.reasonsForChangingJob = "Select at least one reason for changing job.";
-        if (formValue.reasonsForChangingJob.includes("Other reason(s)") && !formValue.reasonsForChangingJobOther.trim()) {
-          nextErrors.reasonsForChangingJobOther = "Specify the other reason for changing job.";
-        }
-      }
-
-      requireText("firstJobDuration");
-      if (formValue.firstJobDuration === "Others" && !formValue.firstJobDurationOther.trim()) nextErrors.firstJobDurationOther = "Specify the other duration.";
-
-      if (formValue.firstJobFindingWays.length === 0) nextErrors.firstJobFindingWays = "Select at least one job search method.";
-      if (formValue.firstJobFindingWays.includes("Others") && !formValue.firstJobFindingWaysOther.trim()) nextErrors.firstJobFindingWaysOther = "Specify the other job search method.";
-
-      requireText("timeToLandFirstJob");
-      if (formValue.timeToLandFirstJob === "Others" && !formValue.timeToLandFirstJobOther.trim()) nextErrors.timeToLandFirstJobOther = "Specify the other timeline.";
-
-      requireText("jobLevelFirstJob");
-      requireText("jobLevelCurrentJob");
-      requireText("initialGrossMonthlyEarning");
-      requireText("curriculumRelevantToFirstJob");
-
-      if (formValue.curriculumRelevantToFirstJob === "Yes") {
-        if (formValue.usefulCompetencies.length === 0) nextErrors.usefulCompetencies = "Select at least one useful competency.";
-        if (formValue.usefulCompetencies.includes("Other skills") && !formValue.usefulCompetenciesOther.trim()) {
-          nextErrors.usefulCompetenciesOther = "Specify the other useful skill.";
-        }
-      }
-    }
-
-    const referralRows = formValue.referrals.filter((row) => isFilledRow(row));
-    if (referralRows.some((row) => !row.name.trim() || !row.address.trim() || !row.contactNumber.trim())) {
-      nextErrors.referrals = "Complete name, address, and contact number for each alumni referral row.";
-    }
-
-    return nextErrors;
-  };
-
+  const validateAll = (formValue: TracerFormValues) => validateTracerPayload(formValue) as TracerFormErrors;
   const validateStep = (stepId: TracerStepId) => {
     const stepErrors = validateAll(form);
-    const stepFields: Record<TracerStepId, TracerFormField[]> = {
-      sectionA: ["fullName", "permanentAddress", "email", "telephoneNumber", "mobileNumber", "civilStatus", "sex", "birthdayMonth", "birthdayDay", "birthdayYear", "regionOfOrigin", "province", "residenceType"],
-      sectionB: ["educationalAttainments", "professionalExams", "reasonsForCourse", "reasonsForCourseOther"],
-      sectionC: ["trainings", "advanceStudyReason", "advanceStudyReasonOther"],
-      sectionD: [
-        "presentlyEmployed",
-        "unemploymentReasons",
-        "unemploymentReasonsOther",
-        "presentEmploymentStatus",
-        "selfEmployedSkills",
-        "presentOccupation",
-        "companyNameAddress",
-        "industry",
-        "workLocation",
-        "firstJobAfterCollege",
-        "reasonsForStaying",
-        "reasonsForStayingOther",
-        "firstJobRelatedToCourse",
-        "reasonsForAcceptingJob",
-        "reasonsForAcceptingJobOther",
-        "reasonsForChangingJob",
-        "reasonsForChangingJobOther",
-        "firstJobDuration",
-        "firstJobDurationOther",
-        "firstJobFindingWays",
-        "firstJobFindingWaysOther",
-        "timeToLandFirstJob",
-        "timeToLandFirstJobOther",
-        "jobLevelFirstJob",
-        "jobLevelCurrentJob",
-        "initialGrossMonthlyEarning",
-        "curriculumRelevantToFirstJob",
-        "usefulCompetencies",
-        "usefulCompetenciesOther",
-        "curriculumSuggestions",
-        "referrals",
-      ],
-    };
-
-    const filteredErrors = Object.fromEntries(Object.entries(stepErrors).filter(([key]) => stepFields[stepId].includes(key as TracerFormField))) as TracerFormErrors;
+    const filteredErrors = Object.fromEntries(Object.entries(stepErrors).filter(([key]) => TRACER_STEP_FIELDS[stepId].includes(key as TracerFormField))) as TracerFormErrors;
     setErrors((current) => ({ ...current, ...filteredErrors }));
     return Object.keys(filteredErrors).length === 0;
   };
@@ -477,6 +359,14 @@ export default function TracerForm() {
       toast.success("Tracer form saved successfully");
       await refreshProfile();
     } catch (error) {
+      const serverErrors = getServerTracerErrors(error);
+      if (Object.keys(serverErrors).length > 0) {
+        setErrors((current) => ({ ...current, ...serverErrors }));
+        const firstErrorStep = TRACER_STEPS.findIndex((step) =>
+          TRACER_STEP_FIELDS[step.id].some((field) => Boolean(serverErrors[field])),
+        );
+        if (firstErrorStep >= 0) setStepIndex(firstErrorStep);
+      }
       const message = error instanceof Error ? error.message : "Failed to submit tracer form.";
       setFeedback({ type: "error", message });
       toast.error(message);

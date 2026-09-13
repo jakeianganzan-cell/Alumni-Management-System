@@ -39,6 +39,7 @@ const AlumniAnnouncements = lazy(() => import("./pages/alumni/Announcements"));
 // Chairman pages
 const ChairmanDashboard = lazy(() => import("./pages/chairman/Dashboard"));
 const ChairmanAlumni = lazy(() => import("./pages/chairman/Alumni"));
+const ChairmanGraduateTracer = lazy(() => import("./pages/chairman/GraduateTracer"));
 const ChairmanAccount = lazy(() => import("./pages/chairman/Account"));
 const ChairmanEngagement = lazy(() => import("./pages/chairman/Engagement"));
 const ChairmanAnnouncements = lazy(() => import("./pages/chairman/Announcements"));
@@ -168,6 +169,7 @@ function AppRoutes() {
 
       <Route path="/chairman" element={<PageSuspense><ChairmanRoute><ChairmanDashboard /></ChairmanRoute></PageSuspense>} />
       <Route path="/chairman/alumni" element={<PageSuspense><ChairmanRoute><ChairmanAlumni /></ChairmanRoute></PageSuspense>} />
+      <Route path="/chairman/tracer" element={<PageSuspense><ChairmanRoute><ChairmanGraduateTracer /></ChairmanRoute></PageSuspense>} />
       <Route path="/chairman/account" element={<PageSuspense><ChairmanRoute><ChairmanAccount /></ChairmanRoute></PageSuspense>} />
       <Route path="/chairman/engagement" element={<PageSuspense><ChairmanRoute><ChairmanEngagement /></ChairmanRoute></PageSuspense>} />
       <Route path="/chairman/announcements" element={<PageSuspense><ChairmanRoute><ChairmanAnnouncements /></ChairmanRoute></PageSuspense>} />

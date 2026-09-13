@@ -30,3 +30,4 @@ npx tsx run-migration.mjs
 - `014_contribution_opportunities_and_submissions.sql` - Announcement opportunities, alumni registrations/offers, lifecycle tracking, and verified-record linkage
 - `015_president_organizational_governance.sql` - Administrator/President role separation, targets, MOAs, accomplishment reports, private documents, and project links
 - `016_retire_president_access.sql` - Retire President login access, end affected sessions, and retain the shared user as System Administrator
+- `017_graduation_batches.sql` - Central graduation batches, profile relationships, and existing alumni backfill

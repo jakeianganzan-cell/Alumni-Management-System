@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { AUTH_TOKEN_KEY, getAuthToken, setAuthToken } from "@/lib/api";
+import { AUTH_TOKEN_KEY, REMEMBER_ME_KEY, clearAuthToken, getAuthToken, setAuthToken } from "@/lib/api";
 
 describe("authentication token storage", () => {
   beforeEach(() => {
@@ -26,5 +26,16 @@ describe("authentication token storage", () => {
 
     expect(getAuthToken()).toBe("remembered-token");
     expect(sessionStorage.getItem(AUTH_TOKEN_KEY)).toBe("remembered-token");
+  });
+
+  it("clears active and remembered authentication during logout", () => {
+    setAuthToken("logout-token", true);
+
+    clearAuthToken();
+
+    expect(sessionStorage.getItem(AUTH_TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(AUTH_TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(REMEMBER_ME_KEY)).toBeNull();
+    expect(getAuthToken()).toBeNull();
   });
 });

@@ -141,7 +141,7 @@ export const ROLE_DEFINITIONS: Record<OfficerRole, RoleDefinition> = {
     color: "bg-indigo-600",
     textColor: "text-white",
     description: "Department Chairman - oversees department alumni",
-    modules: ["dashboard", "alumni", "engagement"],
+    modules: ["dashboard", "alumni", "tracer", "engagement"],
     permissions: ["alumni.view", "engagement.view", "tracer.view"],
   },
 };

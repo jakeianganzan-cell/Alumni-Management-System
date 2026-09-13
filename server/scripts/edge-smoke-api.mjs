@@ -12,6 +12,11 @@ if (process.env.SKIP_DOTENV !== "true") {
 }
 
 assertNonProductionOperation("Edge-case API smoke tests");
+const configuredDatabaseHost = String(process.env.DB_HOST || "127.0.0.1").trim().toLowerCase();
+const localDatabaseHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+if (!localDatabaseHosts.has(configuredDatabaseHost) && !String(process.env.DB_ENVIRONMENT || "").trim()) {
+  throw new Error("DB_ENVIRONMENT must explicitly identify a non-production remote database before edge smoke tests can run.");
+}
 
 const baseUrl = (process.env.API_BASE_URL || "http://127.0.0.1:5107").replace(/\/+$/, "");
 const adminEmail = process.env.SMOKE_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
@@ -70,8 +75,8 @@ const login = async (email, password, label) => {
   return selected?.body?.token || "";
 };
 
-if (!adminEmail || !adminPassword || !jwtSecret) {
-  throw new Error("Test admin credentials and JWT_SECRET are required.");
+if (!adminEmail || !adminPassword || !jwtSecret || !process.env.DB_NAME) {
+  throw new Error("Test admin credentials, JWT_SECRET, and DB_NAME are required.");
 }
 
 await expectStatus("health", "GET", "/api/health", 200);
@@ -85,6 +90,42 @@ await expectStatus("empty login fields", "POST", "/api/auth/login", 401, { body:
 await expectStatus("wrong password", "POST", "/api/auth/login", 401, {
   body: { email: adminEmail, password: "DefinitelyWrongPassword123!" },
 });
+
+const additionalAdminToken = await login(adminEmail, adminPassword, "valid multiple-device admin login");
+if (adminToken && additionalAdminToken) {
+  await expectStatus("multiple-device primary session", "GET", "/api/auth/session", 200, { token: adminToken });
+  await expectStatus("multiple-device additional session", "GET", "/api/auth/session", 200, { token: additionalAdminToken });
+  await expectStatus("logout request", "POST", "/api/auth/logout", 200, { token: additionalAdminToken });
+  await expectStatus("logout ends only the selected session", "GET", "/api/auth/session", 403, { token: additionalAdminToken });
+  await expectStatus("primary session remains after other-device logout", "GET", "/api/auth/session", 200, { token: adminToken });
+}
+
+const terminatedAdminToken = await login(adminEmail, adminPassword, "valid session for termination");
+if (adminToken && terminatedAdminToken) {
+  const terminatedSessionToken = jwt.decode(terminatedAdminToken)?.sessionId;
+  const terminationConnection = await mysql.createConnection({
+    host: process.env.DB_HOST || "127.0.0.1",
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER || "root",
+    password: process.env.DB_PASSWORD || "",
+    database: process.env.DB_NAME,
+    ssl: false,
+  });
+  const [terminatedSessionRows] = await terminationConnection.execute(
+    "SELECT id FROM user_sessions WHERE session_token = ? LIMIT 1",
+    [terminatedSessionToken],
+  );
+  await terminationConnection.end();
+  const terminatedSessionId = Array.isArray(terminatedSessionRows) ? terminatedSessionRows[0]?.id : null;
+
+  if (!terminatedSessionId) {
+    failures.push("terminated session lookup did not find the test session");
+  } else {
+    await expectStatus("terminate selected session", "POST", `/api/admin/sessions/${terminatedSessionId}/terminate`, 200, { token: adminToken });
+    await expectStatus("terminated session is denied", "GET", "/api/auth/session", 403, { token: terminatedAdminToken });
+    await expectStatus("administrator remains active after terminating another session", "GET", "/api/auth/session", 200, { token: adminToken });
+  }
+}
 
 const slowPayload = JSON.stringify({ email: adminEmail, password: adminPassword });
 const slowBody = Readable.from((async function* () {
@@ -105,6 +146,15 @@ if (adminToken) {
   const settings = await expectStatus("system settings", "GET", "/api/system-settings", 200);
   const programEntry = settings?.body?.programs?.[0];
   const program = typeof programEntry === "string" ? programEntry : programEntry?.code;
+  const batchList = await expectStatus("graduation batches", "GET", "/api/graduation-batches", 200, { token: adminToken });
+  let smokeBatch = Array.isArray(batchList?.body) ? batchList.body.find((item) => item.batchYear === 2026) : null;
+  if (!smokeBatch) {
+    const createdBatch = await expectStatus("create graduation batch", "POST", "/api/graduation-batches", 201, {
+      token: adminToken,
+      body: { batchYear: 2026, schoolYear: "2025–2026", boardResolutionNo: "EDGE-2026", graduationDate: "2026-06-15" },
+    });
+    smokeBatch = createdBatch?.body;
+  }
   const unique = Date.now();
   const alumniEmail = `codex-edge-${unique}@gmail.com`;
   const alumniPassword = "CodexEdgeAlumni123!";
@@ -112,7 +162,7 @@ if (adminToken) {
     name: "Codex Edge Alumni",
     email: alumniEmail,
     course: program,
-    batch: "2026",
+    graduationBatchId: smokeBatch?.id,
     studentId: `EDGE-${unique}`,
     sendEmail: false,
   };
@@ -130,12 +180,44 @@ if (adminToken) {
   });
   const passwordHash = await bcrypt.hash(alumniPassword, 4);
   await connection.execute("UPDATE users SET password_hash = ? WHERE email = ?", [passwordHash, alumniEmail]);
+  await connection.execute(
+    "INSERT IGNORE INTO user_roles (user_id, role) SELECT id, 'chairman' FROM users WHERE email = ?",
+    [alumniEmail],
+  );
   await connection.end();
 
-  const alumniToken = await login(alumniEmail, alumniPassword, "valid alumni login");
+  const roleLogin = await expectStatus("multi-role Alumni and Chairman login", "POST", "/api/auth/login", 200, {
+    body: { email: alumniEmail, password: alumniPassword },
+  });
+  const assignedRoles = Array.isArray(roleLogin?.body?.roles) ? roleLogin.body.roles : [];
+  if (!roleLogin?.body?.requiresRoleSelection || !assignedRoles.includes("alumni") || !assignedRoles.includes("chairman")) {
+    failures.push("role-based login did not offer both Alumni and Department Chairman roles");
+  } else {
+    passed += 1;
+  }
+
+  await expectStatus("unassigned role selection", "POST", "/api/auth/select-role", 403, {
+    body: { loginToken: roleLogin?.body?.loginToken, role: "admin" },
+  });
+  const alumniSelection = await expectStatus("role-based alumni login", "POST", "/api/auth/select-role", 200, {
+    body: { loginToken: roleLogin?.body?.loginToken, role: "alumni" },
+  });
+  const chairmanSelection = await expectStatus("role-based chairman login", "POST", "/api/auth/select-role", 200, {
+    body: { loginToken: roleLogin?.body?.loginToken, role: "chairman" },
+  });
+  const alumniToken = alumniSelection?.body?.token || "";
+  const chairmanToken = chairmanSelection?.body?.token || "";
+
   if (alumniToken) {
+    await expectStatus("alumni session restoration", "GET", "/api/auth/session", 200, { token: alumniToken });
+    await expectStatus("alumni role-authorized dashboard", "GET", "/api/alumni/dashboard", 200, { token: alumniToken });
     await expectStatus("alumni denied profiles administration", "GET", "/api/profiles", 403, { token: alumniToken });
     await expectStatus("alumni denied session monitoring", "GET", "/api/admin/sessions", 403, { token: alumniToken });
+  }
+  if (chairmanToken) {
+    await expectStatus("chairman session restoration", "GET", "/api/auth/session", 200, { token: chairmanToken });
+    await expectStatus("chairman role-authorized alumni view", "GET", "/api/chairman/alumni", 200, { token: chairmanToken });
+    await expectStatus("chairman denied session monitoring", "GET", "/api/admin/sessions", 403, { token: chairmanToken });
   }
 
   const malformedWorkbook = Buffer.from("not an xlsx workbook");
@@ -145,7 +227,7 @@ if (adminToken) {
     headers: {
       "content-type": "application/octet-stream",
       "x-file-name": "malformed.xlsx",
-      "x-school-year": "2026",
+      "x-graduation-batch-id": String(smokeBatch?.id || ""),
     },
   });
   if (typeof malformed?.body?.error !== "string" || /sql|stack|select|insert/i.test(malformed.body.error)) {
@@ -160,7 +242,7 @@ if (adminToken) {
     headers: {
       "content-type": "application/octet-stream",
       "x-file-name": "oversized.xlsx",
-      "x-school-year": "2026",
+      "x-graduation-batch-id": String(smokeBatch?.id || ""),
     },
     timeoutMs: 30_000,
   });

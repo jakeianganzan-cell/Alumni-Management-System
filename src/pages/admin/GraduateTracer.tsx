@@ -1,6 +1,7 @@
 import { clientLogger } from "@/lib/logger";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/admin/AdminLayout";
+import ChairmanLayout from "@/components/chairman/ChairmanLayout";
 import { Download, Eye, FileSpreadsheet, Filter, Loader2, Search } from "lucide-react";
 import { API_URL, getAuthHeaders, readApiResponse } from "@/lib/api";
 import { openPdfPreviewWindow, showPdfPreview, showPdfPreviewError } from "@/lib/pdfPreview";
@@ -84,8 +85,10 @@ function blobDownload(blob: Blob, fileName: string) {
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
   anchor.download = fileName;
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(objectUrl);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 function getFileNameFromDisposition(disposition: string | null, fallback: string) {
@@ -93,7 +96,7 @@ function getFileNameFromDisposition(disposition: string | null, fallback: string
   return match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : fallback;
 }
 
-export default function AdminGraduateTracer() {
+export default function AdminGraduateTracer({ portal = "admin" }: { portal?: "admin" | "chairman" }) {
   const [rows, setRows] = useState<TracerRow[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, pageSize: 10, total: 0, totalPages: 1 });
@@ -272,8 +275,10 @@ export default function AdminGraduateTracer() {
         ? "Loading"
         : null;
 
+  const PageLayout = portal === "chairman" ? ChairmanLayout : AdminLayout;
+
   return (
-    <AdminLayout title="Graduate Tracer Management">
+    <PageLayout title="Graduate Tracer Management" subtitle={portal === "chairman" ? "Department graduate tracer records" : undefined}>
       <div className="rounded-2xl border border-border bg-card shadow-card">
         <div className="border-b border-border p-4">
           {actionMessage ? (
@@ -289,7 +294,7 @@ export default function AdminGraduateTracer() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search alumni name, ID, course, or batch"
+                  placeholder="Search name, email, ID, course, or batch"
                   className="w-64 rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm"
                 />
               </div>
@@ -492,6 +497,6 @@ export default function AdminGraduateTracer() {
         ))}
       </div>
 
-    </AdminLayout>
+    </PageLayout>
   );
 }

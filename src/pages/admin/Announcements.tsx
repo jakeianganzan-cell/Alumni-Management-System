@@ -143,7 +143,8 @@ export default function AdminAnnouncements() {
       return readApiResponse<Announcement[]>(response);
     },
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: interestSummary, isLoading: interestsLoading } = useQuery<AdminInterestSummary>({
@@ -362,6 +363,9 @@ export default function AdminAnnouncements() {
   };
 
   const openEdit = (announcement: Announcement) => {
+    const isArchived = announcement.status === "archived"
+      || announcement.computed_status === "Archived"
+      || announcement.duration_status === "Archived";
     setEditId(announcement.id);
     setFormData({
       title: announcement.title,
@@ -373,7 +377,7 @@ export default function AdminAnnouncements() {
       google_form_link: announcement.google_form_link || "",
       organizer: announcement.organizer || "",
       image_url: announcement.image_url || "",
-      status: announcement.status,
+      status: isArchived ? getDefaultStatus(announcement.type) : announcement.status,
       audienceScope: announcement.audienceScope || "all",
       audienceValue: announcement.audienceValue || "",
       start_date: announcement.start_date || (announcement.start_datetime ? String(announcement.start_datetime).slice(0, 10) : announcement.date ? String(announcement.date).slice(0, 10) : ""),
@@ -427,10 +431,10 @@ export default function AdminAnnouncements() {
       status: getDefaultStatus(value),
       venue: value === "event" ? current.venue : "",
       time: value === "announcement" ? "" : current.time,
-      start_date: value === "announcement" ? current.date || current.start_date : current.start_date,
-      start_time: value === "announcement" ? "" : current.start_time,
-      end_date: value === "announcement" ? "" : current.end_date,
-      end_time: value === "announcement" ? "" : current.end_time,
+      start_date: current.start_date || current.date,
+      start_time: current.start_time || current.time || "08:00",
+      end_date: current.end_date,
+      end_time: current.end_time || "23:59",
       google_form_link: value === "survey" ? current.google_form_link : "",
       interestEnabled: value === "event" ? true : current.interestEnabled,
     }));
@@ -1311,12 +1315,8 @@ function normalizeFormPayload(formData: AnnouncementForm): AnnouncementForm {
   if (formData.type === "announcement") {
     return {
       ...base,
-      date: formData.date || formData.start_date,
-      time: "",
-      start_date: "",
-      start_time: "",
-      end_date: "",
-      end_time: "",
+      date: formData.start_date || formData.date,
+      time: formData.start_time || formData.time,
       venue: "",
       google_form_link: "",
       audienceValue: formData.audienceScope === "all" ? "" : formData.audienceValue.trim(),
@@ -1347,8 +1347,8 @@ function formatTypeLabel(type: AnnouncementType) {
   return "Announcement";
 }
 
-function contentUsesDuration(type: AnnouncementType) {
-  return type === "event" || type === "survey";
+function contentUsesDuration(_type: AnnouncementType) {
+  return true;
 }
 
 function formatApprovalLabel(status: AnnouncementApprovalStatus) {

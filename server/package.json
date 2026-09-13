@@ -18,6 +18,7 @@
     "smoke:edge": "node scripts/edge-smoke-api.mjs",
     "smoke:contributions": "node scripts/contribution-smoke-api.mjs",
     "smoke:browser": "node scripts/browser-smoke.mjs",
+    "smoke:tracer": "node scripts/tracer-smoke-api.mjs",
     "install:chrome": "echo 'Skipping puppeteer browser install (using @sparticuz/chromium).'",
     "postinstall": "npm run install:chrome",
     "seed": "tsx seed.ts"

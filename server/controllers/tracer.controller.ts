@@ -13,8 +13,10 @@ import type { AuthenticatedRequest } from "../types/auth";
 import {
   createStoredZipBuffer,
   generateTracerDocxBuffer,
+  generateTracerPortablePdfBuffer,
   generateTracerPdfBuffer,
 } from "../utils/tracerPdf";
+import { validateTracerPayload } from "../../shared/tracerValidation";
 
 interface TracerSummaryRow extends RowDataPacket {
   id: number;
@@ -624,6 +626,29 @@ const getSubmissionByLookup = async (lookup: string) => {
   return getSubmissionById(normalized);
 };
 
+const getTracerCourseScope = async (req: AuthenticatedRequest) => {
+  if (cleanText(req.user?.role).toLowerCase() !== "chairman") return null;
+  if (!req.user?.id) return "";
+
+  const rows = await db.query<RowDataPacket>(
+    "SELECT course FROM profiles WHERE id = ? LIMIT 1",
+    [req.user.id],
+  );
+  return cleanText(rows[0]?.course);
+};
+
+const tracerRowMatchesCourseScope = (row: TracerSummaryRow, courseScope: string | null) =>
+  courseScope === null || cleanText(row.course).toLowerCase() === courseScope.toLowerCase();
+
+const requireTracerCourseScope = async (req: AuthenticatedRequest, res: Response) => {
+  const courseScope = await getTracerCourseScope(req);
+  if (courseScope === "") {
+    jsonResponseError(res, 403, "Chairman access requires an assigned department.");
+    return undefined;
+  }
+  return courseScope;
+};
+
 const getDraftByUserId = async (userId: string) => {
   await ensureTracerSchema();
   const rows = await db.query<TracerDraftRow>("SELECT * FROM tracer_drafts WHERE user_id = ? LIMIT 1", [userId]);
@@ -846,8 +871,8 @@ const buildDownloadPdfBuffer = async (row: TracerSummaryRow) => {
   try {
     return await generateTracerPdfBuffer(toPdfRecord(row));
   } catch (error) {
-    logger.error("TRACER PDF TEMPLATE GENERATION ERROR:", error);
-    throw new Error(`Unable to generate the official Graduate Tracer PDF template: ${getErrorMessage(error)}`);
+    logger.warn("TRACER PDF TEMPLATE GENERATION FAILED; USING PORTABLE PDF:", error);
+    return generateTracerPortablePdfBuffer(toPdfRecord(row));
   }
 };
 
@@ -883,8 +908,8 @@ const getAdminTracerRows = async (filters: {
 
   if (cleanText(filters.search)) {
     const search = `%${cleanText(filters.search)}%`;
-    where.push("(p.name LIKE ? OR p.student_id LIKE ? OR p.course LIKE ? OR p.batch LIKE ?)");
-    params.push(search, search, search, search);
+    where.push("(p.name LIKE ? OR p.email LIKE ? OR p.student_id LIKE ? OR p.course LIKE ? OR p.batch LIKE ?)");
+    params.push(search, search, search, search, search);
   }
 
   if (cleanText(filters.course) && cleanText(filters.course) !== "All Courses") {
@@ -947,13 +972,18 @@ const getAdminTracerRows = async (filters: {
   };
 };
 
-const buildAnalytics = async () => {
+const buildAnalytics = async (courseScope: string | null = null) => {
   await ensureTracerSchema();
 
+  const courseWhere = courseScope ? " AND p.course = ?" : "";
+  const courseParams = courseScope ? [courseScope] : [];
+
   const alumniRows = await db.query<SimpleCountRow>(
-    `SELECT COUNT(DISTINCT user_id) AS totalAlumni
-     FROM user_roles
-     WHERE role = 'alumni' AND COALESCE(archived, 0) = 0`,
+    `SELECT COUNT(DISTINCT ur.user_id) AS totalAlumni
+     FROM user_roles ur
+     INNER JOIN profiles p ON p.id = ur.user_id
+     WHERE ur.role = 'alumni' AND COALESCE(ur.archived, 0) = 0${courseWhere}`,
+    courseParams,
   );
 
   const submissions = await db.query<TracerSummaryRow>(
@@ -970,7 +1000,8 @@ const buildAnalytics = async () => {
       AND ur.role = 'alumni'
       AND COALESCE(ur.archived, 0) = 0
      LEFT JOIN profiles p ON p.id = tf.user_id
-     WHERE COALESCE(NULLIF(TRIM(tf.submission_status), ''), 'completed') = 'completed'`,
+     WHERE COALESCE(NULLIF(TRIM(tf.submission_status), ''), 'completed') = 'completed'${courseWhere}`,
+    courseParams,
   );
 
   const totalAlumni = Number(alumniRows[0]?.totalAlumni || 0);
@@ -1270,6 +1301,13 @@ export const submitTracer = async (req: AuthenticatedRequest, res: Response) => 
     await ensureTracerSchema();
 
     const payload = safeParseJson<Record<string, unknown>>(req.body?.ched_payload ?? req.body, {});
+    const validationErrors = validateTracerPayload(payload);
+    if (Object.keys(validationErrors).length > 0) {
+      return res.status(400).json({
+        error: "Please complete the required Graduate Tracer fields and correct invalid entries.",
+        fields: validationErrors,
+      });
+    }
     const summary = buildTracerPayloadSummary(payload);
     const existingRows = await db.query<TracerSummaryRow>("SELECT * FROM tracer_form WHERE user_id = ? LIMIT 1", [req.user.id]);
     const existing = existingRows[0] || null;
@@ -1400,9 +1438,12 @@ export const previewMyTracerRecord = async (req: AuthenticatedRequest, res: Resp
 
 export const listTracerRecords = async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
+
     const { rows, pagination } = await getAdminTracerRows({
       search: typeof req.query.search === "string" ? req.query.search : "",
-      course: typeof req.query.course === "string" ? req.query.course : "",
+      course: courseScope ?? (typeof req.query.course === "string" ? req.query.course : ""),
       batch: typeof req.query.batch === "string" ? req.query.batch : "",
       employmentStatus: typeof req.query.employmentStatus === "string" ? req.query.employmentStatus : "",
       dateSubmitted: typeof req.query.dateSubmitted === "string" ? req.query.dateSubmitted : "",
@@ -1419,9 +1460,12 @@ export const listTracerRecords = async (req: AuthenticatedRequest, res: Response
 
 export const getAdminTracerRecord = async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
+
     const lookup = cleanText(req.params.alumniId ?? req.params.id);
     const row = await getSubmissionByLookup(lookup);
-    if (!row) {
+    if (!row || !tracerRowMatchesCourseScope(row, courseScope)) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
@@ -1432,9 +1476,11 @@ export const getAdminTracerRecord = async (req: AuthenticatedRequest, res: Respo
   }
 };
 
-export const getTracerAnalytics = async (_req: AuthenticatedRequest, res: Response) => {
+export const getTracerAnalytics = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    res.json(await buildAnalytics());
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
+    res.json(await buildAnalytics(courseScope));
   } catch (error: unknown) {
     logger.error("GET TRACER ANALYTICS ERROR:", error);
     jsonResponseError(res, 500, getErrorMessage(error));
@@ -1444,6 +1490,9 @@ export const getTracerAnalytics = async (_req: AuthenticatedRequest, res: Respon
 export const reopenTracerSubmission = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    if (cleanText(req.user.role).toLowerCase() === "chairman") {
+      return jsonResponseError(res, 403, "Chairman tracer access is read-only.");
+    }
 
     const targetUserId = cleanText(req.params.userId);
     if (!targetUserId) {
@@ -1469,10 +1518,12 @@ export const reopenTracerSubmission = async (req: AuthenticatedRequest, res: Res
 export const exportTracerRecord = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
     const userId = cleanText(req.params.userId);
     const row = await getSubmissionByUserId(userId);
 
-    if (!row) {
+    if (!row || !tracerRowMatchesCourseScope(row, courseScope)) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
@@ -1490,6 +1541,8 @@ export const exportTracerRecord = async (req: AuthenticatedRequest, res: Respons
 export const exportTracerPdfByRecordId = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
 
     const tracerId = cleanText(req.params.alumniId ?? req.params.id);
     if (!tracerId) {
@@ -1497,7 +1550,7 @@ export const exportTracerPdfByRecordId = async (req: AuthenticatedRequest, res: 
     }
 
     const row = await getSubmissionByLookup(tracerId);
-    if (!row) {
+    if (!row || !tracerRowMatchesCourseScope(row, courseScope)) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
@@ -1516,6 +1569,8 @@ export const exportTracerPdfByRecordId = async (req: AuthenticatedRequest, res: 
 export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
 
     const tracerId = cleanText(req.params.alumniId ?? req.params.id);
     if (!tracerId) {
@@ -1523,7 +1578,7 @@ export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res:
     }
 
     const row = await getSubmissionByLookup(tracerId);
-    if (!row) {
+    if (!row || !tracerRowMatchesCourseScope(row, courseScope)) {
       return jsonResponseError(res, 404, "Tracer record not found.");
     }
 
@@ -1541,6 +1596,8 @@ export const previewTracerPdfByRecordId = async (req: AuthenticatedRequest, res:
 export const bulkDownloadTracerPdfs = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
 
     const requestedIds = Array.isArray(req.body?.alumniIds)
       ? req.body.alumniIds
@@ -1559,13 +1616,13 @@ export const bulkDownloadTracerPdfs = async (req: AuthenticatedRequest, res: Res
         if (!lookup || seen.has(lookup)) continue;
         seen.add(lookup);
         const row = await getSubmissionByLookup(lookup);
-        if (row) rows.push(row);
+        if (row && tracerRowMatchesCourseScope(row, courseScope)) rows.push(row);
       }
     } else {
       const filters = req.body?.filters && typeof req.body.filters === "object" ? req.body.filters : req.query;
       const result = await getAdminTracerRows({
         search: typeof filters.search === "string" ? filters.search : "",
-        course: typeof filters.course === "string" ? filters.course : "",
+        course: courseScope ?? (typeof filters.course === "string" ? filters.course : ""),
         batch: typeof filters.batch === "string" ? filters.batch : "",
         employmentStatus: typeof filters.employmentStatus === "string" ? filters.employmentStatus : "",
         dateSubmitted: typeof filters.dateSubmitted === "string" ? filters.dateSubmitted : "",
@@ -1609,11 +1666,13 @@ export const bulkDownloadTracerPdfs = async (req: AuthenticatedRequest, res: Res
 export const exportTracerArchive = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
 
     const format = req.query.format === "docx" ? "docx" : "pdf";
     const { rows } = await getAdminTracerRows({
       search: typeof req.query.search === "string" ? req.query.search : "",
-      course: typeof req.query.course === "string" ? req.query.course : "",
+      course: courseScope ?? (typeof req.query.course === "string" ? req.query.course : ""),
       batch: typeof req.query.batch === "string" ? req.query.batch : "",
       employmentStatus: typeof req.query.employmentStatus === "string" ? req.query.employmentStatus : "",
       dateSubmitted: typeof req.query.dateSubmitted === "string" ? req.query.dateSubmitted : "",
@@ -1660,8 +1719,14 @@ export const exportTracerArchive = async (req: AuthenticatedRequest, res: Respon
 export const exportTracerReports = async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.user?.id) return res.sendStatus(401);
+    const courseScope = await requireTracerCourseScope(req, res);
+    if (courseScope === undefined) return;
 
-    const { rows } = await getAdminTracerRows({ page: 1, pageSize: 1000 });
+    const { rows } = await getAdminTracerRows({
+      course: courseScope ?? undefined,
+      page: 1,
+      pageSize: 1000,
+    });
     const summaryRows = rows.map((row) => {
       const payload = row.ched_payload as Record<string, unknown>;
       return {

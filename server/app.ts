@@ -16,7 +16,7 @@ import db from "./db.ts";
 import { sendAlumniCredentialsEmail, sendTargetedAlumniEmail, type TargetedEmailPurpose } from "./services/emailService";
 import { generatePassword } from "./utils/generatePassword";
 import { parseImageDataUrl } from "./utils/imageOptimizer";
-import { parseDataUrlUpload } from "./utils/fileUpload";
+import { assertValidFileContents, parseDataUrlUpload } from "./utils/fileUpload";
 import { getPagination, getPaginationMeta } from "./utils/pagination";
 import { getErrorCode, getErrorMessage, getSingleRow, normalizeRoleValue, parseRows } from "./utils/helpers";
 import { authenticateToken } from "./middleware/auth";
@@ -42,6 +42,7 @@ import { alumniImportFileParser } from "./middleware/upload";
 import { config, DEFAULT_LOCAL_FRONTEND_ORIGINS } from "./config";
 import { logger } from "./utils/logger";
 import { getPublicErrorMessage } from "./utils/safeError";
+import { isLoginInputWithinLimits, isRoleAssigned, verifyLoginPassword } from "./utils/authPolicy";
 
 const app = express();
 
@@ -658,6 +659,84 @@ const columnExists = async (tableName: string, columnName: string) => {
 
 let alumniProfileColumnsPromise: Promise<void> | null = null;
 
+let graduationBatchSchemaPromise: Promise<void> | null = null;
+
+const ensureGraduationBatchSchema = async () => {
+    if (graduationBatchSchemaPromise) return graduationBatchSchemaPromise;
+
+    graduationBatchSchemaPromise = (async () => {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS graduation_batches (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                batch_year INT NOT NULL,
+                school_year VARCHAR(30) NOT NULL,
+                board_resolution_no VARCHAR(100) NULL,
+                graduation_date DATE NULL,
+                document_url LONGTEXT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_graduation_batches_batch_year (batch_year)
+            )
+        `);
+
+        if (!(await columnExists("profiles", "graduation_batch_id"))) {
+            await db.execute("ALTER TABLE profiles ADD COLUMN graduation_batch_id BIGINT NULL AFTER batch");
+            await db.execute("CREATE INDEX idx_profiles_graduation_batch ON profiles (graduation_batch_id)");
+            existingColumnCache.add("profiles.graduation_batch_id");
+        }
+
+        await db.execute(`
+            INSERT INTO graduation_batches (batch_year, school_year, board_resolution_no)
+            SELECT
+                p.inferred_batch_year,
+                COALESCE(
+                    NULLIF(MAX(NULLIF(TRIM(p.academic_year), '')), ''),
+                    CONCAT(p.inferred_batch_year - 1, '–', p.inferred_batch_year)
+                ),
+                NULLIF(MAX(NULLIF(TRIM(p.bor_number), '')), '')
+            FROM (
+                SELECT
+                    source_profile.*,
+                    CASE
+                        WHEN TRIM(COALESCE(source_profile.batch, '')) REGEXP '^[0-9]{4}$'
+                            THEN CAST(TRIM(source_profile.batch) AS UNSIGNED)
+                        WHEN TRIM(COALESCE(source_profile.academic_year, '')) REGEXP '[0-9]{4}$'
+                            THEN CAST(RIGHT(TRIM(source_profile.academic_year), 4) AS UNSIGNED)
+                        WHEN TRIM(COALESCE(source_profile.graduation_batch, '')) REGEXP '[0-9]{4}$'
+                            THEN CAST(RIGHT(TRIM(source_profile.graduation_batch), 4) AS UNSIGNED)
+                        ELSE NULL
+                    END AS inferred_batch_year
+                FROM profiles source_profile
+            ) p
+            WHERE p.inferred_batch_year BETWEEN 1900 AND 2100
+            GROUP BY p.inferred_batch_year
+            ON DUPLICATE KEY UPDATE
+                school_year = COALESCE(NULLIF(graduation_batches.school_year, ''), VALUES(school_year)),
+                board_resolution_no = COALESCE(NULLIF(graduation_batches.board_resolution_no, ''), VALUES(board_resolution_no))
+        `);
+
+        await db.execute(`
+            UPDATE profiles p
+            INNER JOIN graduation_batches gb ON gb.batch_year = CASE
+                WHEN TRIM(COALESCE(p.batch, '')) REGEXP '^[0-9]{4}$'
+                    THEN CAST(TRIM(p.batch) AS UNSIGNED)
+                WHEN TRIM(COALESCE(p.academic_year, '')) REGEXP '[0-9]{4}$'
+                    THEN CAST(RIGHT(TRIM(p.academic_year), 4) AS UNSIGNED)
+                WHEN TRIM(COALESCE(p.graduation_batch, '')) REGEXP '[0-9]{4}$'
+                    THEN CAST(RIGHT(TRIM(p.graduation_batch), 4) AS UNSIGNED)
+                ELSE NULL
+            END
+            SET p.graduation_batch_id = gb.id
+            WHERE p.graduation_batch_id IS NULL
+        `);
+    })().catch((error) => {
+        graduationBatchSchemaPromise = null;
+        throw error;
+    });
+
+    return graduationBatchSchemaPromise;
+};
+
 const ensureAlumniProfileColumns = async () => {
     if (alumniProfileColumnsPromise) return alumniProfileColumnsPromise;
 
@@ -704,6 +783,7 @@ const ensureAlumniProfileColumns = async () => {
             existingColumns.add(column.name);
         }
     }
+    await ensureGraduationBatchSchema();
     })().catch((error) => {
         alumniProfileColumnsPromise = null;
         throw error;
@@ -1273,11 +1353,10 @@ const computeDurationFields = (row: Record<string, unknown>, options?: { ignoreD
         computedStatus = "Archived";
     } else if (options?.ignoreDuration) {
         computedStatus = computedStatus === "Completed" ? "Completed" : "Active";
-    } else if (computedStatus !== "Completed" && start && now.getTime() < start.getTime()) {
+    } else if (start && now.getTime() < start.getTime()) {
         computedStatus = "Upcoming";
-    } else if (end && now.getTime() > end.getTime()) {
-        const archiveAt = new Date(end.getTime() + 7 * 24 * 60 * 60 * 1000);
-        computedStatus = now.getTime() >= archiveAt.getTime() ? "Archived" : "Completed";
+    } else if (end && now.getTime() >= end.getTime()) {
+        computedStatus = "Archived";
     } else if (computedStatus !== "Completed" && (start || end)) {
         computedStatus = "Active";
     }
@@ -1288,7 +1367,7 @@ const computeDurationFields = (row: Record<string, unknown>, options?: { ignoreD
         : computedStatus === "Upcoming"
         ? `Starts ${formatDisplayManilaDateTime(start)}`
         : computedStatus === "Archived"
-            ? `Archived after ${formatDisplayManilaDateTime(end)}`
+            ? `Archived ${formatDisplayManilaDateTime(end)}`
             : computedStatus === "Completed"
                 ? `Completed ${formatDisplayManilaDateTime(end)}`
             : buildRemainingTime(end, now);
@@ -1322,13 +1401,13 @@ const autoArchiveExpiredContent = async () => {
         await db.execute(
             `UPDATE ${announcementTable}
              SET status = 'archived',
+                 end_datetime = COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')),
                  archived_at = COALESCE(archived_at, ?),
-                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
-             WHERE end_datetime IS NOT NULL
-               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime, TIMESTAMP(date, '23:59:00'))
+             WHERE COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')) IS NOT NULL
+               AND COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')) <= ?
                AND archived_at IS NULL
-               AND LOWER(COALESCE(status, '')) <> 'archived'
-               AND LOWER(COALESCE(type, 'announcement')) <> 'announcement'`,
+               AND LOWER(COALESCE(status, '')) <> 'archived'`,
             [nowSql, nowSql]
         );
     }
@@ -1337,24 +1416,26 @@ const autoArchiveExpiredContent = async () => {
         await db.execute(
             `UPDATE surveys
              SET status = 'archived',
+                 end_datetime = COALESCE(end_datetime, closes_at),
                  archived_at = COALESCE(archived_at, ?),
-                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
-             WHERE end_datetime IS NOT NULL
-               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime, closes_at)
+             WHERE COALESCE(end_datetime, closes_at) IS NOT NULL
+               AND COALESCE(end_datetime, closes_at) <= ?
                AND archived_at IS NULL
                AND LOWER(COALESCE(status, '')) <> 'archived'`,
             [nowSql, nowSql]
         );
     }
 
-    if (await tableExists("events")) {
+    if (announcementTable !== "events" && await tableExists("events")) {
         await db.execute(
             `UPDATE events
              SET status = 'archived',
+                 end_datetime = COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')),
                  archived_at = COALESCE(archived_at, ?),
-                 auto_archive_at = COALESCE(auto_archive_at, end_datetime)
-             WHERE end_datetime IS NOT NULL
-               AND DATE_ADD(end_datetime, INTERVAL 7 DAY) < ?
+                 auto_archive_at = COALESCE(auto_archive_at, end_datetime, TIMESTAMP(date, '23:59:00'))
+             WHERE COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')) IS NOT NULL
+               AND COALESCE(end_datetime, TIMESTAMP(date, '23:59:00')) <= ?
                AND archived_at IS NULL
                AND LOWER(COALESCE(status, '')) <> 'archived'`,
             [nowSql, nowSql]
@@ -1372,7 +1453,7 @@ const startDurationAutoArchiveJob = () => {
         });
     };
     run();
-    autoArchiveTimer = setInterval(run, 5 * 60 * 1000);
+    autoArchiveTimer = setInterval(run, 30 * 1000);
 };
 
 const normalizeEventRsvpStatus = (value: unknown): EventRsvpResponseStatus | null => {
@@ -2569,7 +2650,7 @@ const prepareDashboardSlideMedia = (mediaType: unknown, mediaUrl: unknown) => {
         return embedUrl ? { mediaType: "youtube", mediaUrl: embedUrl } : null;
     }
 
-    const storedMedia = normalizeStoredMedia(typeof mediaUrl === "string" ? mediaUrl : String(mediaUrl || ""));
+    const storedMedia = normalizeSubmittedMedia(typeof mediaUrl === "string" ? mediaUrl : String(mediaUrl || ""));
     if (!storedMedia) return null;
 
     return {
@@ -2750,15 +2831,81 @@ const normalizeSubmittedImage = (value: unknown, maxBytes = 8 * 1024 * 1024) => 
     return dataUrl;
 };
 
+const normalizeSubmittedMedia = (value: unknown, maxBytes = 8 * 1024 * 1024) => {
+    const media = String(value || "").trim();
+    if (!media) return null;
+    if (media.startsWith("data:")) return normalizeSubmittedImage(media, maxBytes);
+    if (/^[A-Za-z0-9+/=]+$/.test(media) && media.length > 80) {
+        return normalizeSubmittedImage(`data:image/jpeg;base64,${media}`, maxBytes);
+    }
+    return normalizeStoredMedia(media);
+};
+
 const normalizeSubmittedEvidence = (value: unknown, maxBytes = 5 * 1024 * 1024) => {
     const dataUrl = String(value || "").trim();
     if (!dataUrl) return null;
     if (dataUrl.startsWith("data:image/")) return normalizeSubmittedImage(dataUrl, maxBytes);
-    const pdfMatch = dataUrl.match(/^data:application\/pdf;base64,([A-Za-z0-9+/=\r\n]+)$/i);
-    if (!pdfMatch) throw new Error("Supporting evidence must be an image or PDF file.");
-    if (Buffer.from(pdfMatch[1], "base64").byteLength > maxBytes) throw new Error("Supporting evidence must be 5 MB or smaller.");
+    const upload = parseDataUrlUpload(dataUrl, maxBytes);
+    if (upload.mimeType !== "application/pdf") throw new Error("Supporting evidence must be an image or PDF file.");
     return dataUrl;
 };
+
+const normalizeGraduationBatchYear = (value: unknown) => {
+    const batchYear = Number(String(value || "").trim());
+    return Number.isInteger(batchYear) && batchYear >= 1900 && batchYear <= 2100 ? batchYear : null;
+};
+
+const normalizeSchoolYear = (value: unknown, batchYear?: number | null) => {
+    const match = String(value || "").trim().match(/^(\d{4})\s*[-–]\s*(\d{4})$/);
+    if (!match) return null;
+    const startYear = Number(match[1]);
+    const endYear = Number(match[2]);
+    if (endYear !== startYear + 1 || (batchYear && endYear !== batchYear)) return null;
+    return `${startYear}–${endYear}`;
+};
+
+const normalizeGraduationDate = (value: unknown) => {
+    const date = String(value || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const parsed = new Date(`${date}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : null;
+};
+
+const normalizeSubmittedDocument = (value: unknown, maxBytes = 8 * 1024 * 1024) => {
+    const document = String(value || "").trim();
+    if (!document) return null;
+    if (document.startsWith("data:")) {
+        parseDataUrlUpload(document, maxBytes);
+        return document;
+    }
+    return normalizeStoredMedia(document);
+};
+
+const getGraduationBatchById = async (value: unknown) => {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    return getSingleRow("SELECT * FROM graduation_batches WHERE id = ? LIMIT 1", [id]);
+};
+
+const formatDatabaseDateOnly = (value: unknown) => {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const text = String(value);
+    const match = text.match(/^\d{4}-\d{2}-\d{2}/);
+    return match?.[0] || null;
+};
+
+const mapGraduationBatch = (row: QueryRow) => ({
+    id: Number(row.id),
+    batchYear: Number(row.batch_year),
+    schoolYear: String(row.school_year || ""),
+    boardResolutionNo: row.board_resolution_no ? String(row.board_resolution_no) : null,
+    graduationDate: formatDatabaseDateOnly(row.graduation_date),
+    documentUrl: row.document_url ? String(row.document_url) : null,
+    graduateCount: Number(row.graduate_count || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+});
 
 const DEFAULT_SYSTEM_SETTINGS = {
     system_name: "Alumni Management Portal",
@@ -2902,7 +3049,7 @@ const serializePublicProgramOptions = (value: unknown) => JSON.stringify(
         label: program.label,
         description: program.description || "",
         department: program.department || "",
-        imageUrl: normalizeStoredMedia(program.imageUrl || "") || "",
+        imageUrl: normalizeSubmittedMedia(program.imageUrl || "") || "",
         displayOrder: Number(program.displayOrder || 0),
         isActive: program.isActive !== false
     }))
@@ -3005,7 +3152,11 @@ const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
         const rawValue = body[inputKey] ?? body[column];
 
         if (column === "login_backgrounds_json") {
-            mapped[column] = JSON.stringify(safeParseJsonArray(rawValue));
+            mapped[column] = JSON.stringify(
+                safeParseJsonArray(rawValue)
+                    .map((item) => normalizeSubmittedMedia(item))
+                    .filter((item): item is string => Boolean(item))
+            );
         } else if (column === "programs_json") {
             mapped[column] = serializePublicProgramOptions(rawValue);
         } else if (column === "login_slideshow_enabled") {
@@ -3015,7 +3166,7 @@ const normalizeSystemSettingsInput = (body: Record<string, unknown>) => {
         } else if (COLOR_FIELDS.has(column)) {
             mapped[column] = normalizeHexColor(rawValue, String(DEFAULT_SYSTEM_SETTINGS[column]));
         } else if (column.endsWith("_path")) {
-            mapped[column] = normalizeStoredMedia(typeof rawValue === "string" ? rawValue : "") || "";
+            mapped[column] = normalizeSubmittedMedia(typeof rawValue === "string" ? rawValue : "") || "";
         } else if (SYSTEM_TEXTAREA_FIELDS.has(column)) {
             mapped[column] = String(rawValue || "").trim();
         } else {
@@ -3293,7 +3444,7 @@ const normalizeInstitutionContentInput = (body: Record<string, unknown>) => {
         department: normalizeText(body.department),
         credentials: normalizeText(body.credentials),
         category: normalizeText(body.category),
-        imageUrl: normalizeStoredMedia(String(body.imageUrl ?? body.photoUrl ?? "")) || "",
+        imageUrl: normalizeSubmittedMedia(String(body.imageUrl ?? body.photoUrl ?? "")) || "",
         icon: normalizeText(body.icon),
         displayOrder: Math.max(0, Math.floor(Number(body.displayOrder) || 0)),
         isActive: body.isActive === undefined ? true : normalizeBoolean(body.isActive)
@@ -3745,6 +3896,10 @@ const parseAlumniImportFile = async (buffer: Buffer, fileName = "", contentType 
     let worksheet: ExcelJS.Worksheet | undefined;
 
     if (normalizedName.endsWith(".xlsx") || normalizedType.includes("spreadsheetml")) {
+        assertValidFileContents(
+            buffer,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
         await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
         worksheet = workbook.worksheets[0];
     } else if (normalizedName.endsWith(".xls")) {
@@ -4406,7 +4561,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
     contactNumber,
     photoBase64,
     temporaryPassword,
-    borNumber,
+    graduationBatchId,
     advancedStudiesLevel,
     advancedStudiesStatus,
     advancedStudiesProgram,
@@ -4422,7 +4577,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
     contactNumber?: string | null;
     photoBase64?: string | null;
     temporaryPassword: string;
-    borNumber?: string | null;
+    graduationBatchId: number;
     advancedStudiesLevel?: string | null;
     advancedStudiesStatus?: string | null;
     advancedStudiesProgram?: string | null;
@@ -4441,7 +4596,7 @@ const createAlumniAccount = async (conn: PoolConnection, {
 
     await conn.query(
         `INSERT INTO profiles
-        (id, name, email, student_id, course, batch, contact_number, photo, bor_number, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year)
+        (id, name, email, student_id, course, batch, graduation_batch_id, contact_number, photo, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             userId,
@@ -4450,9 +4605,9 @@ const createAlumniAccount = async (conn: PoolConnection, {
             alumniId,
             course || null,
             batch || null,
+            graduationBatchId,
             contactNumber || null,
-            normalizeStoredMedia(photoBase64) || null,
-            normalizeText(borNumber) || null,
+            normalizeSubmittedMedia(photoBase64) || null,
             normalizeAdvancedStudiesLevel(advancedStudiesLevel),
             normalizeAdvancedStudiesStatus(advancedStudiesStatus),
             normalizeText(advancedStudiesProgram) || null,
@@ -6206,6 +6361,10 @@ initializeDatabaseBackedStartup().catch((error) => {
 });
 
 // Health check
+app.get("/health", (_req, res) => {
+    res.status(200).json({ status: "ok" });
+});
+
 app.get("/api/health", async (_req, res) => {
     try {
         await db.query<QueryRow>("SELECT 1 AS ok");
@@ -6292,8 +6451,8 @@ app.post("/api/auth/login", loginAccountRateLimiter, async (req, res) => {
         const identifier = String(email || "").trim();
         const normalizedPassword = String(password || "");
 
-        if (!identifier || !normalizedPassword || identifier.length > 254 || normalizedPassword.length > 128) {
-            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+        if (!isLoginInputWithinLimits(identifier, normalizedPassword)) {
+            await verifyLoginPassword(normalizedPassword, LOGIN_DUMMY_HASH);
             return res.status(401).json({ error: "Invalid credentials." });
         }
 
@@ -6307,18 +6466,18 @@ app.post("/api/auth/login", loginAccountRateLimiter, async (req, res) => {
         ));
 
         if (!users.length) {
-            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+            await verifyLoginPassword(normalizedPassword, LOGIN_DUMMY_HASH);
             return res.status(401).json({ error: "Invalid credentials." });
         }
 
         const user = users[0];
 
         if (!user?.password_hash) {
-            await bcrypt.compare(normalizedPassword, LOGIN_DUMMY_HASH);
+            await verifyLoginPassword(normalizedPassword, LOGIN_DUMMY_HASH);
             return res.status(401).json({ error: "Invalid credentials." });
         }
 
-        const match = await bcrypt.compare(normalizedPassword, user.password_hash);
+        const match = await verifyLoginPassword(normalizedPassword, user.password_hash);
 
         if (!match) {
             return res.status(401).json({ error: "Invalid credentials." });
@@ -6374,12 +6533,12 @@ app.post("/api/auth/select-role", authRateLimiter, async (req, res) => {
             ? decoded.roles.map((item) => normalizeRoleValue(item)).filter(Boolean)
             : [];
 
-        if (decoded.purpose !== "role_selection" || !decoded.id || !roles.includes(selectedRole)) {
+        if (decoded.purpose !== "role_selection" || !decoded.id || !isRoleAssigned(roles, selectedRole)) {
             return res.status(403).json({ error: "Selected role is not assigned to this account." });
         }
 
         const liveRoles = await getRolesForUser(String(decoded.id));
-        if (!liveRoles.includes(selectedRole)) {
+        if (!isRoleAssigned(liveRoles, selectedRole)) {
             return res.status(403).json({ error: "Selected role is no longer assigned to this account." });
         }
 
@@ -6524,7 +6683,7 @@ app.patch("/api/account/profile", authenticateToken, async (req: AuthenticatedRe
         const normalizedCourse = normalizeText(course) || null;
         const normalizedYearGraduated = normalizeBatch(yearGraduated) || null;
         const normalizedPhoto = typeof photo === "string"
-            ? normalizeStoredMedia(photo) || null
+            ? normalizeSubmittedMedia(photo) || null
             : null;
 
         if (!normalizedName) {
@@ -7361,6 +7520,140 @@ app.delete("/api/account/my-posts/:type/:id", authenticateToken, async (req: Aut
 });
 
 // Profiles and alumni
+app.get("/api/graduation-batches", authenticateToken, requirePermission("alumni.view"), async (_req, res) => {
+    try {
+        await ensureAlumniProfileColumns();
+        const rows = parseRows(await db.query(`
+            SELECT
+                gb.*,
+                COUNT(p.id) AS graduate_count
+            FROM graduation_batches gb
+            LEFT JOIN profiles p
+                ON p.graduation_batch_id = gb.id
+                AND EXISTS (
+                    SELECT 1 FROM user_roles ur
+                    WHERE ur.user_id = p.id AND ur.role = 'alumni'
+                )
+            GROUP BY gb.id
+            ORDER BY gb.batch_year DESC, gb.id DESC
+        `));
+        res.json(rows.map(mapGraduationBatch));
+    } catch (error: unknown) {
+        logger.error("GET GRADUATION BATCHES ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to load graduation batches.") });
+    }
+});
+
+app.get("/api/graduation-batches/:id", authenticateToken, requirePermission("alumni.view"), async (req, res) => {
+    try {
+        await ensureAlumniProfileColumns();
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid graduation batch." });
+        const row = await getSingleRow(`
+            SELECT gb.*, COUNT(p.id) AS graduate_count
+            FROM graduation_batches gb
+            LEFT JOIN profiles p
+                ON p.graduation_batch_id = gb.id
+                AND EXISTS (
+                    SELECT 1 FROM user_roles ur
+                    WHERE ur.user_id = p.id AND ur.role = 'alumni'
+                )
+            WHERE gb.id = ?
+            GROUP BY gb.id
+        `, [id]);
+        if (!row) return res.status(404).json({ error: "Graduation batch not found." });
+        res.json(mapGraduationBatch(row));
+    } catch (error: unknown) {
+        logger.error("GET GRADUATION BATCH ERROR:", error);
+        res.status(500).json({ error: getPublicErrorMessage(error, "Unable to load the graduation batch.") });
+    }
+});
+
+app.post("/api/graduation-batches", authenticateToken, requirePermission("alumni.edit"), async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureAlumniProfileColumns();
+        const batchYear = normalizeGraduationBatchYear(req.body?.batchYear ?? req.body?.batch_year);
+        const schoolYear = normalizeSchoolYear(req.body?.schoolYear ?? req.body?.school_year, batchYear);
+        const boardResolutionNo = normalizeText(req.body?.boardResolutionNo ?? req.body?.board_resolution_no);
+        const graduationDate = normalizeGraduationDate(req.body?.graduationDate ?? req.body?.graduation_date);
+        const documentUrl = normalizeSubmittedDocument(req.body?.documentUrl ?? req.body?.document_url);
+
+        if (!batchYear) return res.status(400).json({ error: "Enter a valid 4-digit batch year." });
+        if (!schoolYear) return res.status(400).json({ error: "School year must end with the selected batch year." });
+        if (!boardResolutionNo) return res.status(400).json({ error: "Board Resolution / BOR No. is required." });
+        if (!graduationDate) return res.status(400).json({ error: "Enter a valid graduation date." });
+
+        const result = await db.execute(
+            `INSERT INTO graduation_batches
+                (batch_year, school_year, board_resolution_no, graduation_date, document_url)
+             VALUES (?, ?, ?, ?, ?)`,
+            [batchYear, schoolYear, boardResolutionNo, graduationDate, documentUrl]
+        ) as ResultSetHeader;
+        const created = await getGraduationBatchById(result.insertId);
+        res.status(201).json(mapGraduationBatch(created || { id: result.insertId, batch_year: batchYear, school_year: schoolYear }));
+    } catch (error: unknown) {
+        logger.error("CREATE GRADUATION BATCH ERROR:", error);
+        if (getErrorCode(error) === "ER_DUP_ENTRY") {
+            return res.status(409).json({ error: "This batch year already exists." });
+        }
+        res.status(400).json({ error: getPublicErrorMessage(error, "Unable to create the graduation batch.") });
+    }
+});
+
+app.put("/api/graduation-batches/:id", authenticateToken, requirePermission("alumni.edit"), async (req: AuthenticatedRequest, res) => {
+    const conn = await db.getConnection();
+    try {
+        await ensureAlumniProfileColumns();
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid graduation batch." });
+        const current = await getGraduationBatchById(id);
+        if (!current) return res.status(404).json({ error: "Graduation batch not found." });
+
+        const batchYear = normalizeGraduationBatchYear(req.body?.batchYear ?? req.body?.batch_year);
+        const schoolYear = normalizeSchoolYear(req.body?.schoolYear ?? req.body?.school_year, batchYear);
+        const boardResolutionNo = normalizeText(req.body?.boardResolutionNo ?? req.body?.board_resolution_no) || null;
+        const rawGraduationDate = req.body?.graduationDate ?? req.body?.graduation_date;
+        const graduationDate = rawGraduationDate ? normalizeGraduationDate(rawGraduationDate) : null;
+        const hasDocument = Object.prototype.hasOwnProperty.call(req.body || {}, "documentUrl")
+            || Object.prototype.hasOwnProperty.call(req.body || {}, "document_url");
+        const documentUrl = hasDocument
+            ? normalizeSubmittedDocument(req.body?.documentUrl ?? req.body?.document_url)
+            : current.document_url || null;
+
+        if (!batchYear) return res.status(400).json({ error: "Enter a valid 4-digit batch year." });
+        if (!schoolYear) return res.status(400).json({ error: "School year must end with the selected batch year." });
+        if (rawGraduationDate && !graduationDate) return res.status(400).json({ error: "Enter a valid graduation date." });
+
+        await conn.beginTransaction();
+        await conn.query(
+            `UPDATE graduation_batches
+             SET batch_year = ?, school_year = ?, board_resolution_no = ?, graduation_date = ?, document_url = ?
+             WHERE id = ?`,
+            [batchYear, schoolYear, boardResolutionNo, graduationDate, documentUrl, id]
+        );
+        await conn.query("UPDATE profiles SET batch = ? WHERE graduation_batch_id = ?", [String(batchYear), id]);
+        await conn.commit();
+
+        const updated = await getSingleRow(`
+            SELECT gb.*, COUNT(p.id) AS graduate_count
+            FROM graduation_batches gb
+            LEFT JOIN profiles p ON p.graduation_batch_id = gb.id
+            WHERE gb.id = ?
+            GROUP BY gb.id
+        `, [id]);
+        res.json(mapGraduationBatch(updated || current));
+    } catch (error: unknown) {
+        await conn.rollback();
+        logger.error("UPDATE GRADUATION BATCH ERROR:", error);
+        if (getErrorCode(error) === "ER_DUP_ENTRY") {
+            return res.status(409).json({ error: "This batch year already exists." });
+        }
+        res.status(400).json({ error: getPublicErrorMessage(error, "Unable to update the graduation batch.") });
+    } finally {
+        conn.release();
+    }
+});
+
 app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), async (req, res) => {
     try {
         await ensureAlumniProfileColumns();
@@ -7371,8 +7664,9 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
                 p.email,
                 p.student_id,
                 p.course,
-                p.batch,
-                p.bor_number,
+                p.graduation_batch_id,
+                COALESCE(CAST(gb.batch_year AS CHAR), p.batch) AS batch,
+                COALESCE(gb.board_resolution_no, p.bor_number) AS bor_number,
                 p.advanced_studies_level,
                 p.advanced_studies_status,
                 p.advanced_studies_program,
@@ -7408,6 +7702,7 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
             const search = normalizeText(req.query.search);
             const course = normalizeText(req.query.course);
             const batch = normalizeText(req.query.batch);
+            const graduationBatchId = Number(req.query.graduationBatchId);
             const borNumber = normalizeText(req.query.borNumber);
             const advancedStudiesLevel = normalizeAdvancedStudiesLevel(req.query.advancedStudiesLevel);
 
@@ -7422,12 +7717,17 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
             }
 
             if (batch && batch !== "All Batches") {
-                where.push("p.batch = ?");
+                where.push("COALESCE(CAST(gb.batch_year AS CHAR), p.batch) = ?");
                 params.push(batch);
             }
 
+            if (Number.isInteger(graduationBatchId) && graduationBatchId > 0) {
+                where.push("p.graduation_batch_id = ?");
+                params.push(graduationBatchId);
+            }
+
             if (borNumber) {
-                where.push("p.bor_number LIKE ?");
+                where.push("COALESCE(gb.board_resolution_no, p.bor_number) LIKE ?");
                 params.push(`%${borNumber}%`);
             }
 
@@ -7440,7 +7740,7 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
                 const value = `%${search}%`;
                 where.push(`(
                     p.name LIKE ? OR p.student_id LIKE ? OR p.email LIKE ? OR
-                    p.course LIKE ? OR p.batch LIKE ? OR p.bor_number LIKE ? OR
+                    p.course LIKE ? OR COALESCE(CAST(gb.batch_year AS CHAR), p.batch) LIKE ? OR COALESCE(gb.board_resolution_no, p.bor_number) LIKE ? OR
                     p.advanced_studies_program LIKE ? OR p.advanced_studies_school LIKE ? OR
                     CAST(tf.ched_payload AS CHAR) LIKE ?
                 )`);
@@ -7454,8 +7754,8 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
                 email: "p.email",
                 student_id: "p.student_id",
                 course: "p.course",
-                batch: "p.batch",
-                bor_number: "p.bor_number",
+                batch: "COALESCE(gb.batch_year, CAST(p.batch AS UNSIGNED))",
+                bor_number: "COALESCE(gb.board_resolution_no, p.bor_number)",
                 advanced_studies_level: "p.advanced_studies_level",
                 created_at: "p.created_at"
             };
@@ -7463,6 +7763,7 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
             const sortDirection = String(req.query.sortDirection || "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
             const fromSql = `
                 FROM profiles p
+                LEFT JOIN graduation_batches gb ON gb.id = p.graduation_batch_id
                 LEFT JOIN tracer_form tf ON tf.user_id = p.id AND tf.submission_status = 'completed'`;
             const countRows = parseRows(await db.query(
                 `SELECT COUNT(DISTINCT p.id) AS total ${fromSql} ${whereSql}`,
@@ -7491,6 +7792,7 @@ app.get("/api/profiles", authenticateToken, requirePermission("alumni.view"), as
                 ur.role
             FROM profiles p
             LEFT JOIN user_roles ur ON ur.user_id = p.id
+            LEFT JOIN graduation_batches gb ON gb.id = p.graduation_batch_id
             LEFT JOIN tracer_form tf ON tf.user_id = p.id AND tf.submission_status = 'completed'
             ORDER BY p.name ASC`
         ));
@@ -7520,8 +7822,8 @@ app.post("/api/profiles", authenticateToken, requirePermission("alumni.edit"), a
             contactNumber,
             photoBase64,
             sendEmail: shouldSend,
-            borNumber,
-            bor_number,
+            graduationBatchId,
+            graduation_batch_id,
             advancedStudiesLevel,
             advanced_studies_level,
             advancedStudiesStatus,
@@ -7538,10 +7840,10 @@ app.post("/api/profiles", authenticateToken, requirePermission("alumni.edit"), a
 
         const normalizedName = normalizeText(name);
         const normalizedEmail = normalizeEmail(email);
-        const normalizedBatch = normalizeBatch(batch || year);
+        const selectedGraduationBatch = await getGraduationBatchById(graduationBatchId || graduation_batch_id);
+        const normalizedBatch = selectedGraduationBatch ? String(selectedGraduationBatch.batch_year) : normalizeBatch(batch || year);
         const normalizedStudentId = normalizeText(studentId || student_id || requestedAlumniId);
         const normalizedContactNumber = normalizePhone(contactNumber) || null;
-        const normalizedBorNumber = normalizeText(borNumber || bor_number) || null;
         const normalizedAdvancedStudiesLevel = normalizeAdvancedStudiesLevel(advancedStudiesLevel || advanced_studies_level);
         const normalizedAdvancedStudiesStatus = normalizeAdvancedStudiesStatus(advancedStudiesStatus || advanced_studies_status);
         const normalizedAdvancedStudiesProgram = normalizeText(advancedStudiesProgram || advanced_studies_program) || null;
@@ -7561,8 +7863,8 @@ app.post("/api/profiles", authenticateToken, requirePermission("alumni.edit"), a
             return res.status(400).json({ error: emailValidationMessage });
         }
 
-        if (!normalizedBatch || !/^\d{4}$/.test(normalizedBatch)) {
-            return res.status(400).json({ error: "Batch year is required and must be a 4-digit year." });
+        if (!selectedGraduationBatch) {
+            return res.status(400).json({ error: "Select a graduation batch." });
         }
 
         if (!courseValidation.ok || !courseValidation.course) {
@@ -7609,7 +7911,7 @@ app.post("/api/profiles", authenticateToken, requirePermission("alumni.edit"), a
             contactNumber: normalizedContactNumber,
             photoBase64: photoBase64 || null,
             temporaryPassword,
-            borNumber: normalizedBorNumber,
+            graduationBatchId: Number(selectedGraduationBatch.id),
             advancedStudiesLevel: normalizedAdvancedStudiesLevel,
             advancedStudiesStatus: normalizedAdvancedStudiesStatus,
             advancedStudiesProgram: normalizedAdvancedStudiesProgram,
@@ -7668,10 +7970,13 @@ app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.ed
 
     try {
         await ensureAlumniProfileColumns();
-        const importSchoolYear = normalizeBatch(String(req.headers["x-school-year"] || ""));
+        const selectedGraduationBatch = await getGraduationBatchById(
+            req.headers["x-graduation-batch-id"] || req.body?.graduationBatchId || req.body?.graduation_batch_id
+        );
+        const importSchoolYear = selectedGraduationBatch ? String(selectedGraduationBatch.batch_year) : "";
 
-        if (!/^\d{4}$/.test(importSchoolYear)) {
-            return res.status(400).json({ error: "Set a valid 4-digit school year before importing alumni records." });
+        if (!selectedGraduationBatch) {
+            return res.status(400).json({ error: "Select a graduation batch before importing alumni records." });
         }
 
         const programOptions = (await getSystemSettings()).programs;
@@ -7785,7 +8090,7 @@ app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.ed
                     batch: row.batch,
                     contactNumber: row.contactNumber,
                     temporaryPassword,
-                    borNumber: row.borNumber,
+                    graduationBatchId: Number(selectedGraduationBatch.id),
                     advancedStudiesLevel: row.advancedStudiesLevel,
                     advancedStudiesStatus: row.advancedStudiesStatus,
                     advancedStudiesProgram: row.advancedStudiesProgram,
@@ -7798,8 +8103,8 @@ app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.ed
 
                 await conn.query(
                     `INSERT INTO imported_alumni_records
-                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, bor_number, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year, generated_alumni_id, status, email_status, imported_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
+                        (import_batch_id, imported_profile_id, full_name, graduation_year, email_address, contact_number, advanced_studies_level, advanced_studies_status, advanced_studies_program, advanced_studies_school, advanced_studies_start_year, advanced_studies_expected_completion_year, generated_alumni_id, status, email_status, imported_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', 'pending', ?)`,
                     [
                         importBatchId,
                         userId,
@@ -7807,7 +8112,6 @@ app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.ed
                         row.batch,
                         row.email,
                         row.contactNumber,
-                        row.borNumber,
                         row.advancedStudiesLevel,
                         row.advancedStudiesStatus,
                         row.advancedStudiesProgram,
@@ -7877,7 +8181,7 @@ app.post("/api/profiles/import", authenticateToken, requirePermission("alumni.ed
                 graduationYear: row.batch,
                 program: row.course,
                 contactNumber: row.contactNumber,
-                borNumber: row.borNumber,
+                borNumber: selectedGraduationBatch.board_resolution_no ? String(selectedGraduationBatch.board_resolution_no) : null,
                 advancedStudiesLevel: row.advancedStudiesLevel,
                 advancedStudiesStatus: row.advancedStudiesStatus,
                 emailSent,
@@ -9178,10 +9482,19 @@ app.get("/api/alumni/dashboard", authenticateToken, async (req: AuthenticatedReq
 });
 
 // Graduate tracer administration
-app.get("/api/graduate-tracer", authenticateToken, requirePermission("tracer.view"), async (_req, res) => {
+app.get("/api/graduate-tracer", authenticateToken, requirePermission("tracer.view"), async (req: AuthenticatedRequest, res) => {
     try {
         const tracerTable = await getTracerTableName();
         const tracerColumns = getTracerColumnNames(tracerTable);
+        const role = await getRequestRole(req);
+        const chairmanCourse = role === "chairman" ? await getChairmanCourseForUser(req.user?.id || "") : null;
+
+        if (role === "chairman" && !chairmanCourse) {
+            return res.status(403).json({ error: "Chairman access requires an assigned department." });
+        }
+
+        const courseWhere = chairmanCourse ? "WHERE p.course = ?" : "";
+        const courseParams = chairmanCourse ? [chairmanCourse] : [];
 
         const rows = parseRows(await db.query(
             `SELECT
@@ -9206,7 +9519,9 @@ app.get("/api/graduate-tracer", authenticateToken, requirePermission("tracer.vie
                 gt.created_at
             FROM ${tracerTable} gt
             LEFT JOIN profiles p ON p.id = gt.user_id
-            ORDER BY gt.created_at DESC`
+            ${courseWhere}
+            ORDER BY gt.created_at DESC`,
+            courseParams
         ));
 
         res.json(rows);
@@ -11034,7 +11349,7 @@ app.get("/api/announcements", authenticateToken, async (_req, res) => {
 
         const mappedAnnouncements = rows.map((row) => {
             const normalizedType = normalizeAnnouncementType(String(row.type || ""));
-            const duration = withDurationFields(row as Record<string, unknown>, { ignoreDuration: normalizedType === "announcement" });
+            const duration = withDurationFields(row as Record<string, unknown>);
             return {
             ...duration,
             id: String(row.id),
@@ -11082,13 +11397,12 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
         const hasInterestEnabled = await columnExists(announcementTable, "interest_enabled");
         const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
-        const usesDurationWindow = normalizedType !== "announcement";
         const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
-        const durationWindow = usesDurationWindow ? getDurationWindowFromBody(req.body || {}) : getDurationWindowFromBody({});
+        const durationWindow = getDurationWindowFromBody(req.body || {});
         const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
-        const effectiveTime = usesDurationWindow ? time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null) : null;
+        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
         const normalizedStatus = normalizeStatus(status, getAnnouncementStatusFallback(normalizedType));
         const role = await getRequestRole(req);
         const canModerate = canModerateAnnouncementContent(role);
@@ -11096,6 +11410,10 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
 
         if (!title || !effectiveDate) {
             return res.status(400).json({ error: "Title and date are required" });
+        }
+
+        if (!durationWindow.start || !durationWindow.end) {
+            return res.status(400).json({ error: "Start and end date/time are required." });
         }
 
         if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
@@ -11140,7 +11458,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             normalizedType,
             ...(hasGoogleFormLink ? [google_form_link || null] : []),
             organizer || null,
-            normalizeStoredMedia(image_url) || null,
+            normalizeSubmittedMedia(image_url) || null,
             normalizedStatus,
             capacity || 0,
             ...(hasApprovalStatus ? [approvalStatus] : []),
@@ -11171,7 +11489,7 @@ app.post("/api/announcements", authenticateToken, async (req: AuthenticatedReque
             success: true,
             event: newEvent
                 ? {
-                    ...withDurationFields(newEvent, { ignoreDuration: normalizeAnnouncementType(String(newEvent.type || normalizedType)) === "announcement" }),
+                    ...withDurationFields(newEvent),
                     id: String(newEvent.id),
                     type: normalizeAnnouncementType(String(newEvent.type || normalizedType)),
                     image_url: normalizeStoredMedia(newEvent.image_url),
@@ -11320,7 +11638,7 @@ app.get("/api/announcements/:id", authenticateToken, async (req: AuthenticatedRe
             return res.status(404).json({ error: "Announcement not found" });
         }
         const eventType = normalizeAnnouncementType(String(event.type || ""));
-        const eventDuration = withDurationFields(event, { ignoreDuration: eventType === "announcement" });
+        const eventDuration = withDurationFields(event);
         if (!canModerate && eventDuration.computed_status === "Archived") {
             return res.status(404).json({ error: "Announcement not found" });
         }
@@ -11750,16 +12068,18 @@ app.put("/api/announcements/:id", authenticateToken, requirePermission("announce
         const eventId = Number(req.params.id);
         const { title, description, date, time, venue, type, google_form_link, organizer, image_url, status, capacity, audienceScope, audienceValue, interestEnabled, interest_enabled } = req.body || {};
         const normalizedType = normalizeAnnouncementType(type);
-        const usesDurationWindow = normalizedType !== "announcement";
         const enabledInterest = normalizedType === "event" || normalizeBoolean(interestEnabled ?? interest_enabled);
         const normalizedAudienceScope = normalizeAnnouncementAudienceScope(audienceScope);
         const normalizedAudienceValue = normalizeAnnouncementAudienceValue(normalizedAudienceScope, audienceValue);
-        const durationWindow = usesDurationWindow ? getDurationWindowFromBody(req.body || {}) : getDurationWindowFromBody({});
+        const durationWindow = getDurationWindowFromBody(req.body || {});
         const effectiveDate = normalizeDateOnly(date) || (durationWindow.start ? formatManilaDate(durationWindow.start) : "");
-        const effectiveTime = usesDurationWindow ? time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null) : null;
+        const effectiveTime = time || (durationWindow.start ? formatManilaTime(durationWindow.start).slice(0, 5) : null);
         const normalizedStatus = normalizeStatus(status, getAnnouncementStatusFallback(normalizedType));
 
         if (!eventId) return res.status(400).json({ error: "Invalid event id" });
+        if (!durationWindow.start || !durationWindow.end) {
+            return res.status(400).json({ error: "Start and end date/time are required." });
+        }
         if (normalizedAudienceScope !== "all" && !normalizedAudienceValue) {
             return res.status(400).json({ error: `Please provide the target ${normalizedAudienceScope} audience.` });
         }
@@ -11800,7 +12120,7 @@ app.put("/api/announcements/:id", authenticateToken, requirePermission("announce
                     normalizedType,
                     google_form_link || null,
                     organizer || null,
-                    normalizeStoredMedia(image_url) || null,
+                    normalizeSubmittedMedia(image_url) || null,
                     normalizedStatus,
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
@@ -11817,7 +12137,7 @@ app.put("/api/announcements/:id", authenticateToken, requirePermission("announce
                     venue || null,
                     normalizedType,
                     organizer || null,
-                    normalizeStoredMedia(image_url) || null,
+                    normalizeSubmittedMedia(image_url) || null,
                     normalizedStatus,
                     capacity || 0,
                     ...(hasAudienceScope ? [normalizedAudienceScope] : []),
@@ -11835,7 +12155,7 @@ app.put("/api/announcements/:id", authenticateToken, requirePermission("announce
             success: true,
             event: updated
                 ? {
-                    ...withDurationFields(updated, { ignoreDuration: normalizeAnnouncementType(String(updated.type || normalizedType)) === "announcement" }),
+                    ...withDurationFields(updated),
                     type: normalizeAnnouncementType(String(updated.type || normalizedType)),
                     image_url: normalizeStoredMedia(updated.image_url),
                     status: normalizeStatus(updated.status, getAnnouncementStatusFallback(String(updated.type || normalizedType))),
@@ -12690,7 +13010,7 @@ app.post("/api/achievements", authenticateToken, async (req: AuthenticatedReques
                 date,
                 category,
                 organization || null,
-                normalizeStoredMedia(proofImage) || null
+                normalizeSubmittedMedia(proofImage) || null
             ]
         ) as ResultSetHeader;
 
@@ -12760,7 +13080,9 @@ app.patch("/api/achievements/:id", authenticateToken, requirePermission("achieve
                 achievementDate,
                 category ?? current.category,
                 organization ?? current.organization,
-                normalizeStoredMedia(proofImage ?? current.image_url) || null,
+                proofImage === undefined
+                    ? normalizeStoredMedia(current.image_url) || null
+                    : normalizeSubmittedMedia(proofImage) || null,
                 normalizeStatus(String(status || current.status || "pending")),
                 featured === undefined ? current.featured : (featured ? 1 : 0),
                 rejectionReason ?? current.rejection_reason,
@@ -13518,6 +13840,9 @@ app.post("/api/surveys", authenticateToken, requirePermission("surveys.manage"),
         if (!title || !surveyType || !Array.isArray(questions) || questions.length === 0) {
             return res.status(400).json({ error: "Title, type, and at least one question are required" });
         }
+        if (!durationWindow.start || !durationWindow.end) {
+            return res.status(400).json({ error: "Start and end date/time are required." });
+        }
         if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
             return res.status(400).json({ error: "End date/time must be after the start date/time." });
         }
@@ -13621,6 +13946,9 @@ app.put("/api/surveys/:id", authenticateToken, requirePermission("surveys.manage
             end_datetime: req.body?.end_datetime || closesAt
         });
 
+        if (!durationWindow.start || !durationWindow.end) {
+            return res.status(400).json({ error: "Start and end date/time are required." });
+        }
         if (durationWindow.start && durationWindow.end && durationWindow.end.getTime() < durationWindow.start.getTime()) {
             return res.status(400).json({ error: "End date/time must be after the start date/time." });
         }
@@ -13910,7 +14238,7 @@ const normalizeAlumniOfficerPayload = async (input: Record<string, unknown>) => 
     let programId = normalizeText(input.programId) || null;
     let batchYear = normalizeBatch(input.batchYear) || null;
     let contactNumber = normalizePhone(input.contactNumber) || null;
-    let photo = input.photo ? normalizeStoredMedia(String(input.photo)) : null;
+    let photo = input.photo ? normalizeSubmittedMedia(String(input.photo)) : null;
 
     if (!position || !ALUMNI_OFFICER_POSITIONS.has(position)) throw new Error("Select a supported officer position");
     if (position === "Custom Position" && !customPosition) throw new Error("Provide the custom officer position");
@@ -14273,7 +14601,7 @@ app.post("/api/officers/bundles", authenticateToken, requireAdmin, async (req: A
                 course: normalizeText(item?.course),
                 batch: normalizeBatch(item?.batch),
                 contactNumber: normalizePhone(item?.contactNumber),
-                photoBase64: normalizeStoredMedia(item?.photoBase64 ? String(item.photoBase64) : null),
+                photoBase64: normalizeSubmittedMedia(item?.photoBase64 ? String(item.photoBase64) : null),
                 customPosition: item?.customPosition ? normalizeText(item.customPosition) : null,
                 displayOrder: getOfficerDisplayOrder(String(item?.position || ""), index)
             }))

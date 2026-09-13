@@ -9,8 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      NODE_ENV: test
       APP_ENV: test
       DB_ENVIRONMENT: test
+      SKIP_DOTENV: "true"
     services:
       mysql:
         image: mysql:8.4
@@ -60,7 +62,7 @@ jobs:
         run: npm run lint
 
       - name: Typecheck root
-        run: npx tsc --noEmit --pretty false
+        run: npx tsc -p tsconfig.app.json --noEmit --pretty false
 
       - name: Build server
         run: npm run build
@@ -133,7 +135,7 @@ jobs:
         run: |
           npm run start > ../server-smoke.log 2>&1 &
           for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:5000/api/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:5000/health >/dev/null; then
               exit 0
             fi
             sleep 2
@@ -161,6 +163,20 @@ jobs:
           SMOKE_ADMIN_EMAIL: admin@example.test
           SMOKE_ADMIN_PASSWORD: AdminPassword123!
           SMOKE_MUTATING: "true"
+
+      - name: Smoke test Graduate Tracer workflow
+        run: npm run smoke:tracer
+        working-directory: server
+        env:
+          API_BASE_URL: http://127.0.0.1:5000
+          SMOKE_ADMIN_EMAIL: admin@example.test
+          SMOKE_ADMIN_PASSWORD: AdminPassword123!
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: ustp_alumni_ci
+          DB_SSL: "false"
 
       - name: Audit root dependencies
         run: npm audit --audit-level=moderate

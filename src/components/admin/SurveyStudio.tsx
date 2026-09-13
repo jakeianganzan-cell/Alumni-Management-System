@@ -95,18 +95,23 @@ export default function SurveyStudio() {
   const [surveyToDelete, setSurveyToDelete] = useState<SurveyRecord | null>(null);
   const [deletingSurveyId, setDeletingSurveyId] = useState<number | null>(null);
 
-  const loadSurveys = async () => {
+  const loadSurveys = async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       const response = await fetch(`${API_URL}/surveys`, { headers: getAuthHeaders() });
       setSurveys(await readApiResponse<SurveyRecord[]>(response));
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
     void loadSurveys();
+    const refreshTimer = window.setInterval(() => {
+      void loadSurveys(false);
+    }, 15_000);
+
+    return () => window.clearInterval(refreshTimer);
   }, []);
 
   const totalSurveyPages = Math.max(1, Math.ceil(surveys.length / LIST_PAGE_SIZE));
@@ -363,7 +368,7 @@ export default function SurveyStudio() {
             </div>
             <Button type="button" variant="outline" onClick={addQuestion}><Plus className="mr-2 h-4 w-4" />Add question</Button>
             <div className="flex gap-2">
-              <Button type="button" onClick={() => void saveSurvey()} disabled={saving || !form.title.trim()}>{saving ? "Loading" : editingId ? "Save survey" : "Create survey"}</Button>
+              <Button type="button" onClick={() => void saveSurvey()} disabled={saving || !form.title.trim() || !form.start_date || !form.end_date}>{saving ? "Loading" : editingId ? "Save survey" : "Create survey"}</Button>
               {editingId && <Button type="button" variant="outline" onClick={() => { setEditingId(null); setForm(BLANK_FORM); setActiveQuestionIndex(0); }}>Cancel</Button>}
             </div>
           </div>

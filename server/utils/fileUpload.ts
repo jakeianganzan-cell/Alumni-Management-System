@@ -12,6 +12,12 @@ const FILE_EXTENSION_BY_MIME: Record<string, string> = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx"
 };
 
+const OPENXML_PACKAGE_MARKER_BY_MIME: Record<string, string> = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word/",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xl/",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "ppt/"
+};
+
 export const parseDataUrlUpload = (dataUrl: string, maxBytes = 8 * 1024 * 1024) => {
     const match = String(dataUrl || "").match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
     if (!match) {
@@ -33,16 +39,7 @@ export const parseDataUrlUpload = (dataUrl: string, maxBytes = 8 * 1024 * 1024) 
         throw new Error(`Uploads must be ${Math.floor(maxBytes / 1024 / 1024)}MB or smaller.`);
     }
 
-    if (!hasValidFileSignature(buffer, mimeType)) {
-        throw new Error("Uploaded file content does not match the declared file type.");
-    }
-
-    if (mimeType.startsWith("application/vnd.openxmlformats-officedocument.")) {
-        const archiveText = buffer.toString("latin1");
-        if (!archiveText.includes("[Content_Types].xml") || /vbaProject\.bin/i.test(archiveText)) {
-            throw new Error("Office uploads must be valid, macro-free OpenXML documents.");
-        }
-    }
+    assertValidFileContents(buffer, mimeType);
 
     return {
         buffer,
@@ -50,6 +47,24 @@ export const parseDataUrlUpload = (dataUrl: string, maxBytes = 8 * 1024 * 1024) 
         mimeType,
         size: buffer.length
     };
+};
+
+export const assertValidFileContents = (buffer: Buffer, mimeType: string) => {
+    if (!hasValidFileSignature(buffer, mimeType)) {
+        throw new Error("Uploaded file content does not match the declared file type.");
+    }
+
+    const packageMarker = OPENXML_PACKAGE_MARKER_BY_MIME[mimeType];
+    if (packageMarker) {
+        const archiveText = buffer.toString("latin1");
+        if (
+            !archiveText.includes("[Content_Types].xml")
+            || !archiveText.includes(packageMarker)
+            || /vbaProject\.bin|application\/vnd\.ms-office\.vbaProject/i.test(archiveText)
+        ) {
+            throw new Error("Office uploads must be valid, correctly typed, macro-free OpenXML documents.");
+        }
+    }
 };
 
 export const hasValidFileSignature = (buffer: Buffer, mimeType: string) => {

@@ -63,6 +63,7 @@ DROP TABLE IF EXISTS activity_logs;
 DROP TABLE IF EXISTS user_sessions;
 DROP TABLE IF EXISTS user_roles;
 DROP TABLE IF EXISTS profiles;
+DROP TABLE IF EXISTS graduation_batches;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS alumni_profiles;
 DROP TABLE IF EXISTS engagement_logs;
@@ -79,6 +80,18 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS graduation_batches (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    batch_year INT NOT NULL,
+    school_year VARCHAR(30) NOT NULL,
+    board_resolution_no VARCHAR(100),
+    graduation_date DATE,
+    document_url LONGTEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_graduation_batches_batch_year (batch_year)
+);
+
 CREATE TABLE IF NOT EXISTS profiles (
     id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -86,6 +99,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     student_id VARCHAR(50) UNIQUE,
     course VARCHAR(255),
     batch VARCHAR(10),
+    graduation_batch_id BIGINT,
     bor_number VARCHAR(100),
     bor_date DATE,
     graduation_batch VARCHAR(100),
@@ -100,7 +114,9 @@ CREATE TABLE IF NOT EXISTS profiles (
     contact_number VARCHAR(50),
     photo LONGTEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (id) REFERENCES users(id) ON DELETE CASCADE
+    INDEX idx_profiles_graduation_batch (graduation_batch_id),
+    FOREIGN KEY (id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_profiles_graduation_batch FOREIGN KEY (graduation_batch_id) REFERENCES graduation_batches(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS user_roles (

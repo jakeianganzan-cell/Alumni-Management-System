@@ -8,10 +8,11 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
+  FileText,
   FileSpreadsheet,
-  Filter,
   Loader2,
   Mail,
+  Pencil,
   Plus,
   Search,
   Upload,
@@ -24,7 +25,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useSystemSettings } from "@/context/SystemSettingsContext";
 import { downloadBrandedExcel, type ReportColumn } from "@/lib/reportExport";
 
-const BATCHES = ["All Batches", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018"];
 const ALUMNI_PAGE_SIZE = 15;
 
 interface AlumniRecord {
@@ -32,6 +32,7 @@ interface AlumniRecord {
   name: string;
   course: string | null;
   batch: string | null;
+  graduation_batch_id: number | null;
   bor_number: string | null;
   advanced_studies_level: string | null;
   advanced_studies_status: string | null;
@@ -58,11 +59,31 @@ interface ProfilesPageResponse {
 interface NewAlumniForm {
   name: string;
   course: string;
-  batch: string;
+  graduationBatchId: string;
   email: string;
   studentId: string;
   contactNumber: string;
-  borNumber: string;
+}
+
+interface GraduationBatch {
+  id: number;
+  batchYear: number;
+  schoolYear: string;
+  boardResolutionNo: string | null;
+  graduationDate: string | null;
+  documentUrl: string | null;
+  graduateCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface GraduationBatchForm {
+  batchYear: string;
+  schoolYear: string;
+  boardResolutionNo: string;
+  graduationDate: string;
+  documentUrl: string;
+  documentName: string;
 }
 
 interface ImportRow {
@@ -123,7 +144,8 @@ interface ImportResponse {
   }>;
 }
 
-const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], batch: "2026", email: "", studentId: "", contactNumber: "", borNumber: "" };
+const BLANK: NewAlumniForm = { name: "", course: SYSTEM_COURSES[0], graduationBatchId: "", email: "", studentId: "", contactNumber: "" };
+const BLANK_BATCH: GraduationBatchForm = { batchYear: "", schoolYear: "", boardResolutionNo: "", graduationDate: "", documentUrl: "", documentName: "" };
 
 const normalizeImageSrc = (value: string | null) => resolveAssetUrl(value);
 
@@ -474,13 +496,13 @@ export default function AdminAlumni() {
   const { settings: systemSettings } = useSystemSettings();
   const programOptions = systemSettings.programs;
   const systemCourses = useMemo(() => programOptions.map((option) => option.code), [programOptions]);
-  const courses = useMemo(() => [ALL_COURSES_OPTION, ...systemCourses], [systemCourses]);
   const [alumni, setAlumni] = useState<AlumniRecord[]>([]);
+  const [graduationBatches, setGraduationBatches] = useState<GraduationBatch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState("");
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [course, setCourse] = useState(ALL_COURSES_OPTION);
-  const [batch, setBatch] = useState("All Batches");
-  const [borFilter, setBorFilter] = useState("");
+  const [courseFilter, setCourseFilter] = useState(ALL_COURSES_OPTION);
+  const [batchFilter, setBatchFilter] = useState("");
   const [advancedStudiesFilter, setAdvancedStudiesFilter] = useState("");
 
   const [sortKey, setSortKey] = useState<keyof AlumniRecord>("name");
@@ -491,6 +513,11 @@ export default function AdminAlumni() {
   const [showAdd, setShowAdd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showBatch, setShowBatch] = useState(false);
+  const [editingBatch, setEditingBatch] = useState<GraduationBatch | null>(null);
+  const [batchForm, setBatchForm] = useState<GraduationBatchForm>(BLANK_BATCH);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchError, setBatchError] = useState("");
   const [form, setForm] = useState<NewAlumniForm>(BLANK);
   const [addedAlumni, setAddedAlumni] = useState<{ name: string; email: string; alumniId: string } | null>(null);
   const [addLoading, setAddLoading] = useState(false);
@@ -504,14 +531,44 @@ export default function AdminAlumni() {
   const [importSubmitting, setImportSubmitting] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState<ImportResponse | null>(null);
-  const [importSchoolYear, setImportSchoolYear] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const selectedBatch = useMemo(
+    () => graduationBatches.find((item) => String(item.id) === selectedBatchId) || null,
+    [graduationBatches, selectedBatchId]
+  );
+
+  const selectedAddBatch = useMemo(
+    () => graduationBatches.find((item) => String(item.id) === form.graduationBatchId) || null,
+    [form.graduationBatchId, graduationBatches]
+  );
 
   useEffect(() => {
     if (systemCourses.length > 0 && !systemCourses.includes(form.course)) {
       setForm((current) => ({ ...current, course: systemCourses[0] }));
     }
   }, [form.course, systemCourses]);
+
+  const fetchGraduationBatches = useCallback(async (preferredBatchId?: string) => {
+    try {
+      const response = await fetch(`${API_URL}/graduation-batches`, { headers: getAuthHeaders() });
+      const rows = await readApiResponse<GraduationBatch[]>(response);
+      setGraduationBatches(rows || []);
+      setSelectedBatchId((current) => {
+        if (preferredBatchId && rows.some((item) => String(item.id) === preferredBatchId)) return preferredBatchId;
+        if (current && rows.some((item) => String(item.id) === current)) return current;
+        return rows[0] ? String(rows[0].id) : "";
+      });
+    } catch (error) {
+      clientLogger.error(error);
+      toast.error("Failed to load graduation batches");
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchGraduationBatches();
+  }, [fetchGraduationBatches]);
+
   const existingEmails = useMemo(
     () => new Set(alumni.map((profile) => normalizeEmail(profile.email)).filter(Boolean)),
     [alumni]
@@ -521,7 +578,7 @@ export default function AdminAlumni() {
   const studentIdValidationError = getStudentIdError(form.studentId);
   const addFormErrors = {
     name: trimmedName ? "" : "Full name is required.",
-    batch: /^\d{4}$/.test(form.batch) ? "" : "Batch year must be a 4-digit year.",
+    graduationBatchId: selectedAddBatch ? "" : "Select a graduation batch.",
     course: systemCourses.includes(form.course) ? "" : "Select a valid course/program.",
     email: emailValidationError,
     studentId: studentIdValidationError,
@@ -536,7 +593,7 @@ export default function AdminAlumni() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [advancedStudiesFilter, batch, borFilter, course, search, sortAsc, sortKey]);
+  }, [advancedStudiesFilter, batchFilter, courseFilter, search, selectedBatchId, sortAsc, sortKey]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -560,15 +617,22 @@ export default function AdminAlumni() {
     });
 
     if (search.trim()) params.set("search", search.trim());
-    if (course !== ALL_COURSES_OPTION) params.set("course", course);
-    if (batch !== "All Batches") params.set("batch", batch);
-    if (borFilter.trim()) params.set("borNumber", borFilter.trim());
+    if (courseFilter !== ALL_COURSES_OPTION) params.set("course", courseFilter);
+    const effectiveBatchFilter = batchFilter || selectedBatchId;
+    if (effectiveBatchFilter && effectiveBatchFilter !== "all") params.set("graduationBatchId", effectiveBatchFilter);
     if (advancedStudiesFilter) params.set("advancedStudiesLevel", advancedStudiesFilter);
 
     return params;
-  }, [advancedStudiesFilter, batch, borFilter, course, search, sortAsc, sortKey]);
+  }, [advancedStudiesFilter, batchFilter, courseFilter, search, selectedBatchId, sortAsc, sortKey]);
 
   const fetchAlumni = useCallback(async (signal?: AbortSignal) => {
+    if (!selectedBatchId) {
+      setAlumni([]);
+      setTotalAlumni(0);
+      setTotalPages(1);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const headers = getAuthHeaders();
 
@@ -586,7 +650,7 @@ export default function AdminAlumni() {
     } finally {
       setLoading(false);
     }
-  }, [buildProfilesQuery, currentPage]);
+  }, [buildProfilesQuery, currentPage, selectedBatchId]);
 
   const fetchAllFilteredAlumni = async () => {
     const headers = getAuthHeaders();
@@ -632,7 +696,6 @@ export default function AdminAlumni() {
     setImportFileName("");
     setImportError("");
     setImportResult(null);
-    setImportSchoolYear("");
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -684,12 +747,11 @@ export default function AdminAlumni() {
           name: form.name,
           email: normalizedEmail,
           course: form.course,
-          batch: form.batch,
+          graduationBatchId: Number(form.graduationBatchId),
           studentId: normalizedStudentId || null,
           contactNumber: form.contactNumber,
           photoBase64: photoPreview,
           sendEmail: true,
-          borNumber: form.borNumber,
         }),
       });
 
@@ -706,7 +768,10 @@ export default function AdminAlumni() {
       setShowConfirm(true);
       setPhotoPreview(null);
       setForm(BLANK);
-      await fetchAlumni();
+      setSelectedBatchId(form.graduationBatchId);
+      setBatchFilter("");
+      await fetchGraduationBatches(form.graduationBatchId);
+      if (form.graduationBatchId === selectedBatchId) await fetchAlumni();
 
       if (!data.emailSent && data.emailError) {
         toast.error(`Alumni account created, but the credentials email was not sent: ${data.emailError}`);
@@ -728,10 +793,8 @@ export default function AdminAlumni() {
       return;
     }
 
-    const selectedSchoolYear = normalizeYear(importSchoolYear);
-
-    if (!/^\d{4}$/.test(selectedSchoolYear)) {
-      setImportError("Set the school year first before choosing the Excel file.");
+    if (!selectedBatch) {
+      setImportError("Select a graduation batch first.");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -749,7 +812,7 @@ export default function AdminAlumni() {
         throw new Error("Only XLSX files are allowed.");
       }
 
-      const parsedRows = await parseImportFile(file, selectedSchoolYear, programOptions);
+      const parsedRows = await parseImportFile(file, String(selectedBatch.batchYear), programOptions);
       const validatedRows = validateImportRows(parsedRows, existingEmails, systemCourses);
 
       setImportRows(validatedRows);
@@ -767,14 +830,12 @@ export default function AdminAlumni() {
     }
   };
   const handleImportSubmit = async () => {
-    const selectedSchoolYear = normalizeYear(importSchoolYear);
-
     if (importRows.length === 0 || !importFile) {
       return;
     }
 
-    if (!/^\d{4}$/.test(selectedSchoolYear)) {
-      setImportError("Set a valid 4-digit school year before final import.");
+    if (!selectedBatch) {
+      setImportError("Select a graduation batch before final import.");
       return;
     }
 
@@ -788,7 +849,7 @@ export default function AdminAlumni() {
           ...getAuthHeaders(),
           "Content-Type": importFile.type || "application/octet-stream",
           "X-File-Name": importFile.name,
-          "X-School-Year": selectedSchoolYear,
+          "X-Graduation-Batch-Id": String(selectedBatch.id),
         },
         body: importFile,
       });
@@ -798,7 +859,7 @@ export default function AdminAlumni() {
       setImportRows([]);
       setImportFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      await fetchAlumni();
+      await Promise.all([fetchAlumni(), fetchGraduationBatches(selectedBatchId)]);
 
       if (data.summary.importedRows > 0) {
         toast.success(`${data.summary.importedRows} alumni record${data.summary.importedRows === 1 ? "" : "s"} imported`);
@@ -813,14 +874,88 @@ export default function AdminAlumni() {
       setImportSubmitting(false);
     }
   };
+
+  const openNewBatch = () => {
+    setEditingBatch(null);
+    setBatchForm(BLANK_BATCH);
+    setBatchError("");
+    setShowBatch(true);
+  };
+
+  const openEditBatch = () => {
+    if (!selectedBatch) return;
+    setEditingBatch(selectedBatch);
+    setBatchForm({
+      batchYear: String(selectedBatch.batchYear),
+      schoolYear: selectedBatch.schoolYear,
+      boardResolutionNo: selectedBatch.boardResolutionNo || "",
+      graduationDate: selectedBatch.graduationDate || "",
+      documentUrl: selectedBatch.documentUrl || "",
+      documentName: selectedBatch.documentUrl ? "Current document" : "",
+    });
+    setBatchError("");
+    setShowBatch(true);
+  };
+
+  const handleBatchDocumentSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      setBatchError("Supporting document must be 8 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      setBatchForm((current) => ({
+        ...current,
+        documentUrl: String(loadEvent.target?.result || ""),
+        documentName: file.name,
+      }));
+      setBatchError("");
+    };
+    reader.onerror = () => setBatchError("Unable to read the supporting document.");
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveBatch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBatchSaving(true);
+    setBatchError("");
+    try {
+      const endpoint = editingBatch
+        ? `${API_URL}/graduation-batches/${editingBatch.id}`
+        : `${API_URL}/graduation-batches`;
+      const response = await fetch(endpoint, {
+        method: editingBatch ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          batchYear: Number(batchForm.batchYear),
+          schoolYear: batchForm.schoolYear,
+          boardResolutionNo: batchForm.boardResolutionNo,
+          graduationDate: batchForm.graduationDate || null,
+          documentUrl: batchForm.documentUrl || null,
+        }),
+      });
+      const saved = await readApiResponse<GraduationBatch>(response);
+      const savedId = String(saved.id);
+      setShowBatch(false);
+      setSelectedBatchId(savedId);
+      setBatchFilter("");
+      await fetchGraduationBatches(savedId);
+      toast.success(editingBatch ? "Batch updated" : "Batch created");
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : "Unable to save the graduation batch.");
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
   const buildAlumniReport = (records: AlumniRecord[]) => {
     type AlumniExportRow = Record<string, string | number>;
     const columns: Array<ReportColumn<AlumniExportRow>> = [
       { key: "alumniId", label: "Alumni ID" },
       { key: "name", label: "Name" },
-      { key: "graduationYear", label: "Graduation Year" },
-
-      { key: "borNumber", label: "BOR Number" },
       { key: "advancedStudies", label: "Advanced Studies" },
       { key: "advancedProgram", label: "Graduate Program" },
       { key: "advancedSchool", label: "School/University" },
@@ -833,9 +968,6 @@ export default function AdminAlumni() {
     const rows = records.map((item) => ({
       alumniId: item.student_id ?? "",
       name: item.name,
-      graduationYear: item.batch ?? "",
-
-      borNumber: item.bor_number ?? "",
       advancedStudies: formatAdvancedStudies(item),
       advancedProgram: item.advanced_studies_program ?? "",
       advancedSchool: item.advanced_studies_school ?? "",
@@ -847,14 +979,13 @@ export default function AdminAlumni() {
     }));
 
     return {
-      title: "Alumni List Report",
-      filename: "alumni_list",
+      title: selectedBatch ? `Alumni Records - Batch ${selectedBatch.batchYear}` : "Alumni Records",
+      filename: selectedBatch ? `alumni_batch_${selectedBatch.batchYear}` : "alumni_records",
       columns,
       rows,
       preparedBy: profile?.name || user?.email || "System Administrator",
       summary: [
         { label: "Displayed Records", value: records.length },
-        { label: "BOR Numbers", value: new Set(records.map((item) => item.bor_number).filter(Boolean)).size },
         { label: "Advanced Studies", value: records.filter((item) => item.advanced_studies_level).length },
 
         { label: "Programs", value: new Set(records.map((item) => item.course).filter(Boolean)).size },
@@ -868,73 +999,114 @@ export default function AdminAlumni() {
   };
 
   return (
-    <AdminLayout title="Alumni Management">
-      <div className="min-w-0">
-        <div className="min-w-0 rounded-xl border border-border bg-card shadow-card">
-          <div className="flex flex-col flex-wrap items-start justify-between gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
-            <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-                <input type="text" placeholder="Search..." value={search} onChange={(event) => setSearch(event.target.value)} className="h-7 w-36 rounded-md border border-border bg-background py-1 pl-7 pr-2 text-[11px] focus:border-navy focus:outline-none" />
-              </div>
-              <Filter className="h-3 w-3 self-center text-muted-foreground" />
-              <select value={course} onChange={(event) => setCourse(event.target.value)} className="h-7 max-w-[9.5rem] rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none">
-                {courses.map((value) => <option key={value} value={value}>{value === ALL_COURSES_OPTION ? value : formatCourseCode(value, programOptions)}</option>)}
+    <AdminLayout title="Alumni Records">
+      <div className="min-w-0 rounded-xl border border-border bg-card shadow-card">
+        <div className="border-b border-border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <label className="sr-only" htmlFor="graduation-batch-select">Batch</label>
+              <select id="graduation-batch-select" value={selectedBatchId} onChange={(event) => { setSelectedBatchId(event.target.value); setBatchFilter(""); }} className="h-8 rounded-md border border-border bg-background px-2 text-xs font-medium text-navy focus:border-navy focus:outline-none">
+                {graduationBatches.length === 0 && <option value="">No batches</option>}
+                {graduationBatches.map((item) => <option key={item.id} value={item.id}>Batch {item.batchYear} — {item.schoolYear}</option>)}
               </select>
-              <select value={batch} onChange={(event) => setBatch(event.target.value)} className="h-7 max-w-[9.5rem] rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none">
-                {BATCHES.map((value) => <option key={value}>{value}</option>)}
-              </select>
-              <input value={borFilter} onChange={(event) => setBorFilter(event.target.value)} placeholder="BOR" className="h-7 w-24 rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none" />
-              <select value={advancedStudiesFilter} onChange={(event) => setAdvancedStudiesFilter(event.target.value)} className="h-7 max-w-[10.5rem] rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:border-navy focus:outline-none">
-                <option value="">All studies</option>
-                <option value="Master's Degree">Master's Degree</option>
-                <option value="Doctoral Degree">Doctoral Degree</option>
-              </select>
-
+              <button type="button" onClick={openNewBatch} className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs font-medium text-navy hover:bg-muted"><Plus className="h-3.5 w-3.5" />Set New Batch</button>
+              <button type="button" disabled={!selectedBatch} onClick={() => { setForm({ ...BLANK, course: systemCourses[0] || "", graduationBatchId: selectedBatchId }); setAddError(""); setPhotoPreview(null); setShowAdd(true); }} className="inline-flex h-8 items-center gap-1 rounded-md bg-navy px-2.5 text-xs font-medium text-white hover:bg-navy-light disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Add Alumni</button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <button onClick={() => { resetImportState(); setShowImport(true); }} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><Upload className="h-3 w-3" />Import</button>
-              <button onClick={() => void exportExcel()} className="flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-navy hover:bg-muted"><FileSpreadsheet className="h-3 w-3" />Excel</button>
-              <button onClick={() => { setForm(BLANK); setAddError(""); setPhotoPreview(null); setShowAdd(true); }} className="flex h-7 items-center gap-1 rounded-md bg-navy px-2 text-[11px] font-medium text-white hover:bg-navy-light"><Plus className="h-3 w-3" />Add</button>
-            </div>
+            {selectedBatch && <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span className="font-semibold text-navy-dark">{selectedBatch.batchYear}</span>
+              <span>• SY {selectedBatch.schoolYear}</span>
+              <span>• BOR No. {selectedBatch.boardResolutionNo || "—"}</span>
+              <span>• {selectedBatch.graduateCount} Graduates</span>
+              <button type="button" onClick={openEditBatch} className="inline-flex items-center gap-1 font-medium text-navy hover:underline"><Pencil className="h-3 w-3" />Edit</button>
+              {selectedBatch.documentUrl && <a href={resolveAssetUrl(selectedBatch.documentUrl) || selectedBatch.documentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-navy hover:underline"><FileText className="h-3 w-3" />Document</a>}
+            </div>}
           </div>
-
-          <div className="overflow-x-auto" tabIndex={0} aria-label="Alumni records table">
-            <table className="w-full table-fixed text-[11px]">
-              <colgroup><col className="w-[6%]" /><col className="w-[13%]" /><col className="w-[18%]" /><col className="w-[14%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[14%]" /><col className="w-[17%]" /></colgroup>
-              <thead><tr className="border-b border-border bg-muted/50"><th className="px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy">Photo</th>{([ ["student_id", "Alumni ID"], ["name", "Name"], ["course", "Program"], ["batch", "Year"], ["bor_number", "BOR"], ["advanced_studies_level", "Advanced"], ["email", "Email"] ] as [keyof AlumniRecord, string][]).map(([key, label]) => <th key={key} onClick={() => toggleSort(key)} className="cursor-pointer select-none truncate px-2 py-1.5 text-left text-[9px] font-semibold uppercase tracking-normal text-navy hover:text-navy-dark">{label}<SortIcon k={key} /></th>)}</tr></thead>
-              <tbody>
-                {loading && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Loading</td></tr>}
-                {!loading && totalAlumni === 0 && <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
-                {paginatedAlumni.map((item, index) => {
-                  const imageSrc = normalizeImageSrc(item.photo);
-                  return (
-                    <tr key={item.id} className={`border-b border-border transition-colors hover:bg-navy/5 ${index % 2 !== 0 ? "bg-muted/10" : ""}`}>
-                      <td className="px-2 py-1.5" data-label="Photo">{imageSrc ? <button type="button" onClick={(event) => { event.stopPropagation(); setPreviewImage({ src: imageSrc, name: item.name }); }} className="rounded-full focus:outline-none focus:ring-2 focus:ring-navy"><img src={imageSrc} alt={item.name} className="h-7 w-7 rounded-full border border-border object-cover" /></button> : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground">{item.name.charAt(0).toUpperCase()}</div>}</td>
-                      <td className="truncate px-2 py-1.5 font-mono text-[10px] text-muted-foreground" title={item.student_id ?? "-"}>{item.student_id ?? "-"}</td>
-                      <td className="truncate px-2 py-1.5 font-semibold text-navy-dark" title={item.name}>{item.name}</td>
-                      <td className="truncate px-2 py-1.5 text-muted-foreground" title={formatCourseLabel(item.course, programOptions) || formatCourseCode(item.course, programOptions) || "-"}>{formatCourseCode(item.course, programOptions) || "-"}</td>
-                      <td className="truncate px-2 py-1.5 text-muted-foreground" title={item.batch ?? "-"}>{item.batch ?? "-"}</td>
-
-                      <td className="truncate px-2 py-1.5 text-[10px] font-semibold text-navy-dark" title={item.bor_number ?? "-"}>{item.bor_number ?? "-"}</td>
-                      <td className="truncate px-2 py-1.5 text-[10px] font-semibold text-navy-dark" title={formatAdvancedStudies(item)}>{formatAdvancedStudies(item)}</td>
-                      <td className="truncate px-2 py-1.5 text-[10px] text-muted-foreground" title={item.email}>{item.email}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex flex-col gap-3 border-t border-border px-2.5 py-1.5 text-[10px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><div><strong>{visibleStart}-{visibleEnd}</strong> of <strong>{totalAlumni}</strong></div><div className="flex items-center gap-2"><button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage === 1} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Prev</button><span className="rounded-md bg-muted px-2 py-0.5 font-semibold text-navy-dark">Page {safeCurrentPage} of {totalPages}</span><button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage === totalPages} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Next</button></div></div>
         </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-b border-border px-3 py-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input type="text" placeholder="Search Alumni" value={search} onChange={(event) => setSearch(event.target.value)} className="h-8 w-52 rounded-md border border-border bg-background py-1 pl-8 pr-2 text-xs focus:border-navy focus:outline-none" />
+          </div>
+          <select value={courseFilter} onChange={(event) => setCourseFilter(event.target.value)} aria-label="Course filter" className="h-8 max-w-36 rounded-md border border-border bg-background px-2 text-xs focus:border-navy focus:outline-none">
+            <option value={ALL_COURSES_OPTION}>{ALL_COURSES_OPTION}</option>
+            {programOptions.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}
+          </select>
+          <select value={batchFilter || selectedBatchId} onChange={(event) => { const value = event.target.value; if (value === "all") setBatchFilter("all"); else { setSelectedBatchId(value); setBatchFilter(""); } }} aria-label="Batch filter" className="h-8 max-w-32 rounded-md border border-border bg-background px-2 text-xs focus:border-navy focus:outline-none">
+            <option value="all">All Batches</option>
+            {graduationBatches.map((item) => <option key={item.id} value={item.id}>{item.batchYear}</option>)}
+          </select>
+          <select value={advancedStudiesFilter} onChange={(event) => setAdvancedStudiesFilter(event.target.value)} aria-label="Studies filter" className="h-8 max-w-40 rounded-md border border-border bg-background px-2 text-xs focus:border-navy focus:outline-none">
+            <option value="">All Studies</option>
+            <option value="Master's Degree">Master's Degree</option>
+            <option value="Doctoral Degree">Doctoral Degree</option>
+          </select>
+          <button type="button" disabled={!selectedBatch} onClick={() => void exportExcel()} className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2 text-xs font-medium text-navy hover:bg-muted disabled:opacity-50"><FileSpreadsheet className="h-3.5 w-3.5" />Excel</button>
+          <button type="button" disabled={!selectedBatch} onClick={() => { resetImportState(); setShowImport(true); }} className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-2 text-xs font-medium text-navy hover:bg-muted disabled:opacity-50"><Upload className="h-3.5 w-3.5" />Import</button>
+        </div>
+
+        <div className="overflow-x-auto" tabIndex={0} aria-label="Alumni records table">
+          <table className="w-full table-fixed text-[11px]">
+            <colgroup><col className="w-[8%]" /><col className="w-[17%]" /><col className="w-[22%]" /><col className="w-[15%]" /><col className="w-[23%]" /><col className="w-[15%]" /></colgroup>
+            <thead><tr className="border-b border-border bg-muted/50"><th className="px-2 py-1.5 text-left text-[9px] font-semibold uppercase text-navy">Photo</th>{([ ["student_id", "Alumni ID"], ["name", "Name"], ["course", "Course"], ["email", "Email"], ["contact_number", "Contact"] ] as [keyof AlumniRecord, string][]).map(([key, label]) => <th key={key} onClick={() => toggleSort(key)} className="cursor-pointer select-none truncate px-2 py-1.5 text-left text-[9px] font-semibold uppercase text-navy hover:text-navy-dark">{label}<SortIcon k={key} /></th>)}</tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Loading</td></tr>}
+              {!loading && totalAlumni === 0 && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">No alumni found.</td></tr>}
+              {paginatedAlumni.map((item, index) => {
+                const imageSrc = normalizeImageSrc(item.photo);
+                return (
+                  <tr key={item.id} className={`border-b border-border transition-colors hover:bg-navy/5 ${index % 2 !== 0 ? "bg-muted/10" : ""}`}>
+                    <td className="px-2 py-1.5">{imageSrc ? <button type="button" onClick={() => setPreviewImage({ src: imageSrc, name: item.name })} className="rounded-full focus:outline-none focus:ring-2 focus:ring-navy"><img src={imageSrc} alt={item.name} className="h-7 w-7 rounded-full border border-border object-cover" /></button> : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground">{item.name.charAt(0).toUpperCase()}</div>}</td>
+                    <td className="truncate px-2 py-1.5 font-mono text-[10px] text-muted-foreground" title={item.student_id ?? "-"}>{item.student_id ?? "-"}</td>
+                    <td className="truncate px-2 py-1.5 font-semibold text-navy-dark" title={item.name}>{item.name}</td>
+                    <td className="truncate px-2 py-1.5 text-muted-foreground" title={formatCourseLabel(item.course, programOptions) || "-"}>{formatCourseCode(item.course, programOptions) || "-"}</td>
+                    <td className="truncate px-2 py-1.5 text-muted-foreground" title={item.email}>{item.email}</td>
+                    <td className="truncate px-2 py-1.5 text-muted-foreground" title={item.contact_number || "-"}>{item.contact_number || "-"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-border px-2.5 py-1.5 text-[10px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><div><strong>{visibleStart}-{visibleEnd}</strong> of <strong>{totalAlumni}</strong></div><div className="flex items-center gap-2"><button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safeCurrentPage === 1} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy hover:bg-muted disabled:opacity-50">Prev</button><span>Page {safeCurrentPage} of {totalPages}</span><button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safeCurrentPage === totalPages} className="rounded-md border border-border px-2 py-0.5 font-medium text-navy hover:bg-muted disabled:opacity-50">Next</button></div></div>
       </div>
+
+      {showBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowBatch(false)}>
+          <div className="w-full max-w-lg rounded-xl bg-card p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-bold text-navy-dark">{editingBatch ? "Edit Batch" : "Set New Batch"}</h3><button type="button" onClick={() => setShowBatch(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button></div>
+            <form onSubmit={handleSaveBatch} className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FieldInput label="Batch Year" value={batchForm.batchYear} set={(value) => setBatchForm((current) => ({ ...current, batchYear: value }))} type="number" />
+                <FieldInput label="School Year" value={batchForm.schoolYear} set={(value) => setBatchForm((current) => ({ ...current, schoolYear: value }))} placeholder="2025–2026" />
+                <FieldInput label="Board Resolution / BOR No." value={batchForm.boardResolutionNo} set={(value) => setBatchForm((current) => ({ ...current, boardResolutionNo: value }))} placeholder="031, s. 2026" />
+                <FieldInput label="Graduation Date" value={batchForm.graduationDate} set={(value) => setBatchForm((current) => ({ ...current, graduationDate: value }))} type="date" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-navy">Supporting Document (optional)</label>
+                <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.docx,.xlsx,.pptx" onChange={handleBatchDocumentSelect} className="block w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs file:mr-2 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs" />
+                {batchForm.documentName && <p className="mt-1 text-[11px] text-muted-foreground">{batchForm.documentName}</p>}
+              </div>
+              {batchError && <p className="text-xs text-rose-700">{batchError}</p>}
+              <div className="flex justify-end gap-2"><button type="button" onClick={() => setShowBatch(false)} className="h-8 rounded-md border border-border px-3 text-xs font-medium text-navy hover:bg-muted">Cancel</button><button type="submit" disabled={batchSaving} className="inline-flex h-8 items-center gap-1 rounded-md bg-navy px-3 text-xs font-medium text-white hover:bg-navy-light disabled:opacity-50">{batchSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Save</button></div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAdd(false)}>
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-5 flex items-center justify-between"><div><h3 className="font-display text-lg font-bold text-navy-dark">Add New Alumni</h3><p className="mt-0.5 text-xs text-muted-foreground">Create alumni account with academic details.</p></div><button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button></div>
+            <div className="mb-4 flex items-center justify-between"><h3 className="font-display text-lg font-bold text-navy-dark">Add Alumni</h3><button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button></div>
             <form onSubmit={handleAdd} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-navy">Batch</label>
+                <select value={form.graduationBatchId} onChange={(event) => setForm((current) => ({ ...current, graduationBatchId: event.target.value }))} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm focus:border-navy focus:outline-none">
+                  {graduationBatches.map((item) => <option key={item.id} value={item.id}>{item.batchYear} — {item.schoolYear}</option>)}
+                </select>
+                {selectedAddBatch && <p className="mt-1 text-xs text-muted-foreground">BOR No.: {selectedAddBatch.boardResolutionNo || "—"}</p>}
+              </div>
               <div className="flex justify-center">
                 <label className="group relative flex h-24 w-24 cursor-pointer items-center justify-center overflow-hidden rounded-full border-2 border-dashed border-border bg-muted transition-colors hover:border-navy hover:bg-navy/5">
                   {photoPreview ? (
@@ -949,7 +1121,7 @@ export default function AdminAlumni() {
                 </label>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><FieldInput label="Full Name *" value={form.name} set={(value) => setForm((current) => ({ ...current, name: value }))} /><FieldInput label="Email Address *" type="email" value={form.email} set={(value) => setForm((current) => ({ ...current, email: value }))} /><FieldInput label="Student/Alumni ID" value={form.studentId} set={(value) => setForm((current) => ({ ...current, studentId: value }))} placeholder="Auto-generate if blank" /><FieldInput label="Contact Number" value={form.contactNumber} set={(value) => setForm((current) => ({ ...current, contactNumber: value }))} /></div>
-              <div className="rounded-xl border border-border bg-muted/20 p-3"><p className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-navy">Academic Information</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="mb-1.5 block text-xs font-semibold text-navy">Graduation Year *</label><input value={form.batch} onChange={(event) => setForm((current) => ({ ...current, batch: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none" /></div><div><label className="mb-1.5 block text-xs font-semibold text-navy">Program *</label><select value={form.course} onChange={(event) => setForm((current) => ({ ...current, course: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-navy focus:outline-none">{programOptions.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select></div><FieldInput label="BOR Number" value={form.borNumber} set={(value) => setForm((current) => ({ ...current, borNumber: value }))} /></div></div>
+              <div><label className="mb-1 block text-xs font-semibold text-navy">Course *</label><select value={form.course} onChange={(event) => setForm((current) => ({ ...current, course: event.target.value }))} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm focus:border-navy focus:outline-none">{programOptions.map((option) => <option key={option.code} value={option.code}>{option.code}</option>)}</select></div>
               {addError && <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{addError}</div>}
               <div className="flex gap-3 pt-1"><button type="button" onClick={() => setShowAdd(false)} className="flex-1 rounded-lg border border-border py-2.5 text-sm font-medium text-navy hover:bg-muted">Cancel</button><button type="submit" disabled={addLoading || !canCreateAlumni} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-navy py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:cursor-not-allowed disabled:opacity-50">{addLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Loading</> : <><Mail className="h-4 w-4" />Create Account</>}</button></div>
             </form>
@@ -965,39 +1137,16 @@ export default function AdminAlumni() {
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4 sm:p-5">
           <DialogHeader className="space-y-1">
             <DialogTitle>Import Alumni Records</DialogTitle>
-            <DialogDescription>Set the school year first, then upload one XLSX file. Required file columns: Name, Email, Program. Optional: Year, BOR Number, Contact Number.</DialogDescription>
+            <DialogDescription>{selectedBatch ? `Batch ${selectedBatch.batchYear} — ${selectedBatch.schoolYear}` : "Select a batch first."}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-end">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-navy">School Year *</label>
-                <input
-                  value={importSchoolYear}
-                  onChange={(event) => {
-                    setImportSchoolYear(normalizeYear(event.target.value));
-                    setImportRows([]);
-                    setImportFile(null);
-                    setImportFileName("");
-                    setImportResult(null);
-                    if (fileInputRef.current) {
-                      fileInputRef.current.value = "";
-                    }
-                  }}
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="2026"
-                  disabled={importParsing || importSubmitting}
-                  className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm focus:border-navy focus:outline-none"
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium text-white ${/^\d{4}$/.test(importSchoolYear) && !importParsing && !importSubmitting ? "cursor-pointer bg-navy hover:bg-navy-light" : "cursor-not-allowed bg-muted-foreground/60"}`}>
-                  <FileSpreadsheet className="h-4 w-4" />
-                  {importParsing ? "Reading File..." : "Choose File"}
-                  <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={handleImportFileSelect} disabled={importParsing || importSubmitting || !/^\d{4}$/.test(importSchoolYear)} />
-                </label>
-                {importFileName && <span className="text-xs text-muted-foreground">{importFileName}</span>}
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium text-white ${selectedBatch && !importParsing && !importSubmitting ? "cursor-pointer bg-navy hover:bg-navy-light" : "cursor-not-allowed bg-muted-foreground/60"}`}>
+                <FileSpreadsheet className="h-4 w-4" />
+                {importParsing ? "Reading File..." : "Choose File"}
+                <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden" onChange={handleImportFileSelect} disabled={importParsing || importSubmitting || !selectedBatch} />
+              </label>
+              {importFileName && <span className="text-xs text-muted-foreground">{importFileName}</span>}
             </div>
 
             {importError && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{importError}</div>}
@@ -1014,15 +1163,13 @@ export default function AdminAlumni() {
                     <tr className="border-b bg-muted/40">
                       <th className="px-3 py-2 text-left">Row</th>
                       <th className="px-3 py-2 text-left">Name</th>
-                      <th className="px-3 py-2 text-left">School Year</th>
                       <th className="px-3 py-2 text-left">Program</th>
-                      <th className="px-3 py-2 text-left">BOR</th>
                       <th className="px-3 py-2 text-left">Advanced Studies</th>
                       <th className="px-3 py-2 text-left">Email</th>
                       <th className="px-3 py-2 text-left">Validation</th>
                     </tr>
                   </thead>
-                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-1.5">{row.rowNumber}</td><td className="px-3 py-1.5 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-1.5">{row.graduationYear || "-"}</td><td className="px-3 py-1.5" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-1.5">{row.borNumber || "-"}</td><td className="px-3 py-1.5">{[row.advancedStudiesLevel, row.advancedStudiesStatus].filter(Boolean).join(" - ") || "-"}</td><td className="px-3 py-1.5">{row.emailAddress || "-"}</td><td className="px-3 py-1.5">{row.errors.length === 0 ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">Ready</span> : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
+                  <tbody>{importRows.map((row) => <tr key={`${row.rowNumber}-${row.emailAddress}`} className="border-b align-top"><td className="px-3 py-1.5">{row.rowNumber}</td><td className="px-3 py-1.5 font-medium text-navy-dark">{row.fullName || "-"}</td><td className="px-3 py-1.5" title={row.program ? formatCourseLabel(row.program, programOptions) : ""}>{row.program ? formatCourseCode(row.program, programOptions) : "-"}</td><td className="px-3 py-1.5">{[row.advancedStudiesLevel, row.advancedStudiesStatus].filter(Boolean).join(" - ") || "-"}</td><td className="px-3 py-1.5">{row.emailAddress || "-"}</td><td className="px-3 py-1.5">{row.errors.length === 0 ? "Ready" : <span className="text-rose-700">{row.errors.join("; ")}</span>}</td></tr>)}</tbody>
                 </table>
               </div>
               <button type="button" onClick={handleImportSubmit} disabled={importSubmitting || importReadyCount === 0} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-navy px-3 text-xs font-medium text-white hover:bg-navy-light disabled:opacity-60">{importSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}Final Import</button>

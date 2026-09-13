@@ -152,6 +152,14 @@ try {
     await page.click('button[type="submit"]');
     await page.waitForFunction(() => location.pathname.startsWith("/alumni"), { timeout: 30_000 });
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+    await page.goto(`${appUrl}/alumni/tracer`, { waitUntil: "networkidle0", timeout: 60_000 });
+    await checkLayout("mobile alumni tracer form");
+    const tracerFormVisible = await page.evaluate(() => {
+      const text = document.body.innerText;
+      return text.includes("Graduate Tracer Study") && text.includes("Section A");
+    });
+    if (!tracerFormVisible) failures.push("mobile alumni Graduate Tracer form did not render");
+
     await page.goto(`${appUrl}/alumni/donate`, { waitUntil: "networkidle0", timeout: 60_000 });
     await checkLayout("mobile alumni donations");
     const donationPageVisible = await page.evaluate(() => document.body.innerText.includes("My Donation History") && document.body.innerText.includes("Donation Amount"));

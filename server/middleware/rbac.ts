@@ -52,7 +52,7 @@ const ROLE_PERMISSIONS: Record<string, ReadonlySet<ServerPermission>> = {
     auditor: new Set(["dashboard.view", "donations.view", "reports.view", "engagement.view"]),
     pio: new Set(["dashboard.view", "events.manage", "events.view", "announcements.manage", "engagement.view", "notifications.draft", "reports.view", "community.moderate", "achievements.moderate", "surveys.manage"]),
     appointed: new Set(["dashboard.view"]),
-    chairman: new Set(["dashboard.view", "projects.view"])
+    chairman: new Set(["dashboard.view", "projects.view", "tracer.view"])
 };
 
 export const roleHasPermission = (role: string, permission: ServerPermission) =>

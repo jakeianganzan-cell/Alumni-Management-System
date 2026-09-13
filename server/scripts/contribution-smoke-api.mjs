@@ -53,6 +53,14 @@ const baselineVolunteerAnalytics = await expect("load baseline volunteer analyti
 const settings = await expect("load program settings", "GET", "/api/system-settings", 200);
 const programEntry = settings.body?.programs?.[0];
 const program = typeof programEntry === "string" ? programEntry : programEntry?.code;
+const batchList = await expect("load graduation batches", "GET", "/api/graduation-batches", 200, { token: adminToken });
+let graduationBatch = Array.isArray(batchList.body) ? batchList.body[0] : null;
+if (!graduationBatch) {
+  graduationBatch = (await expect("create graduation batch", "POST", "/api/graduation-batches", 201, {
+    token: adminToken,
+    body: { batchYear: 2026, schoolYear: "2025–2026", boardResolutionNo: "SMOKE-2026", graduationDate: "2026-06-15" },
+  })).body;
+}
 const unique = Date.now();
 const alumniEmail = `contribution-${unique}@gmail.com`;
 const alumniPassword = "ContributionTest123!";
@@ -60,7 +68,7 @@ const studentId = `CON-${unique}`;
 
 await expect("create alumni contributor", "POST", "/api/profiles", 201, {
   token: adminToken,
-  body: { name: "Contribution Test Alumni", email: alumniEmail, studentId, course: program, batch: "2024", sendEmail: false },
+  body: { name: "Contribution Test Alumni", email: alumniEmail, studentId, course: program, graduationBatchId: graduationBatch?.id, sendEmail: false },
 });
 
 const connection = await mysql.createConnection({

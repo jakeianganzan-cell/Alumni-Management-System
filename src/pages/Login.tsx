@@ -243,9 +243,9 @@ export default function Login() {
       )}
       <div className="relative z-10 flex min-h-dvh items-center justify-center px-3 py-[max(1rem,env(safe-area-inset-top))] sm:px-4 max-[640px]:py-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="w-full max-w-lg max-[640px]:max-w-[20rem]">
-          <div className="overflow-hidden rounded-[30px] border border-white/30 bg-[linear-gradient(135deg,rgba(85,0,0,0.88),rgba(42,0,0,0.84))] shadow-[0_30px_80px_rgba(0,0,0,0.36)] ring-1 ring-white/15 max-[640px]:rounded-[20px] max-[640px]:shadow-[0_18px_48px_rgba(0,0,0,0.32)]">
+          <div className="overflow-hidden rounded-[30px] border border-white/55 bg-[linear-gradient(135deg,rgba(92,28,38,0.80),rgba(64,30,39,0.76))] shadow-[0_30px_85px_rgba(0,0,0,0.42),0_0_32px_rgba(212,175,55,0.16)] ring-2 ring-gold/40 max-[640px]:rounded-[20px] max-[640px]:shadow-[0_18px_48px_rgba(0,0,0,0.36),0_0_22px_rgba(212,175,55,0.14)]">
             <div className="relative overflow-hidden border-b border-white/15 px-4 pb-4 pt-5 sm:px-7 max-[640px]:px-2.5 max-[640px]:pb-2 max-[640px]:pt-2.5">
-              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(85,0,0,0.62),rgba(20,20,20,0.42))] max-[640px]:h-12" />
+              <div className="absolute inset-x-0 top-0 h-20 bg-[linear-gradient(135deg,rgba(142,48,61,0.30),rgba(212,175,55,0.08),rgba(255,255,255,0.06))] max-[640px]:h-12" />
               <div className="absolute -right-10 top-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
               <div className="absolute left-8 top-16 h-16 w-16 rounded-full bg-white/10 blur-xl" />
 
@@ -364,7 +364,7 @@ export default function Login() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,hsl(0_100%_17%),hsl(0_82%_24%))] px-8 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_14px_30px_rgba(85,0,0,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70 max-[640px]:rounded-lg max-[640px]:text-xs"
+                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-gold/55 bg-[linear-gradient(135deg,hsl(350_48%_34%),hsl(345_42%_42%))] px-8 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_14px_30px_rgba(92,28,38,0.28),0_0_18px_rgba(212,175,55,0.12)] transition hover:border-gold/80 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70 max-[640px]:rounded-lg max-[640px]:text-xs"
                   >
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                     {loading ? "Loading" : "Log In"}

@@ -66,6 +66,40 @@ test("development, staging, and production configuration stay separated", () => 
   assert.match(seed, /assertNonProductionOperation\("Database seeding"\)/);
 });
 
+test("automated tests can connect only to clearly named disposable databases", async () => {
+  const { assertDatabaseEnvironment, getApplicationEnvironment } = await import("../environment-policy.mjs");
+  const serverEnvExample = read("server/.env.example");
+  const baseEnvironment = {
+    NODE_ENV: "test",
+    APP_ENV: "test",
+    DB_ENVIRONMENT: "test",
+    DB_HOST: "127.0.0.1",
+  };
+
+  assert.equal(getApplicationEnvironment({ NODE_ENV: "test" }), "test");
+
+  for (const databaseName of ["alumni_management", "alumni_production", "ustp_alumni"]) {
+    assert.throws(
+      () => assertDatabaseEnvironment({ ...baseEnvironment, DB_NAME: databaseName }),
+      /Unsafe test database detected\. Automated tests cannot use the production database\./,
+    );
+  }
+
+  for (const databaseName of ["alumni_management_test", "alumni_management_ci", "alumni_management_staging"]) {
+    assert.doesNotThrow(() => assertDatabaseEnvironment({ ...baseEnvironment, DB_NAME: databaseName }));
+  }
+
+  assert.match(serverEnvExample, /NODE_ENV=test[\s\S]{0,80}_test[\s\S]{0,40}_ci[\s\S]{0,40}_staging/);
+});
+
+test("public and API health endpoints remain available without exposing credentials", () => {
+  const app = read("server/app.ts");
+
+  assert.match(app, /app\.get\("\/health"[\s\S]{0,140}status:\s*"ok"/);
+  assert.match(app, /app\.get\("\/api\/health"/);
+  assert.doesNotMatch(app.slice(app.indexOf('app.get("/health"'), app.indexOf('if (process.env.ENABLE_TEST_ROUTE')), /DB_PASSWORD|JWT_SECRET/);
+});
+
 test("retired President login cannot be recreated by runtime configuration", () => {
   const config = read("server/config.ts");
   const checkEnv = read("server/scripts/check-env.mjs");
@@ -108,7 +142,24 @@ test("critical migration files exist in order", () => {
     "014_contribution_opportunities_and_submissions.sql",
     "015_president_organizational_governance.sql",
     "016_retire_president_access.sql",
+    "017_graduation_batches.sql",
   ]);
+});
+
+test("graduation batches centralize BOR data and backfill existing alumni", () => {
+  const migration = read("server/migrations/017_graduation_batches.sql");
+  const schema = read("server/schema.sql");
+  const app = read("server/app.ts");
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS graduation_batches/);
+  assert.match(migration, /ADD COLUMN graduation_batch_id BIGINT NULL/);
+  assert.match(migration, /FOREIGN KEY \(graduation_batch_id\) REFERENCES graduation_batches\(id\)/);
+  assert.match(migration, /source_profile\.academic_year/);
+  assert.match(migration, /source_profile\.graduation_batch/);
+  assert.match(migration, /UPDATE profiles p[\s\S]*SET p\.graduation_batch_id = gb\.id/);
+  assert.match(schema, /DROP TABLE IF EXISTS graduation_batches/);
+  assert.match(app, /LEFT JOIN graduation_batches gb ON gb\.id = p\.graduation_batch_id/);
+  assert.match(app, /graduationBatchId: Number\(selectedGraduationBatch\.id\)/);
 });
 
 test("local env files are ignored by git rules", () => {
@@ -127,6 +178,9 @@ test("high-risk routes retain authentication and role gates", () => {
     /app\.post\("\/api\/auth\/login",\s*loginAccountRateLimiter/,
     /app\.get\("\/api\/profiles",\s*authenticateToken,\s*requirePermission\("alumni\.view"\)/,
     /app\.post\("\/api\/profiles",\s*authenticateToken,\s*requirePermission\("alumni\.edit"\)/,
+    /app\.get\("\/api\/graduation-batches",\s*authenticateToken,\s*requirePermission\("alumni\.view"\)/,
+    /app\.post\("\/api\/graduation-batches",\s*authenticateToken,\s*requirePermission\("alumni\.edit"\)/,
+    /app\.put\("\/api\/graduation-batches\/:id",\s*authenticateToken,\s*requirePermission\("alumni\.edit"\)/,
     /app\.get\("\/api\/admin\/sessions",\s*authenticateToken,\s*requireAdmin/,
     /app\.get\("\/api\/donations",\s*authenticateToken,\s*requirePermission\("donations\.view"\)/,
     /app\.get\("\/api\/contributions\/analytics",\s*authenticateToken,\s*requirePermission\("donations\.view"\)/,
@@ -160,6 +214,22 @@ test("high-risk routes retain authentication and role gates", () => {
   assert.match(tracerController, /requireTracerAdmin\(req\.user\.role\)/);
 });
 
+test("user-submitted files retain signature and macro validation", () => {
+  const app = read("server/app.ts");
+  const fileUpload = read("server/utils/fileUpload.ts");
+  const imageOptimizer = read("server/utils/imageOptimizer.ts");
+
+  assert.match(imageOptimizer, /hasValidFileSignature\(buffer, mimeType\)/);
+  assert.match(fileUpload, /assertValidFileContents\(buffer, mimeType\)/);
+  assert.match(fileUpload, /vbaProject\\\.bin/);
+  assert.match(fileUpload, /OPENXML_PACKAGE_MARKER_BY_MIME/);
+  assert.match(app, /const normalizeSubmittedEvidence[\s\S]{0,500}parseDataUrlUpload\(dataUrl, maxBytes\)/);
+  assert.match(app, /assertValidFileContents\([\s\S]{0,200}spreadsheetml\.sheet/);
+  assert.match(app, /normalizeSubmittedMedia\(image_url\)/);
+  assert.match(app, /normalizeSubmittedMedia\(proofImage\)/);
+  assert.match(app, /normalizeSubmittedMedia\(photo\)/);
+});
+
 test("new logins create additive browser sessions", () => {
   const app = read("server/app.ts");
   const start = app.indexOf("const createAuthenticatedSession");
@@ -169,6 +239,43 @@ test("new logins create additive browser sessions", () => {
   assert.ok(start >= 0 && end > start);
   assert.match(createSession, /INSERT INTO user_sessions/);
   assert.doesNotMatch(createSession, /(?:UPDATE|DELETE FROM) user_sessions/);
+});
+
+test("authentication and session lifecycle controls remain wired end to end", () => {
+  const app = read("server/app.ts");
+  const auth = read("server/middleware/auth.ts");
+  const authHook = read("src/hooks/useAuth.tsx");
+  const edgeSmoke = read("server/scripts/edge-smoke-api.mjs");
+
+  assert.match(app, /app\.post\("\/api\/auth\/login",\s*loginAccountRateLimiter/);
+  assert.match(app, /verifyLoginPassword\(normalizedPassword, user\.password_hash\)/);
+  assert.match(app, /Invalid credentials\./);
+  assert.match(app, /app\.post\("\/api\/auth\/select-role",\s*authRateLimiter/);
+  assert.match(app, /isRoleAssigned\(roles, selectedRole\)/);
+  assert.match(app, /isRoleAssigned\(liveRoles, selectedRole\)/);
+  assert.match(app, /app\.post\("\/api\/auth\/logout",\s*authenticateToken/);
+  assert.match(app, /UPDATE user_sessions SET status = 'Ended'/);
+  assert.match(auth, /err\.name === "TokenExpiredError"/);
+  assert.match(auth, /await endExpiredSession\(token\)/);
+  assert.match(auth, /Session ended/);
+  assert.match(authHook, /await fetch\(`\$\{API_URL\}\/auth\/logout`/);
+  assert.match(authHook, /clearAuthToken\(\);[\s\S]{0,100}clearAuthState\(\);/);
+
+  for (const check of [
+    "valid admin login",
+    "wrong password",
+    "multiple-device primary session",
+    "logout ends only the selected session",
+    "terminated session is denied",
+    "expired JWT",
+    "role-based alumni login",
+    "role-based chairman login",
+    "missing token",
+    "malformed token",
+    "malformed import exposed an unsafe or missing public error",
+  ]) {
+    assert.match(edgeSmoke, new RegExp(check.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
 
 test("production 500 responses do not use raw exception messages", () => {
@@ -215,4 +322,64 @@ test("database backups are encrypted, scheduled, and restored only into a dispos
   assert.match(workflow, /retention-days:\s*30/);
   assert.match(recovery, /quarterly/i);
   assert.match(recovery, /never restore over/i);
+});
+
+test("announcements, events, and surveys archive when their configured end time arrives", () => {
+  const app = read("server/app.ts");
+  const adminAnnouncements = read("src/pages/admin/Announcements.tsx");
+  const surveyStudio = read("src/components/admin/SurveyStudio.tsx");
+  const archiveJob = app.slice(
+    app.indexOf("const autoArchiveExpiredContent"),
+    app.indexOf("const normalizeEventRsvpStatus"),
+  );
+
+  assert.doesNotMatch(archiveJob, /DATE_ADD\(end_datetime, INTERVAL 7 DAY\)/);
+  assert.doesNotMatch(archiveJob, /type, 'announcement'.*<> 'announcement'/s);
+  assert.equal((archiveJob.match(/COALESCE\(end_datetime,[^\n]+\) <= \?/g) || []).length, 3);
+  assert.match(app, /end && now\.getTime\(\) >= end\.getTime\(\)[\s\S]{0,80}computedStatus = "Archived"/);
+  assert.match(app, /setInterval\(run, 30 \* 1000\)/);
+  assert.match(adminAnnouncements, /refetchInterval:\s*15_000/);
+  assert.match(adminAnnouncements, /function contentUsesDuration\([^)]*\)\s*\{\s*return true;/);
+  assert.match(surveyStudio, /setInterval\([\s\S]{0,120}loadSurveys\(false\)[\s\S]{0,80}15_000/);
+});
+
+test("Graduate Tracer validation and end-to-end test controls stay connected", () => {
+  const controller = read("server/controllers/tracer.controller.ts");
+  const tracerForm = read("src/components/alumni/TracerForm.tsx");
+  const tracerApiTests = read("src/test/tracer-form-api.test.tsx");
+  const browserSmoke = read("server/scripts/browser-smoke.mjs");
+  const tracerSmoke = read("server/scripts/tracer-smoke-api.mjs");
+  const verificationGuide = read("docs/graduate-tracer-verification.md");
+  const ci = read(".github/workflows/ci.yml");
+
+  assert.match(controller, /validateTracerPayload\(payload\)/);
+  assert.match(controller, /status\(400\)\.json\([\s\S]{0,180}fields: validationErrors/);
+  assert.match(controller, /p\.name LIKE \? OR p\.email LIKE \? OR p\.student_id LIKE \?/);
+  assert.match(controller, /beginTransaction\(\)[\s\S]*syncChildRows\([\s\S]*DELETE FROM tracer_drafts[\s\S]*commit\(\)/);
+  assert.match(tracerForm, /selectTracerFormPayload\(envelope\?\.submission, envelope\?\.draft\)/);
+  assert.match(tracerForm, /getServerTracerErrors\(error\)[\s\S]{0,350}setErrors/);
+  assert.match(tracerApiTests, /populates a server draft and saves the current form through the draft API/);
+  assert.match(tracerApiTests, /shows structured server validation beside the rejected field/);
+  assert.match(browserSmoke, /\/alumni\/tracer[\s\S]{0,250}checkLayout\("mobile alumni tracer form"\)/);
+  assert.match(tracerSmoke, /assertNonProductionOperation\("Graduate Tracer workflow smoke test"\)/);
+  assert.match(tracerSmoke, /"\/health"/);
+  assert.match(tracerSmoke, /reject invalid final submission/);
+  assert.match(tracerSmoke, /reject malformed tracer payload/);
+  assert.match(tracerSmoke, /deny Alumni access to Admin tracer records/);
+  assert.match(tracerSmoke, /saved tracer payload did not match/);
+  assert.match(tracerSmoke, /submitted_at was not populated/);
+  assert.match(tracerSmoke, /tracer training child rows were not saved/);
+  assert.match(tracerSmoke, /tracer employment child record was not saved/);
+  assert.match(tracerSmoke, /retrieve completed Alumni tracer/);
+  assert.match(tracerSmoke, /Admin tracer detail/);
+  assert.match(tracerSmoke, /Alumni PDF download/);
+  assert.match(tracerSmoke, /Admin PDF download/);
+  assert.match(tracerSmoke, /submitted tracer was not visible to Admin/);
+  assert.match(tracerSmoke, /response was empty or was not a PDF file/);
+  assert.match(tracerSmoke, /Graduate Tracer smoke checks passed: validation, drafts, submission, database rows, Admin viewing, and PDF output\./);
+  assert.match(verificationGuide, /100% Verified/);
+  assert.match(verificationGuide, /Physical phone verification/);
+  assert.match(ci, /NODE_ENV:\s*test/);
+  assert.match(ci, /DB_NAME:\s*ustp_alumni_ci/);
+  assert.match(ci, /Smoke test Graduate Tracer workflow[\s\S]{0,120}npm run smoke:tracer/);
 });

@@ -9,8 +9,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -70,13 +68,6 @@ interface CourseContributionPoint {
   contributionScore: number;
 }
 
-interface DonationTrendPoint {
-  month: string;
-  monthKey: string;
-  donationCount: number;
-  donatedAmount: number;
-}
-
 interface RecentDonor {
   id: string;
   donorName: string;
@@ -101,7 +92,6 @@ interface DashboardResponse {
   upcomingEvents?: EventRow[];
   monthlyEngagement?: MonthlyEngagementPoint[];
   courseContributions?: CourseContributionPoint[];
-  donationTrends?: DonationTrendPoint[];
   recentDonors?: RecentDonor[];
   sessionStats?: SessionStats;
 }
@@ -119,7 +109,6 @@ const formatDate = (value: string | null) => {
 
 const chartColors = {
   primary: "hsl(var(--navy))",
-  primarySoft: "hsl(var(--navy-light))",
   accent: "hsl(var(--gold-dark))",
   axis: "hsl(var(--muted-foreground))",
   axisStrong: "hsl(var(--foreground))",
@@ -156,7 +145,6 @@ export default function AdminDashboard() {
   const [upcomingEvents, setUpcomingEvents] = useState<EventRow[]>([]);
   const [monthlyEngagement, setMonthlyEngagement] = useState<MonthlyEngagementPoint[]>([]);
   const [courseContributions, setCourseContributions] = useState<CourseContributionPoint[]>([]);
-  const [donationTrends, setDonationTrends] = useState<DonationTrendPoint[]>([]);
   const [recentDonors, setRecentDonors] = useState<RecentDonor[]>([]);
   const [sessionStats, setSessionStats] = useState<SessionStats>(emptySessionStats);
   const [loading, setLoading] = useState(true);
@@ -188,7 +176,6 @@ export default function AdminDashboard() {
       setUpcomingEvents((data.upcomingEvents || []).slice(0, 5));
       setMonthlyEngagement(data.monthlyEngagement || []);
       setCourseContributions(data.courseContributions || []);
-      setDonationTrends(data.donationTrends || []);
       setRecentDonors((data.recentDonors || []).slice(0, 5));
       setSessionStats(data.sessionStats || emptySessionStats);
     } catch (err) {
@@ -434,7 +421,7 @@ export default function AdminDashboard() {
         </section>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 mb-4 xl:grid-cols-2">
+      <div className="mb-4">
         <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b bg-muted/30">
             <h3 className="font-bold text-sm text-navy-dark">Recent Donors</h3>
@@ -457,29 +444,6 @@ export default function AdminDashboard() {
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                 No recent donor activity yet.
               </div>
-            )}
-          </div>
-        </section>
-
-        <section className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b bg-muted/30">
-            <h3 className="font-bold text-sm text-navy-dark">Donation Trends</h3>
-          </div>
-          <div className="p-4">
-            {donationTrends.some((item) => item.donatedAmount > 0) ? (
-              <div className="mobile-chart h-[280px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={donationTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} strokeOpacity={0.7} />
-                    <XAxis dataKey="month" tick={chartAxisTick} axisLine={false} tickLine={false} />
-                    <YAxis tick={chartAxisTick} axisLine={false} tickLine={false} tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(value) => [formatCurrency(Number(value)), "Approved donations"]} />
-                    <Line type="monotone" dataKey="donatedAmount" stroke={chartColors.primarySoft} strokeWidth={3} dot={{ r: 3, fill: chartColors.primarySoft, strokeWidth: 0 }} activeDot={{ r: 5, fill: chartColors.primary }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">No approved donation trend data yet.</div>
             )}
           </div>
         </section>
